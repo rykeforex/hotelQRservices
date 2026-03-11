@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+  <title>LUXE · digital concierge</title>
+  <!-- Tailwind + Font Awesome -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600&display=swap');
+    
+    * { font-family: 'Montserrat', sans-serif; }
+    .font-serif { font-family: 'Cormorant Garamond', serif; }
+    
+    /* luxury dark base */
+    body {
+      background: #0b0b0b;
+      background-image: radial-gradient(circle at 30% 10%, rgba(212, 175, 55, 0.05) 0%, transparent 50%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    /* glassmorphism panels */
+    .glass-panel {
+      background: rgba(18, 18, 18, 0.7);
+      backdrop-filter: blur(16px) saturate(180%);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(212, 175, 55, 0.25);
+      border-radius: 2.5rem;
+      box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(212, 175, 55, 0.1) inset;
+    }
+
+    /* gold accents */
+    .gold-text { color: #d4af37; }
+    .gold-border { border-color: #d4af37; }
+    .gold-glow:hover {
+      box-shadow: 0 0 20px rgba(212, 175, 55, 0.6), 0 0 40px rgba(212, 175, 55, 0.3);
+      transition: box-shadow 0.3s ease;
+    }
+    .gold-gradient-bg {
+      background: linear-gradient(145deg, #c9a52c, #f5e29c);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    /* main service cards */
+    .service-card {
+      background: rgba(25, 25, 25, 0.6);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(212, 175, 55, 0.2);
+      border-radius: 2rem;
+      transition: all 0.25s ease;
+      padding: 1.25rem 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      color: #f0f0f0;
+      font-weight: 500;
+    }
+    .service-card i { font-size: 2rem; color: #d4af37; margin-bottom: 0.5rem; }
+    .service-card:hover {
+      border-color: #d4af37;
+      background: rgba(35, 35, 35, 0.8);
+      transform: translateY(-3px);
+    }
+
+    /* option buttons inside modal */
+    .opt-btn {
+      background: rgba(20, 20, 20, 0.8);
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(212, 175, 55, 0.2);
+      border-radius: 3rem;
+      padding: 0.8rem 1rem;
+      font-size: 0.9rem;
+      color: #ddd;
+      transition: all 0.15s;
+      text-align: center;
+    }
+    .opt-btn.selected {
+      border-color: #d4af37;
+      background: rgba(212, 175, 55, 0.12);
+      color: #f5e29c;
+      box-shadow: 0 0 12px rgba(212, 175, 55, 0.4);
+    }
+    .opt-btn:hover { border-color: #d4af37; color: white; }
+
+    /* mic button */
+    .mic-btn {
+      background: rgba(212, 175, 55, 0.1);
+      border: 1.5px solid #d4af37;
+      border-radius: 100px;
+      padding: 1rem 2rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.8rem;
+      font-size: 1.2rem;
+      font-weight: 500;
+      color: #d4af37;
+      transition: 0.2s;
+    }
+    .mic-btn:hover { background: #d4af37; color: black; box-shadow: 0 0 30px #d4af37; }
+    .mic-btn.recording { background: #a0522d; border-color: #ffd966; color: #ffd966; animation: pulse 1.2s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } }
+
+    /* shimmer send button */
+    .send-btn {
+      background: linear-gradient(135deg, #b48c3a, #d4af37, #f5e29c);
+      border: none;
+      border-radius: 3rem;
+      padding: 1rem 2rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: #0b0b0b;
+      transition: all 0.3s;
+      box-shadow: 0 4px 20px rgba(212, 175, 55, 0.3);
+    }
+    .send-btn:hover { transform: scale(1.02); box-shadow: 0 0 30px #d4af37; }
+
+    /* loading spinner */
+    .spinner { border: 2px solid rgba(0,0,0,0.1); border-top: 2px solid #d4af37; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+    /* success toast */
+    .toast-success {
+      background: rgba(0,0,0,0.85);
+      backdrop-filter: blur(20px);
+      border-left: 5px solid #d4af37;
+      color: white;
+    }
+
+    /* room number dynamic */
+    .room-badge {
+      background: rgba(212, 175, 55, 0.15);
+      border-radius: 100px;
+      padding: 0.4rem 1.4rem;
+      border: 1px solid #d4af37;
+      font-size: 1.3rem;
+      font-weight: 600;
+      color: #d4af37;
+      display: inline-block;
+    }
+
+    /* concierge time cards */
+    .time-card {
+      background: rgba(30,30,30,0.8);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(212, 175, 55, 0.3);
+      border-radius: 1.5rem;
+      padding: 0.75rem 1rem;
+      font-size: 0.9rem;
+      color: #f0e6d2;
+      transition: 0.2s;
+      text-align: center;
+      cursor: pointer;
+    }
+    .time-card:hover {
+      background: #d4af37;
+      color: black;
+      border-color: #d4af37;
+      transform: scale(1.02);
+    }
+    .time-card i { color: #d4af37; margin-right: 0.3rem; }
+    .time-card:hover i { color: black; }
+
+    /* request status tracker */
+    .status-tracker {
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(16px);
+      border-radius: 100px;
+      border: 1px solid #d4af37;
+      box-shadow: 0 0 30px rgba(212,175,55,0.3);
+      padding: 0.8rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .status-step {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #aaa;
+      font-size: 0.9rem;
+    }
+    .status-step.active {
+      color: #d4af37;
+      font-weight: 500;
+    }
+    .status-step.completed {
+      color: #d4af37;
+    }
+    .status-step i { font-size: 1.2rem; }
+
+    /* footer */
+    .luxury-footer {
+      text-align: center;
+      margin-top: 2rem;
+      color: #d4af37;
+      font-size: 0.8rem;
+      letter-spacing: 1px;
+      opacity: 0.7;
+    }
+
+    /* logo */
+    .hotel-logo {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1rem;
+    }
+    .logo-icon {
+      font-size: 2.5rem;
+      color: #d4af37;
+      filter: drop-shadow(0 0 10px #d4af37);
+    }
+    .logo-text {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 2rem;
+      font-weight: 600;
+      letter-spacing: 4px;
+      background: linear-gradient(145deg, #d4af37, #f5e29c);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      margin-top: -0.3rem;
+    }
+  </style>
+</head>
+<body>
+  <!-- main container (glass) -->
+  <div class="glass-panel w-full max-w-4xl p-6 md:p-8 relative">
+    
+    <!-- HOTEL LOGO (centered) -->
+    <div class="hotel-logo">
+      <i class="fas fa-crown logo-icon"></i>
+      <div class="logo-text">LUXE HOTEL</div>
+    </div>
+
+    <!-- top section -->
+    <div class="text-center mb-8">
+      <h1 class="font-serif text-4xl md:text-5xl gold-gradient-bg font-bold tracking-wide">Welcome to Your Hotel Services</h1>
+      <p class="text-gray-300 text-lg md:text-xl mt-2 font-light">How can we assist you today?</p>
+      <div class="mt-4 flex justify-center">
+        <span class="room-badge" id="roomDisplay">Room 401</span>
+      </div>
+    </div>
+
+    <!-- main service grid (8 buttons) -->
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      <!-- each button triggers modal with service data -->
+      <button class="service-card gold-glow" data-service="housekeeping"><i class="fas fa-broom"></i><span>Housekeeping</span></button>
+      <button class="service-card gold-glow" data-service="maintenance"><i class="fas fa-tools"></i><span>Maintenance</span></button>
+      <button class="service-card gold-glow" data-service="roomservice"><i class="fas fa-utensils"></i><span>Room Service</span></button>
+      <button class="service-card gold-glow" data-service="concierge"><i class="fas fa-concierge-bell"></i><span>Concierge</span></button>
+      <button class="service-card gold-glow" data-service="towels"><i class="fas fa-hand-holding-water"></i><span>Request Towels</span></button>
+      <button class="service-card gold-glow" data-service="laundry"><i class="fas fa-tshirt"></i><span>Laundry Service</span></button>
+      <button class="service-card gold-glow" data-service="donotdisturb"><i class="fas fa-moon"></i><span>Do Not Disturb</span></button>
+      <button class="service-card gold-glow" data-service="report"><i class="fas fa-exclamation-triangle"></i><span>Report an Issue</span></button>
+    </div>
+  </div>
+
+  <!-- REQUEST STATUS TRACKER (hidden initially) -->
+  <div id="statusTracker" class="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-50 hidden" style="min-width: 300px;">
+    <div class="status-tracker glass-panel">
+      <div class="status-step" id="step1"><i class="far fa-circle"></i> <span>Request received</span></div>
+      <div class="status-step" id="step2"><i class="far fa-circle"></i> <span>Staff on the way</span></div>
+      <div class="status-step" id="step3"><i class="far fa-circle"></i> <span>Request completed</span></div>
+    </div>
+  </div>
+
+  <!-- luxury modal (dynamic content) -->
+  <div id="serviceModal" class="fixed inset-0 flex items-center justify-center z-50 hidden px-4" style="background: rgba(0,0,0,0.8); backdrop-filter: blur(8px);">
+    <div class="glass-panel w-full max-w-lg p-6 md:p-8 relative" style="border-radius: 2.5rem;">
+      <!-- close button -->
+      <button id="closeModal" class="absolute top-4 right-4 text-3xl text-gray-400 hover:text-gold">&times;</button>
+      
+      <!-- modal title (service name) -->
+      <h2 id="modalServiceTitle" class="font-serif text-3xl gold-text mb-5">Housekeeping</h2>
+
+      <!-- TIME-BASED SUGGESTIONS (only for concierge) -->
+      <div id="conciergeSuggestions" class="hidden mb-6">
+        <p class="text-gray-300 uppercase tracking-wider text-sm mb-3 flex items-center"><i class="fas fa-clock text-gold mr-2"></i> SUGGESTED FOR YOU</p>
+        <div class="grid grid-cols-3 gap-2" id="suggestionCards"></div>
+      </div>
+
+      <!-- options grid (filled by js) -->
+      <div id="modalOptions" class="grid grid-cols-2 gap-3 mb-6"></div>
+
+      <!-- voice section: explain your request -->
+      <div class="mt-8">
+        <p class="text-gray-300 uppercase tracking-wider text-sm mb-3 flex items-center"><i class="fas fa-microphone-alt text-gold mr-2"></i> EXPLAIN YOUR REQUEST</p>
+        <div class="flex flex-wrap items-center gap-3 justify-center sm:justify-start">
+          <!-- mic button with state -->
+          <button id="micStartBtn" class="mic-btn"><i class="fas fa-microphone"></i> Start</button>
+          <button id="micStopBtn" class="mic-btn" disabled style="opacity:0.4;"><i class="fas fa-stop"></i> Stop</button>
+          <button id="micPlayBtn" class="mic-btn" disabled style="opacity:0.4;"><i class="fas fa-play"></i> Play</button>
+        </div>
+        <div id="recordingStatus" class="text-xs text-gold mt-2 italic"></div>
+        <!-- hidden audio for playback -->
+        <audio id="recordingAudio" controls style="display:none;" class="w-full mt-2"></audio>
+      </div>
+
+      <!-- send request button -->
+      <div class="mt-8 text-center">
+        <button id="sendRequestBtn" class="send-btn w-full sm:w-auto px-12 py-4 text-lg"><i class="fas fa-paper-plane mr-2"></i> Send Request</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- success toast (hidden by default) -->
+  <div id="successToast" class="fixed bottom-8 left-1/2 transform -translate-x-1/2 toast-success px-8 py-4 rounded-full shadow-2xl flex items-center gap-4 z-50 hidden" style="min-width:260px;">
+    <i class="fas fa-check-circle text-2xl" style="color:#d4af37;"></i>
+    <span class="font-medium">Your request has been sent.<br>Our team will assist you shortly.</span>
+  </div>
+
+  <!-- FOOTER (every page) -->
+  <footer class="luxury-footer">
+    © Powered by PeerLoom Technologies
+  </footer>
+
+  <script>
+    (function() {
+      // ------- room number dynamic -------
+      const roomSpan = document.getElementById('roomDisplay');
+      const randomRoom = Math.floor(Math.random() * 200) + 100; // 100-299
+      roomSpan.textContent = `Room ${randomRoom}`;
+
+      // ------- service definitions (including "Other request" everywhere) -------
+      const services = {
+        housekeeping: {
+          name: 'Housekeeping',
+          options: ['Clean my room', 'Request extra pillows', 'Request extra blankets', 'Replace toiletries', 'Empty trash', 'Other request']
+        },
+        maintenance: {
+          name: 'Maintenance',
+          options: ['Broken air conditioning', 'Broken light', 'TV not working', 'Water problem', 'Internet issue', 'Door or lock problem', 'Other maintenance issue']
+        },
+        roomservice: {
+          name: 'Room Service',
+          options: ['View food menu', 'Order breakfast', 'Order drinks', 'Late-night snacks', 'Special request', 'Other request']
+        },
+        concierge: {
+          name: 'Concierge',
+          options: ['Taxi request', 'Restaurant reservation', 'Local attractions', 'Luggage assistance', 'Airport transfer', 'Other concierge request']
+        },
+        towels: {
+          name: 'Request Towels',
+          options: ['Extra bath towels', 'Hand towels', 'Beach towels', 'Pool towels', 'Other request']
+        },
+        laundry: {
+          name: 'Laundry Service',
+          options: ['Wash & fold', 'Dry cleaning', 'Ironing', 'Express service', 'Other request']
+        },
+        donotdisturb: {
+          name: 'Do Not Disturb',
+          options: ['Activate DND', 'Deactivate DND', 'Until further notice', 'For 2 hours', 'Other request']
+        },
+        report: {
+          name: 'Report an Issue',
+          options: ['Noise complaint', 'Cleanliness issue', 'Temperature problem', 'Safety concern', 'Other issue']
+        }
+      };
+
+      // Modal & UI elements
+      const modal = document.getElementById('serviceModal');
+      const modalTitle = document.getElementById('modalServiceTitle');
+      const modalOptionsDiv = document.getElementById('modalOptions');
+      const closeModal = document.getElementById('closeModal');
+      const micStart = document.getElementById('micStartBtn');
+      const micStop = document.getElementById('micStopBtn');
+      const micPlay = document.getElementById('micPlayBtn');
+      const recordingStatus = document.getElementById('recordingStatus');
+      const audioPlayer = document.getElementById('recordingAudio');
+      const sendBtn = document.getElementById('sendRequestBtn');
+      const toast = document.getElementById('successToast');
+      const conciergeSuggestionsDiv = document.getElementById('conciergeSuggestions');
+      const suggestionCardsDiv = document.getElementById('suggestionCards');
+      const statusTracker = document.getElementById('statusTracker');
+      const step1 = document.getElementById('step1');
+      const step2 = document.getElementById('step2');
+      const step3 = document.getElementById('step3');
+
+      // State
+      let currentService = 'housekeeping';
+      let selectedOption = null;
+      let mediaRecorder = null;
+      let audioChunks = [];
+      let recordedBlob = null;
+      let stream = null;
+      let isRecording = false;
+
+      // Helper: time-based suggestions for concierge
+      function getTimeSuggestions() {
+        const hour = new Date().getHours();
+        if (hour >= 5 && hour < 12) {
+          return ['Order breakfast', 'Request coffee', 'Schedule housekeeping'];
+        } else if (hour >= 12 && hour < 17) {
+          return ['Order lunch', 'Book spa', 'Request laundry'];
+        } else {
+          return ['Order dinner', 'Late night snacks', 'Do not disturb'];
+        }
+      }
+
+      // Reset recorder UI
+      function resetRecorderUI() {
+        micStart.disabled = false; micStart.style.opacity = '1';
+        micStop.disabled = true; micStop.style.opacity = '0.4';
+        micPlay.disabled = true; micPlay.style.opacity = '0.4';
+        recordingStatus.innerText = '';
+        audioPlayer.style.display = 'none';
+        audioPlayer.src = '';
+        recordedBlob = null;
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+      }
+
+      // Request mic and setup recorder
+      async function setupRecorder() {
+        if (!navigator.mediaDevices) {
+          recordingStatus.innerText = 'Microphone not supported.';
+          return false;
+        }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream);
+          audioChunks = [];
+
+          mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+          mediaRecorder.onstop = () => {
+            recordedBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const url = URL.createObjectURL(recordedBlob);
+            audioPlayer.src = url;
+            audioPlayer.style.display = 'block';
+            micPlay.disabled = false; micPlay.style.opacity = '1';
+            recordingStatus.innerText = 'Recording saved. You can play it back.';
+          };
+          return true;
+        } catch (err) {
+          recordingStatus.innerText = 'Microphone access denied.';
+          return false;
+        }
+      }
+
+      // Start recording
+      micStart.addEventListener('click', async () => {
+        if (!mediaRecorder) {
+          const ok = await setupRecorder();
+          if (!ok) return;
+        }
+        if (mediaRecorder && mediaRecorder.state !== 'recording') {
+          audioChunks = [];
+          mediaRecorder.start();
+          isRecording = true;
+          micStart.disabled = true; micStart.style.opacity = '0.4';
+          micStop.disabled = false; micStop.style.opacity = '1';
+          micPlay.disabled = true; micPlay.style.opacity = '0.4';
+          recordingStatus.innerText = 'Recording ... speak now';
+          micStart.classList.add('recording');
+        }
+      });
+
+      micStop.addEventListener('click', () => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+          isRecording = false;
+          micStart.disabled = false; micStart.style.opacity = '1';
+          micStop.disabled = true; micStop.style.opacity = '0.4';
+          if (stream) stream.getTracks().forEach(t => t.stop());
+          stream = null;
+          mediaRecorder = null;
+          micStart.classList.remove('recording');
+        }
+      });
+
+      micPlay.addEventListener('click', () => {
+        if (audioPlayer.src) audioPlayer.play();
+      });
+
+      // Populate options based on service
+      function renderOptions(serviceKey) {
+        const service = services[serviceKey];
+        modalTitle.innerText = service.name;
+        let html = '';
+        service.options.forEach(opt => {
+          html += `<button class="opt-btn w-full" data-option="${opt}">${opt}</button>`;
+        });
+        modalOptionsDiv.innerHTML = html;
+
+        // attach click for selection
+        document.querySelectorAll('.opt-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+            selectedOption = btn.dataset.option;
+          });
+        });
+      }
+
+      // open modal with service
+      function openModal(serviceKey) {
+        currentService = serviceKey;
+        renderOptions(serviceKey);
+        selectedOption = null;
+        resetRecorderUI();
+
+        // handle concierge suggestions
+        if (serviceKey === 'concierge') {
+          const suggestions = getTimeSuggestions();
+          let cardsHtml = '';
+          suggestions.forEach(s => {
+            cardsHtml += `<div class="time-card" data-suggestion="${s}"><i class="fas fa-star"></i> ${s}</div>`;
+          });
+          suggestionCardsDiv.innerHTML = cardsHtml;
+          conciergeSuggestionsDiv.classList.remove('hidden');
+
+          // make suggestion cards clickable – they auto-select the matching option if exists, else just highlight
+          document.querySelectorAll('.time-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+              const suggestionText = card.dataset.suggestion;
+              // try to find matching option in the options list
+              const optionBtns = document.querySelectorAll('.opt-btn');
+              let found = false;
+              optionBtns.forEach(btn => {
+                if (btn.dataset.option.toLowerCase().includes(suggestionText.toLowerCase()) || suggestionText.toLowerCase().includes(btn.dataset.option.toLowerCase())) {
+                  btn.click();
+                  found = true;
+                }
+              });
+              if (!found) {
+                // just visually indicate card click
+                card.style.backgroundColor = '#d4af37';
+                card.style.color = 'black';
+                setTimeout(() => { card.style.backgroundColor = ''; card.style.color = ''; }, 200);
+              }
+            });
+          });
+        } else {
+          conciergeSuggestionsDiv.classList.add('hidden');
+        }
+
+        modal.classList.remove('hidden');
+      }
+
+      // close modal
+      closeModal.addEventListener('click', () => {
+        modal.classList.add('hidden');
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        mediaRecorder = null;
+      });
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+
+      // main service buttons
+      document.querySelectorAll('[data-service]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const srv = e.currentTarget.dataset.service;
+          openModal(srv);
+        });
+      });
+
+      // send request with success animation & status tracker
+      sendBtn.addEventListener('click', () => {
+        if (!selectedOption && !recordedBlob) {
+          recordingStatus.innerText = 'Please select an option or record a message.';
+          return;
+        }
+        // simulate loading
+        sendBtn.innerHTML = '<span class="spinner mr-2"></span> Sending...';
+        sendBtn.disabled = true;
+
+        setTimeout(() => {
+          sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send Request';
+          sendBtn.disabled = false;
+          
+          // show success toast
+          toast.classList.remove('hidden');
+          setTimeout(() => toast.classList.add('hidden'), 3500);
+
+          // close modal
+          modal.classList.add('hidden');
+          resetRecorderUI();
+
+          // show status tracker with progress animation
+          statusTracker.classList.remove('hidden');
+          
+          // reset steps
+          step1.classList.remove('active', 'completed');
+          step2.classList.remove('active', 'completed');
+          step3.classList.remove('active', 'completed');
+          step1.querySelector('i').className = 'far fa-circle';
+          step2.querySelector('i').className = 'far fa-circle';
+          step3.querySelector('i').className = 'far fa-circle';
+
+          // animate steps
+          setTimeout(() => {
+            step1.classList.add('active');
+            step1.querySelector('i').className = 'fas fa-spinner fa-pulse';
+          }, 300);
+          setTimeout(() => {
+            step1.classList.remove('active');
+            step1.classList.add('completed');
+            step1.querySelector('i').className = 'fas fa-check-circle';
+            step2.classList.add('active');
+            step2.querySelector('i').className = 'fas fa-spinner fa-pulse';
+          }, 2000);
+          setTimeout(() => {
+            step2.classList.remove('active');
+            step2.classList.add('completed');
+            step2.querySelector('i').className = 'fas fa-check-circle';
+            step3.classList.add('active');
+            step3.querySelector('i').className = 'fas fa-spinner fa-pulse';
+          }, 4000);
+          setTimeout(() => {
+            step3.classList.remove('active');
+            step3.classList.add('completed');
+            step3.querySelector('i').className = 'fas fa-check-circle';
+          }, 6000);
+          setTimeout(() => {
+            statusTracker.classList.add('hidden');
+          }, 8000);
+        }, 1200);
+      });
+
+      // ensure recorder cleanup on modal close
+      window.addEventListener('click', function (e) {
+        if (!modal.classList.contains('hidden') && e.target === modal) {
+          if (stream) stream.getTracks().forEach(t => t.stop());
+          mediaRecorder = null;
+        }
+      });
+    })();
+  </script>
+  <style>
+    .text-gold { color: #d4af37; }
+    .hover\:text-gold:hover { color: #d4af37; }
+    #closeModal:hover { color: #d4af37; }
+    .bg-gold { background-color: #d4af37; }
+  </style>
+</body>
+</html>
