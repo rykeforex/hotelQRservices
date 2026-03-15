@@ -566,19 +566,47 @@
       });
 
       // send request with success animation & status tracker
-      sendBtn.addEventListener('click', () => {
+      sendBtn.addEventListener('click', async () => {
         if (!selectedOption && !recordedBlob) {
           recordingStatus.innerText = 'Please select an option or record a message.';
           return;
         }
-        // simulate loading
+
+        // Get request data
+        const roomNumber = document.getElementById('roomDisplay').textContent.replace('Room ', '');
+        const requestText = selectedOption || 'Voice request';
+
+        // Prepare form data
+        const formData = new FormData();
+        formData.append('roomNumber', roomNumber);
+        formData.append('service', currentService);
+        formData.append('requestText', requestText);
+
+        if (recordedBlob) {
+          formData.append('voice', recordedBlob, 'voice.webm');
+        }
+
+        // Show loading
         sendBtn.innerHTML = '<span class="spinner mr-2"></span> Sending...';
         sendBtn.disabled = true;
 
-        setTimeout(() => {
+        try {
+          const response = await fetch('http://localhost:3000/api/requests', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to send request');
+          }
+
+          const result = await response.json();
+          console.log('Request sent:', result);
+
+          // Show success
           sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send Request';
           sendBtn.disabled = false;
-          
+
           // show success toast
           toast.classList.remove('hidden');
           setTimeout(() => toast.classList.add('hidden'), 3500);
@@ -589,7 +617,7 @@
 
           // show status tracker with progress animation
           statusTracker.classList.remove('hidden');
-          
+
           // reset steps
           step1.classList.remove('active', 'completed');
           step2.classList.remove('active', 'completed');
@@ -625,7 +653,13 @@
           setTimeout(() => {
             statusTracker.classList.add('hidden');
           }, 8000);
-        }, 1200);
+
+        } catch (error) {
+          console.error('Error sending request:', error);
+          sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send Request';
+          sendBtn.disabled = false;
+          recordingStatus.innerText = 'Failed to send request. Please try again.';
+        }
       });
 
       // ensure recorder cleanup on modal close

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PeerLoom · director suite</title>
+  <title>LUXE · director suite</title>
   <!-- Tailwind + Font Awesome -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
@@ -285,6 +285,7 @@
   </div>
 </div>
 
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
 <script>
   (function() {
     // ---------- SYSTEM STATE ----------
@@ -297,18 +298,6 @@
       'Concierge': 'conc123',
       'Laundry': 'laundry123'
     };
-
-    let allRequests = [];
-    let nextId = 100;
-    const seed = [
-      { id:1, room:'412', dept:'Maintenance', type:'AC broken', desc:'not cooling', voice:true, timestamp:Date.now()-25*60000, status:'pending' },
-      { id:2, room:'305', dept:'Housekeeping', type:'extra pillows', desc:'2 pillows', voice:false, timestamp:Date.now()-12*60000, status:'in-progress' },
-      { id:3, room:'510', dept:'Room Service', type:'breakfast', desc:'continental', voice:false, timestamp:Date.now()-80*60000, status:'completed' },
-      { id:4, room:'221', dept:'Concierge', type:'taxi', desc:'to airport 5pm', voice:true, timestamp:Date.now()-10*60000, status:'pending' },
-      { id:5, room:'189', dept:'Laundry', type:'wash & fold', desc:'3 shirts', voice:false, timestamp:Date.now()-5*60000, status:'pending' },
-      { id:6, room:'333', dept:'Maintenance', type:'light issue', desc:'flickering', voice:true, timestamp:Date.now()-2*60000, status:'pending' },
-    ];
-    allRequests.push(...seed); nextId = 7;
 
     let voiceUsed = 42;
     const voiceLimitStandard = 100;
@@ -378,6 +367,37 @@
 
     let currentResetDept = null;
 
+    // Socket.io connection
+    const socket = io('http://localhost:3000');
+
+    socket.on('newRequest', (newRequest) => {
+      console.log('New request received:', newRequest);
+      refreshStats();
+      renderMonitor();
+      refreshAlerts();
+    });
+
+    socket.on('statusUpdate', (update) => {
+      console.log('Status update:', update);
+      refreshStats();
+      renderMonitor();
+    });
+
+    // API functions
+    async function loginDirector(username, password) {
+      const response = await fetch('http://localhost:3000/api/auth/director', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      return response.json();
+    }
+
+    async function fetchAllRequests() {
+      const response = await fetch('http://localhost:3000/api/requests');
+      return response.json();
+    }
+
     // ---------- helper functions ----------
     function getTimeGreeting() {
       const h = new Date().getHours();
@@ -392,58 +412,106 @@
       dateTimeEl.innerText = now.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) + ' ' + now.toLocaleTimeString();
     }
 
-    function refreshStats() {
-      const today = new Date().setHours(0,0,0,0);
-      const todayReqs = allRequests.filter(r => r.timestamp >= today);
-      totalToday.innerText = todayReqs.length;
-      pendingCount.innerText = allRequests.filter(r => r.status==='pending').length;
-      inProgressCount.innerText = allRequests.filter(r => r.status==='in-progress').length;
-      completedCount.innerText = allRequests.filter(r => r.status==='completed').length;
-      avgResponse.innerText = (2.4 + Math.random()*0.5).toFixed(1);
-      activeRooms.innerText = [...new Set(allRequests.map(r=>r.room))].length;
+    async function refreshStats() {
+      try {
+        const requests = await fetchAllRequests();
+        const today = new Date().setHours(0,0,0,0);
+        const todayReqs = requests.filter(r => new Date(r.created_at).getTime() >= today);
 
-      const maint = allRequests.filter(r => r.dept==='Maintenance');
-      maintPending.innerText = maint.filter(r => r.status==='pending').length;
-      maintCompleted.innerText = maint.filter(r => r.status==='completed').length;
-      const house = allRequests.filter(r => r.dept==='Housekeeping');
-      housePending.innerText = house.filter(r => r.status==='pending').length;
-      houseCompleted.innerText = house.filter(r => r.status==='completed').length;
-      const room = allRequests.filter(r => r.dept==='Room Service');
-      roomPending.innerText = room.filter(r => r.status==='pending').length;
-      roomCompleted.innerText = room.filter(r => r.status==='completed').length;
-      const conc = allRequests.filter(r => r.dept==='Concierge');
-      concPending.innerText = conc.filter(r => r.status==='pending').length;
-      concCompleted.innerText = conc.filter(r => r.status==='completed').length;
-      const laun = allRequests.filter(r => r.dept==='Laundry');
-      launPending.innerText = laun.filter(r => r.status==='pending').length;
-      launCompleted.innerText = laun.filter(r => r.status==='completed').length;
+        totalToday.innerText = todayReqs.length;
+        pendingCount.innerText = requests.filter(r => r.status==='pending').length;
+        inProgressCount.innerText = requests.filter(r => r.status==='in-progress').length;
+        completedCount.innerText = requests.filter(r => r.status==='completed').length;
+        avgResponse.innerText = (2.4 + Math.random()*0.5).toFixed(1);
+        activeRooms.innerText = [...new Set(requests.map(r=>r.room_number))].length;
+
+        // Department stats (map services to departments)
+        const serviceToDept = {
+          'maintenance': 'Maintenance',
+          'housekeeping': 'Housekeeping',
+          'roomservice': 'Room Service',
+          'concierge': 'Concierge',
+          'laundry': 'Laundry',
+          'towels': 'Housekeeping',
+          'donotdisturb': 'Housekeeping',
+          'report': 'Maintenance'
+        };
+
+        const maint = requests.filter(r => serviceToDept[r.service] === 'Maintenance');
+        maintPending.innerText = maint.filter(r => r.status==='pending').length;
+        maintCompleted.innerText = maint.filter(r => r.status==='completed').length;
+
+        const house = requests.filter(r => ['housekeeping', 'towels', 'donotdisturb'].includes(r.service));
+        housePending.innerText = house.filter(r => r.status==='pending').length;
+        houseCompleted.innerText = house.filter(r => r.status==='completed').length;
+
+        const room = requests.filter(r => r.service === 'roomservice');
+        roomPending.innerText = room.filter(r => r.status==='pending').length;
+        roomCompleted.innerText = room.filter(r => r.status==='completed').length;
+
+        const conc = requests.filter(r => r.service === 'concierge');
+        concPending.innerText = conc.filter(r => r.status==='pending').length;
+        concCompleted.innerText = conc.filter(r => r.status==='completed').length;
+
+        const laun = requests.filter(r => r.service === 'laundry');
+        launPending.innerText = laun.filter(r => r.status==='pending').length;
+        launCompleted.innerText = laun.filter(r => r.status==='completed').length;
+      } catch (error) {
+        console.error('Error refreshing stats:', error);
+      }
     }
 
-    function renderMonitor(filter='') {
-      let filtered = allRequests;
-      if (filter) {
-        const f = filter.toLowerCase();
-        filtered = allRequests.filter(r => r.room.toLowerCase().includes(f) || r.dept.toLowerCase().includes(f) || r.type.toLowerCase().includes(f));
-      }
-      filtered.sort((a,b)=> b.timestamp - a.timestamp);
-      let html = '';
-      filtered.slice(0,15).forEach(req => {
-        const time = new Date(req.timestamp).toLocaleTimeString();
-        const statusClass = req.status==='pending'?'text-yellow-400': req.status==='in-progress'?'text-blue-400':'text-green-400';
-        html += `<tr class="border-b border-gray-700/30 hover:bg-gold/5 cursor-pointer request-row" data-id="${req.id}">
-          <td class="py-2">${req.room}</td><td>${req.dept}</td><td>${req.type}</td><td>${time}</td>
-          <td><span class="text-xs ${statusClass}">${req.status}</span></td>
-          <td><i class="fas fa-chevron-right gold"></i></td>
-        </tr>`;
-      });
-      monitorBody.innerHTML = html;
-      document.querySelectorAll('.request-row').forEach(row => {
-        row.addEventListener('click', () => {
-          const id = parseInt(row.dataset.id);
-          const req = allRequests.find(r=>r.id===id);
-          if (req) showDetailModal(req);
+    async function renderMonitor(filter='') {
+      try {
+        let requests = await fetchAllRequests();
+        if (filter) {
+          const f = filter.toLowerCase();
+          requests = requests.filter(r =>
+            r.room_number.toLowerCase().includes(f) ||
+            r.service.toLowerCase().includes(f) ||
+            r.request_text.toLowerCase().includes(f)
+          );
+        }
+        requests.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
+
+        let html = '';
+        requests.slice(0,15).forEach(req => {
+          const time = new Date(req.created_at).toLocaleTimeString();
+          const statusClass = req.status==='pending'?'text-yellow-400': req.status==='in-progress'?'text-blue-400':'text-green-400';
+          const dept = getDepartmentFromService(req.service);
+          html += `<tr class="border-b border-gray-700/30 hover:bg-gold/5 cursor-pointer request-row" data-id="${req.id}">
+            <td class="py-2">${req.room_number}</td><td>${dept}</td><td>${req.service}</td><td>${time}</td>
+            <td><span class="text-xs ${statusClass}">${req.status}</span></td>
+            <td><i class="fas fa-chevron-right gold"></i></td>
+          </tr>`;
         });
-      });
+        monitorBody.innerHTML = html;
+        document.querySelectorAll('.request-row').forEach(row => {
+          row.addEventListener('click', () => {
+            const id = parseInt(row.dataset.id);
+            fetchAllRequests().then(requests => {
+              const req = requests.find(r=>r.id===id);
+              if (req) showDetailModal(req);
+            });
+          });
+        });
+      } catch (error) {
+        console.error('Error rendering monitor:', error);
+      }
+    }
+
+    function getDepartmentFromService(service) {
+      const serviceToDept = {
+        'maintenance': 'Maintenance',
+        'housekeeping': 'Housekeeping',
+        'roomservice': 'Room Service',
+        'concierge': 'Concierge',
+        'laundry': 'Laundry',
+        'towels': 'Housekeeping',
+        'donotdisturb': 'Housekeeping',
+        'report': 'Maintenance'
+      };
+      return serviceToDept[service] || 'Unknown';
     }
 
     function refreshAlerts() {
@@ -521,17 +589,24 @@
 
     function showDetailModal(req) {
       const modalDetail = document.getElementById('modalDetail');
+      const dept = getDepartmentFromService(req.service);
       modalDetail.innerHTML = `
-        <p><span class="gold">room:</span> ${req.room}</p>
-        <p><span class="gold">dept:</span> ${req.dept}</p>
-        <p><span class="gold">type:</span> ${req.type}</p>
-        <p><span class="gold">description:</span> ${req.desc}</p>
-        <p><span class="gold">time:</span> ${new Date(req.timestamp).toLocaleString()}</p>
-        <p><span class="gold">voice:</span> ${req.voice ? '🎤 recorded' : '—'}</p>
+        <p><span class="gold">room:</span> ${req.room_number}</p>
+        <p><span class="gold">dept:</span> ${dept}</p>
+        <p><span class="gold">service:</span> ${req.service}</p>
+        <p><span class="gold">description:</span> ${req.request_text}</p>
+        <p><span class="gold">time:</span> ${new Date(req.created_at).toLocaleString()}</p>
+        <p><span class="gold">voice:</span> ${req.voice_url ? '🎤 recorded' : '—'}</p>
       `;
       requestModal.classList.remove('hidden');
       requestModal.classList.add('flex');
-      playVoiceBtn.onclick = () => alert('🎤 playing voice (demo)');
+      playVoiceBtn.onclick = () => {
+        if (req.voice_url) {
+          window.open(`http://localhost:3000${req.voice_url}`, '_blank');
+        } else {
+          alert('No voice recording available');
+        }
+      };
     }
 
     closeModal.addEventListener('click', () => requestModal.classList.add('hidden'));
@@ -586,50 +661,40 @@
       voiceMeter.style.width = percent + '%';
     }
 
-    // Simulate new requests every 20s
-    setInterval(() => {
-      const dept = departments[Math.floor(Math.random()*departments.length)];
-      const room = Math.floor(Math.random()*500)+100;
-      const types = ['extra towel','light issue','food order','taxi','laundry'];
-      const hasVoice = Math.random()>0.6;
-      const newReq = {
-        id: nextId++,
-        room: room.toString(),
-        dept: dept,
-        type: types[Math.floor(Math.random()*types.length)],
-        desc: 'guest request',
-        voice: hasVoice && (subscriptionPlan==='premium' || voiceUsed < voiceLimitStandard),
-        timestamp: Date.now(),
-        status: 'pending'
-      };
-      if (newReq.voice) voiceUsed++;
-      allRequests.push(newReq);
-      renderMonitor(searchMonitor.value);
-      refreshStats();
-      refreshAlerts();
-      updateSubscriptionUI();
-    }, 20000);
-
     // ---------- LOGIN & SPLASH ----------
-    loginBtn.addEventListener('click', (e) => {
+    loginBtn.addEventListener('click', async (e) => {
       e.preventDefault();
-      loginDiv.classList.add('hidden');
-      splashGreeting.innerText = `${getTimeGreeting()}, Director`;
-      splashTime.innerText = new Date().toLocaleString();
-      splashDiv.classList.remove('hidden');
+      const username = document.getElementById('dirUser').value;
+      const password = document.getElementById('dirPass').value;
 
-      setTimeout(() => {
-        splashDiv.classList.add('hidden');
-        dashDiv.classList.remove('hidden');
-        updateDateTime();
-        setInterval(updateDateTime, 1000);
-        renderMonitor();
-        refreshStats();
-        refreshAlerts();
-        renderDeptControls();
-        renderResetRequests();
-        updateSubscriptionUI();
-      }, 2500);
+      try {
+        const result = await loginDirector(username, password);
+        if (result.error) {
+          alert(result.error);
+          return;
+        }
+
+        loginDiv.classList.add('hidden');
+        splashGreeting.innerText = `${getTimeGreeting()}, Director`;
+        splashTime.innerText = new Date().toLocaleString();
+        splashDiv.classList.remove('hidden');
+
+        setTimeout(() => {
+          splashDiv.classList.add('hidden');
+          dashDiv.classList.remove('hidden');
+          updateDateTime();
+          setInterval(updateDateTime, 1000);
+          renderMonitor();
+          refreshStats();
+          refreshAlerts();
+          renderDeptControls();
+          renderResetRequests();
+          updateSubscriptionUI();
+        }, 2500);
+      } catch (error) {
+        console.error('Login error:', error);
+        alert('Login failed. Please try again.');
+      }
     });
 
     logoutBtn.addEventListener('click', () => {

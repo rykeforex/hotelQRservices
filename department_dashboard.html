@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LUXE · department access</title>
+  <!-- Tailwind + Font Awesome -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&family=Playfair+Display:wght@400;500;600&display=swap');
+    * { font-family: 'Inter', sans-serif; }
+    body { transition: background-color 0.5s ease, color 0.3s ease; overflow-x: hidden; }
+    .font-serif { font-family: 'Playfair Display', serif; }
+
+    :root {
+      --gold: #c9a227;
+      --gold-light: #e5c87b;
+    }
+
+    .dark { background-color: #121416; color: #f0f2f4; }
+    .light { background-color: #f8fafc; color: #1e262c; }
+
+    .glass-panel {
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(201, 162, 39, 0.2);
+      border-radius: 2rem;
+      transition: all 0.2s;
+    }
+    .dark .glass-panel { background: rgba(10, 12, 16, 0.5); }
+    .light .glass-panel { background: rgba(255, 255, 255, 0.6); }
+
+    .gold { color: var(--gold); }
+    .bg-gold { background: var(--gold); }
+    .border-gold { border-color: var(--gold); }
+
+    .stat-card {
+      background: rgba(255,255,255,0.03);
+      backdrop-filter: blur(8px);
+      border-radius: 1.75rem;
+      border: 1px solid rgba(201,162,39,0.1);
+      padding: 1.25rem 1rem;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .stat-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -8px rgba(201,162,39,0.2); }
+
+    .fade-up {
+      opacity: 0;
+      transform: translateY(20px);
+      animation: fadeUp 0.5s ease forwards;
+    }
+    @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+
+    .stagger-1 { animation-delay: 0.1s; }
+    .stagger-2 { animation-delay: 0.15s; }
+    .stagger-3 { animation-delay: 0.2s; }
+
+    /* modal */
+    .modal-overlay {
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(8px);
+    }
+
+    .request-row {
+      background: rgba(255,255,255,0.02);
+      border-radius: 1rem;
+      border: 1px solid rgba(201,162,39,0.1);
+      padding: 1rem;
+      margin-bottom: 0.5rem;
+      transition: all 0.2s;
+    }
+    .request-row:hover { background: rgba(201,162,39,0.05); border-color: rgba(201,162,39,0.3); }
+
+    .status-badge {
+      padding: 0.25rem 0.75rem;
+      border-radius: 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+    }
+    .status-pending { background: rgba(255,193,7,0.2); color: #ffc107; }
+    .status-in-progress { background: rgba(0,123,255,0.2); color: #007bff; }
+    .status-completed { background: rgba(40,167,69,0.2); color: #28a745; }
+  </style>
+</head>
+<body class="dark antialiased">
+
+<!-- LOGIN PAGE -->
+<div id="loginContainer" class="min-h-screen flex items-center justify-center p-4">
+  <div class="glass-panel w-full max-w-md p-8 fade-up">
+    <div class="text-center mb-8">
+      <i class="fas fa-users-cog text-5xl gold"></i>
+      <h2 class="text-3xl font-light mt-2 gold font-serif">department access</h2>
+      <p class="text-sm opacity-60">select department & enter credentials</p>
+    </div>
+    <div class="space-y-5">
+      <select id="deptSelect" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none transition">
+        <option value="">Select Department</option>
+        <option value="Maintenance">🔧 Maintenance</option>
+        <option value="Housekeeping">🧹 Housekeeping</option>
+        <option value="Room Service">🍽️ Room Service</option>
+        <option value="Concierge">✨ Concierge</option>
+        <option value="Laundry">🧺 Laundry</option>
+      </select>
+      <input type="password" id="deptPass" placeholder="Department Password" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none transition">
+      <button id="loginBtn" class="w-full py-3 bg-gold text-black font-semibold rounded-xl hover:bg-yellow-400 transition shadow-lg shadow-gold/20 disabled:opacity-50" disabled>enter</button>
+    </div>
+  </div>
+</div>
+
+<!-- DEPARTMENT DASHBOARD -->
+<div id="dashboardContainer" class="hidden min-h-screen p-4 md:p-6 transition-opacity duration-700">
+
+  <!-- TOP BAR -->
+  <div class="glass-panel p-4 flex flex-wrap items-center justify-between mb-6">
+    <div class="flex items-center gap-3">
+      <i class="fas fa-users-cog text-2xl gold"></i>
+      <span class="text-xl font-medium" id="deptTitle">DEPARTMENT DASHBOARD</span>
+    </div>
+    <div class="flex items-center gap-6">
+      <div id="currentDateTime" class="text-sm opacity-70"></div>
+      <button id="logoutBtn" class="text-sm bg-red-500/20 hover:bg-red-500/30 px-3 py-1 rounded-full transition">logout</button>
+    </div>
+  </div>
+
+  <!-- STATS CARDS -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="stat-card fade-up stagger-1"><i class="fas fa-list gold text-xl"></i><div class="text-3xl font-light mt-1" id="totalRequests">0</div><div class="text-xs uppercase tracking-wider opacity-60">total requests</div></div>
+    <div class="stat-card fade-up stagger-2"><i class="fas fa-hourglass-half gold"></i><div class="text-3xl font-light" id="pendingCount">0</div><div class="text-xs">pending</div></div>
+    <div class="stat-card fade-up stagger-3"><i class="fas fa-sync-alt gold"></i><div class="text-3xl font-light" id="inProgressCount">0</div><div class="text-xs">in progress</div></div>
+    <div class="stat-card fade-up stagger-4"><i class="fas fa-check-circle gold"></i><div class="text-3xl font-light" id="completedCount">0</div><div class="text-xs">completed</div></div>
+  </div>
+
+  <!-- REQUESTS LIST -->
+  <div class="glass-panel p-6">
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="text-xl gold font-serif">Active Requests</h3>
+      <input type="text" id="searchRequests" placeholder="Search requests..." class="px-3 py-2 rounded-lg bg-black/20 border border-gray-600 focus:border-gold outline-none">
+    </div>
+    <div id="requestsContainer" class="space-y-3 max-h-96 overflow-y-auto">
+      <!-- Requests will be populated here -->
+    </div>
+  </div>
+
+</div>
+
+<!-- REQUEST DETAIL MODAL -->
+<div id="requestModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
+  <div class="glass-panel max-w-lg w-full p-6">
+    <div class="flex justify-between mb-4"><h3 class="text-xl gold">request details</h3><button id="closeModal" class="text-2xl">&times;</button></div>
+    <div id="modalDetail" class="space-y-3"></div>
+    <div class="mt-6 flex gap-3">
+      <select id="statusSelect" class="flex-1 px-3 py-2 rounded-lg bg-black/20 border border-gray-600 focus:border-gold outline-none">
+        <option value="pending">Pending</option>
+        <option value="in-progress">In Progress</option>
+        <option value="completed">Completed</option>
+      </select>
+      <button id="updateStatusBtn" class="bg-gold text-black px-4 py-2 rounded-lg hover:bg-yellow-400 transition">Update</button>
+    </div>
+    <div class="mt-4 flex justify-end"><button id="playVoiceBtn" class="bg-gold/30 px-4 py-2 rounded-full">▶ play voice</button></div>
+  </div>
+</div>
+
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script>
+  (function() {
+    // Simulated requests data (in a real app, this would come from a backend)
+    let allRequests = [
+      { id: 1, room: '201', service: 'maintenance', request: 'Broken air conditioning', status: 'pending', time: '10:30 AM', voice: null },
+      { id: 2, room: '305', service: 'housekeeping', request: 'Clean my room', status: 'in-progress', time: '11:15 AM', voice: null },
+      { id: 3, room: '412', service: 'roomservice', request: 'Order breakfast', status: 'completed', time: '8:45 AM', voice: null },
+      { id: 4, room: '108', service: 'concierge', request: 'Taxi request', status: 'pending', time: '2:20 PM', voice: null },
+      { id: 5, room: '256', service: 'laundry', request: 'Wash & fold', status: 'in-progress', time: '1:10 PM', voice: null },
+      { id: 6, room: '189', service: 'maintenance', request: 'TV not working', status: 'pending', time: '3:45 PM', voice: null }
+    ];
+
+    // Map service names to departments
+    const serviceToDept = {
+      'maintenance': 'Maintenance',
+      'housekeeping': 'Housekeeping',
+      'roomservice': 'Room Service',
+      'concierge': 'Concierge',
+      'laundry': 'Laundry',
+      'towels': 'Housekeeping',
+      'donotdisturb': 'Housekeeping',
+      'report': 'Maintenance'
+    };
+
+    let currentDept = null;
+    let currentRequest = null;
+
+    // Socket.io connection
+    const socket = io('http://localhost:3000');
+
+    socket.on('newRequest', (newRequest) => {
+      console.log('New request received:', newRequest);
+      if (currentDept) {
+        refreshDashboard();
+      }
+    });
+
+    socket.on('statusUpdate', (update) => {
+      console.log('Status update:', update);
+      if (currentDept) {
+        refreshDashboard();
+      }
+    });
+
+    // API functions
+    async function loginDepartment(department, password) {
+      const response = await fetch('http://localhost:3000/api/auth/department', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ department, password })
+      });
+      return response.json();
+    }
+
+    async function fetchDepartmentRequests(department) {
+      const response = await fetch(`http://localhost:3000/api/requests/${department}`);
+      return response.json();
+    }
+
+    async function updateRequestStatus(id, status) {
+      const response = await fetch(`http://localhost:3000/api/requests/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      return response.json();
+    }
+
+    // DOM elements
+    const loginDiv = document.getElementById('loginContainer');
+    const dashDiv = document.getElementById('dashboardContainer');
+    const deptSelect = document.getElementById('deptSelect');
+    const deptPass = document.getElementById('deptPass');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const deptTitle = document.getElementById('deptTitle');
+    const dateTimeEl = document.getElementById('currentDateTime');
+    const totalRequests = document.getElementById('totalRequests');
+    const pendingCount = document.getElementById('pendingCount');
+    const inProgressCount = document.getElementById('inProgressCount');
+    const completedCount = document.getElementById('completedCount');
+    const searchRequests = document.getElementById('searchRequests');
+    const requestsContainer = document.getElementById('requestsContainer');
+    const requestModal = document.getElementById('requestModal');
+    const closeModal = document.getElementById('closeModal');
+    const modalDetail = document.getElementById('modalDetail');
+    const statusSelect = document.getElementById('statusSelect');
+    const updateStatusBtn = document.getElementById('updateStatusBtn');
+    const playVoiceBtn = document.getElementById('playVoiceBtn');
+
+    // Enable login button when department is selected
+    deptSelect.addEventListener('change', () => {
+      loginBtn.disabled = !deptSelect.value;
+    });
+
+    // Login
+    loginBtn.addEventListener('click', async () => {
+      const selectedDept = deptSelect.value;
+      const password = deptPass.value;
+
+      try {
+        const result = await loginDepartment(selectedDept, password);
+        if (result.error) {
+          alert(result.error);
+          return;
+        }
+
+        currentDept = selectedDept;
+        deptTitle.textContent = `${selectedDept.toUpperCase()} DASHBOARD`;
+        loginDiv.classList.add('hidden');
+        dashDiv.classList.remove('hidden');
+        updateDateTime();
+        refreshDashboard();
+      } catch (error) {
+        console.error('Login error:', error);
+        alert('Login failed. Please try again.');
+      }
+    });
+
+    // Logout
+    logoutBtn.addEventListener('click', () => {
+      currentDept = null;
+      dashDiv.classList.add('hidden');
+      loginDiv.classList.remove('hidden');
+      deptPass.value = '';
+      deptSelect.value = '';
+      loginBtn.disabled = true;
+    });
+
+    // Update date/time
+    function updateDateTime() {
+      const now = new Date();
+      dateTimeEl.textContent = now.toLocaleString();
+    }
+    setInterval(updateDateTime, 60000); // Update every minute
+
+    // Refresh dashboard
+    async function refreshDashboard() {
+      try {
+        const requests = await fetchDepartmentRequests(currentDept);
+        const filteredRequests = requests.filter(req =>
+          req.room_number.includes(searchRequests.value) ||
+          req.request_text.toLowerCase().includes(searchRequests.value.toLowerCase())
+        );
+
+        totalRequests.textContent = requests.length;
+        pendingCount.textContent = requests.filter(r => r.status === 'pending').length;
+        inProgressCount.textContent = requests.filter(r => r.status === 'in-progress').length;
+        completedCount.textContent = requests.filter(r => r.status === 'completed').length;
+
+        renderRequests(filteredRequests);
+      } catch (error) {
+        console.error('Error refreshing dashboard:', error);
+      }
+    }
+
+    // Render requests
+    function renderRequests(requests) {
+      requestsContainer.innerHTML = '';
+      requests.forEach(req => {
+        const time = new Date(req.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        const row = document.createElement('div');
+        row.className = 'request-row cursor-pointer';
+        row.innerHTML = `
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="font-medium">Room ${req.room_number}</div>
+              <div class="text-sm opacity-70">${req.request_text}</div>
+              <div class="text-xs opacity-50 mt-1">${time}</div>
+            </div>
+            <div class="status-badge status-${req.status.replace('-', '')}">${req.status.replace('-', ' ')}</div>
+          </div>
+        `;
+        row.addEventListener('click', () => showRequestModal(req));
+        requestsContainer.appendChild(row);
+      });
+    }
+
+    // Show request modal
+    function showRequestModal(req) {
+      currentRequest = req;
+      const time = new Date(req.created_at).toLocaleString();
+      modalDetail.innerHTML = `
+        <div><strong>Room:</strong> ${req.room_number}</div>
+        <div><strong>Service:</strong> ${req.service}</div>
+        <div><strong>Request:</strong> ${req.request_text}</div>
+        <div><strong>Time:</strong> ${time}</div>
+        <div><strong>Status:</strong> <span class="status-badge status-${req.status.replace('-', '')}">${req.status.replace('-', ' ')}</span></div>
+      `;
+      statusSelect.value = req.status;
+      requestModal.classList.remove('hidden');
+    }
+
+    // Update status
+    updateStatusBtn.addEventListener('click', async () => {
+      if (currentRequest) {
+        try {
+          await updateRequestStatus(currentRequest.id, statusSelect.value);
+          requestModal.classList.add('hidden');
+          refreshDashboard();
+        } catch (error) {
+          console.error('Error updating status:', error);
+          alert('Failed to update status');
+        }
+      }
+    });
+
+    // Close modal
+    closeModal.addEventListener('click', () => requestModal.classList.add('hidden'));
+    requestModal.addEventListener('click', (e) => { if (e.target === requestModal) requestModal.classList.add('hidden'); });
+
+    // Play voice (placeholder)
+    playVoiceBtn.addEventListener('click', () => {
+      alert('Voice playback not implemented in demo');
+    });
+
+    // Search
+    searchRequests.addEventListener('input', refreshDashboard);
+
+  })();
+</script>
+</body>
+</html>
