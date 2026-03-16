@@ -4,9 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
   <title>LUXE · digital concierge</title>
-  <!-- Tailwind + Font Awesome -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <!-- Supabase Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Socket.io for real-time updates -->
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600&display=swap');
     
@@ -329,6 +330,14 @@
 
   <script>
     (function() {
+      // Supabase configuration
+      const SUPABASE_URL = 'YOUR_SUPABASE_URL'; // Replace with your Supabase project URL
+      const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // Replace with your Supabase anon key
+      
+      const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+      // Socket.io connection for real-time updates
+      const socket = io('http://localhost:3000');
       // ------- room number dynamic -------
       const roomSpan = document.getElementById('roomDisplay');
       const randomRoom = Math.floor(Math.random() * 200) + 100; // 100-299
@@ -576,43 +585,44 @@
         const roomNumber = document.getElementById('roomDisplay').textContent.replace('Room ', '');
         const requestText = selectedOption || 'Voice request';
 
-        // Prepare form data
-        const formData = new FormData();
-        formData.append('roomNumber', roomNumber);
-        formData.append('service', currentService);
-        formData.append('requestText', requestText);
-
-        if (recordedBlob) {
-          formData.append('voice', recordedBlob, 'voice.webm');
-        }
-
         // Show loading
         sendBtn.innerHTML = '<span class="spinner mr-2"></span> Sending...';
         sendBtn.disabled = true;
 
         try {
-          const response = await fetch('http://localhost:3000/api/requests', {
-            method: 'POST',
-            body: formData
-          });
-
-          if (!response.ok) {
-            throw new Error('Failed to send request');
+          // Upload voice file to Supabase Storage if exists
+          let voiceUrl = null;
+          if (recordedBlob) {
+            const fileName = `voice-${Date.now()}.webm`;
+            const { data: uploadData, error: uploadError } = await supabase.storage
+              .from('voices')
+              .upload(fileName, recordedBlob);
+            
+            if (uploadError) throw uploadError;
+            voiceUrl = uploadData.path;
           }
 
-          const result = await response.json();
-          console.log('Request sent:', result);
+          // Insert request into database
+          const { data, error } = await supabase
+            .from('requests')
+            .insert([
+              {
+                room_number: roomNumber,
+                service: currentService,
+                request_text: requestText,
+                voice_url: voiceUrl,
+                status: 'pending'
+              }
+            ])
+            .select();
 
-          // Show success
-          sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send Request';
-          sendBtn.disabled = false;
+          if (error) throw error;
 
-          // show success toast
-          toast.classList.remove('hidden');
-          setTimeout(() => toast.classList.add('hidden'), 3500);
+          console.log('Request sent:', data[0]);
 
-          // close modal
-          modal.classList.add('hidden');
+          // Emit socket event for real-time updates
+          socket.emit('requestCreated', data[0]);
+
           resetRecorderUI();
 
           // show status tracker with progress animation

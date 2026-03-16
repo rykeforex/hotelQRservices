@@ -7,6 +7,8 @@
   <!-- Tailwind + Font Awesome -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&family=Playfair+Display:wght@400;500;600&display=swap');
     * { font-family: 'Inter', sans-serif; }
@@ -285,9 +287,18 @@
   </div>
 </div>
 
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Socket.io for real-time updates -->
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+
 <script>
   (function() {
+    // Initialize Supabase
+    const supabaseUrl = 'https://your-project-url.supabase.co';
+    const supabaseKey = 'your-anon-key';
+    const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
     // ---------- SYSTEM STATE ----------
     const departments = ['Maintenance', 'Housekeeping', 'Room Service', 'Concierge', 'Laundry'];
     // Department passwords (simulated)
@@ -367,7 +378,7 @@
 
     let currentResetDept = null;
 
-    // Socket.io connection
+    // Socket.io connection for real-time updates
     const socket = io('http://localhost:3000');
 
     socket.on('newRequest', (newRequest) => {
@@ -385,17 +396,22 @@
 
     // API functions
     async function loginDirector(username, password) {
-      const response = await fetch('http://localhost:3000/api/auth/director', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
-      return response.json();
+      // For demo, simple password check (in production, use proper auth)
+      if (username === 'director' && password === 'luxury2025') {
+        return { success: true, user: { username } };
+      } else {
+        throw new Error('Invalid credentials');
+      }
     }
 
     async function fetchAllRequests() {
-      const response = await fetch('http://localhost:3000/api/requests');
-      return response.json();
+      const { data, error } = await supabase
+        .from('requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data;
     }
 
     // ---------- helper functions ----------
@@ -602,7 +618,8 @@
       requestModal.classList.add('flex');
       playVoiceBtn.onclick = () => {
         if (req.voice_url) {
-          window.open(`http://localhost:3000${req.voice_url}`, '_blank');
+          const { data } = supabase.storage.from('voice-recordings').getPublicUrl(req.voice_url);
+          window.open(data.publicUrl, '_blank');
         } else {
           alert('No voice recording available');
         }

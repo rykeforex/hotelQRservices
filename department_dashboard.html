@@ -162,10 +162,17 @@
   </div>
 </div>
 
+  <!-- Supabase Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Socket.io for real-time updates -->
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
 <script>
   (function() {
-    // Simulated requests data (in a real app, this would come from a backend)
+    // Supabase configuration
+    const SUPABASE_URL = 'YOUR_SUPABASE_URL'; // Replace with your Supabase project URL
+    const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // Replace with your Supabase anon key
+    
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     let allRequests = [
       { id: 1, room: '201', service: 'maintenance', request: 'Broken air conditioning', status: 'pending', time: '10:30 AM', voice: null },
       { id: 2, room: '305', service: 'housekeeping', request: 'Clean my room', status: 'in-progress', time: '11:15 AM', voice: null },
@@ -190,7 +197,7 @@
     let currentDept = null;
     let currentRequest = null;
 
-    // Socket.io connection
+    // Socket.io connection for real-time updates
     const socket = io('http://localhost:3000');
 
     socket.on('newRequest', (newRequest) => {
@@ -209,26 +216,60 @@
 
     // API functions
     async function loginDepartment(department, password) {
-      const response = await fetch('http://localhost:3000/api/auth/department', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ department, password })
-      });
-      return response.json();
+      // For demo, simple password check (in production, use proper auth)
+      const passwords = {
+        'Maintenance': 'wrench',
+        'Housekeeping': 'broom',
+        'Room Service': 'plate',
+        'Concierge': 'bell',
+        'Laundry': 'shirt'
+      };
+      
+      if (passwords[department] === password) {
+        return { success: true, department };
+      } else {
+        throw new Error('Invalid password');
+      }
     }
 
     async function fetchDepartmentRequests(department) {
-      const response = await fetch(`http://localhost:3000/api/requests/${department}`);
-      return response.json();
+      // Map department to services
+      const deptToServices = {
+        'Maintenance': ['maintenance', 'report'],
+        'Housekeeping': ['housekeeping', 'towels', 'donotdisturb'],
+        'Room Service': ['roomservice'],
+        'Concierge': ['concierge'],
+        'Laundry': ['laundry']
+      };
+
+      const services = deptToServices[department];
+      if (!services) {
+        throw new Error('Invalid department');
+      }
+
+      const { data, error } = await supabase
+        .from('requests')
+        .select('*')
+        .in('service', services)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data;
     }
 
     async function updateRequestStatus(id, status) {
-      const response = await fetch(`http://localhost:3000/api/requests/${id}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      return response.json();
+      const { data, error } = await supabase
+        .from('requests')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select();
+
+      if (error) throw error;
+
+      // Emit socket event for real-time updates
+      socket.emit('statusUpdated', { id: parseInt(id), status });
+
+      return data[0];
     }
 
     // DOM elements
@@ -374,9 +415,14 @@
     closeModal.addEventListener('click', () => requestModal.classList.add('hidden'));
     requestModal.addEventListener('click', (e) => { if (e.target === requestModal) requestModal.classList.add('hidden'); });
 
-    // Play voice (placeholder)
+    // Play voice
     playVoiceBtn.addEventListener('click', () => {
-      alert('Voice playback not implemented in demo');
+      if (currentRequest && currentRequest.voice_url) {
+        const { data } = supabase.storage.from('voice-recordings').getPublicUrl(currentRequest.voice_url);
+        window.open(data.publicUrl, '_blank');
+      } else {
+        alert('No voice recording available');
+      }
     });
 
     // Search

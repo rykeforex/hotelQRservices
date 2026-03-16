@@ -23,81 +23,114 @@ A comprehensive digital concierge system for luxury hotels, featuring QR code-en
 - Report generation
 - System health monitoring
 
-## Backend Architecture
+## Architecture
+
+### Hybrid Client-Side + Real-Time System
+
+This application combines **Supabase client-side operations** with **Socket.io real-time updates** for optimal performance and user experience.
 
 ### Database Schema
-- **departments**: Department authentication
-- **director**: Director authentication
 - **requests**: Service requests with status tracking
-- **Voice recordings**: Stored as files with URLs
+  - `id` (auto-increment)
+  - `room_number` (text)
+  - `service` (text)
+  - `request_text` (text)
+  - `voice_url` (text, optional)
+  - `status` (text: 'pending', 'in-progress', 'completed')
+  - `created_at` (timestamp)
+  - `updated_at` (timestamp)
 
-### API Endpoints
-- `POST /api/requests` - Create new request
-- `GET /api/requests` - Get all requests (director)
-- `GET /api/requests/:department` - Get department requests
-- `PUT /api/requests/:id/status` - Update request status
-- `POST /api/auth/department` - Department login
-- `POST /api/auth/director` - Director login
+### Client-Side Operations
+- **Supabase Client**: Direct database queries from browser
+- **Socket.io**: Real-time notifications for new requests and status updates
+- **Authentication**: Simple password-based login (demo)
+- **File Storage**: Voice recordings in Supabase Storage
 
-### Real-time Features
-- Socket.io for instant notifications
-- Live request updates across all interfaces
+### Real-Time Features
+- **Live Updates**: New requests appear instantly on department/director dashboards
+- **Status Changes**: Updates propagate immediately across all connected clients
+- **Voice Notes**: New voice recordings trigger notifications
+- **Cross-Client Sync**: All dashboards stay synchronized in real-time
+
+### Security Notes
+- In production, implement proper authentication
+- Use Row Level Security (RLS) policies in Supabase
+- Store sensitive credentials securely
+- Consider API rate limiting
 
 ## Setup Instructions
 
 ### Prerequisites
-- Node.js (v14 or higher)
-- SQLite3
+- Supabase account (free tier available)
+- Web browser with JavaScript enabled
 
-### Installation
+### Supabase Setup
 
-1. **Install Dependencies**
+1. **Create Supabase Project**
+   - Go to [supabase.com](https://supabase.com) and sign up/login
+   - Click "New Project"
+   - Name: `luxe-hotel-services`
+   - Choose a strong database password
+   - Select region closest to your users
+
+2. **Get Project Credentials**
+   - In your Supabase dashboard, go to **Settings** → **API**
+   - Copy your **Project URL** and **anon/public key**
+
+3. **Configure the Application**
+   - Open each HTML file (`index.html`, `department_dashboard.html`, `director_dashboard.html`)
+   - Replace the placeholder values:
+     ```javascript
+     const supabaseUrl = 'https://your-project-url.supabase.co';
+     const supabaseKey = 'your-anon-key';
+     ```
+   - With your actual Supabase project URL and anon key
+
+4. **Set Up Database Schema**
+   - In your Supabase dashboard, go to **SQL Editor**
+   - Run the contents of `schema.sql` to create tables
+   - This creates the `requests` table with proper structure
+
+5. **Configure Storage (Optional)**
+   - For voice recordings, create a storage bucket called `voice-recordings`
+   - Set bucket to public access for voice playback
+
+### Deployment
+
+#### Option 1: GitHub Pages (Recommended)
+1. Push code to GitHub repository
+2. Go to repository **Settings** → **Pages**
+3. Set source to "Deploy from a branch"
+4. Select main branch and save
+5. Your site will be available at `https://yourusername.github.io/repository-name`
+
+#### Option 2: Direct File Access
+- Open `index.html` directly in a web browser
+- All files work offline once Supabase is configured
+
+### Testing
+
+1. **Start the Socket Server** (for real-time updates):
    ```bash
-   npm install
+   node socket-server.js
    ```
 
-## Supabase Setup Guide
+2. **Guest Interface**: Open `index.html`, select a service, record a message
+3. **Department Dashboard**: Open `department_dashboard.html`, login with department credentials
+4. **Director Dashboard**: Open `director_dashboard.html`, login with director credentials
 
-### 1. Create Supabase Project
-1. Go to [supabase.com](https://supabase.com) and sign up/login
-2. Click "New Project"
-3. Choose your organization and enter project details:
-   - **Name**: `luxe-hotel-services`
-   - **Database Password**: Choose a strong password
-   - **Region**: Select closest to your users
+### Default Credentials
 
-### 2. Get Database Credentials
-1. In your Supabase dashboard, go to **Settings** → **Database**
-2. Copy the **Connection string** (it looks like: `postgres://postgres:[password]@db.[project-ref].supabase.co:5432/postgres`)
-3. Note down your project URL and anon key (for future use)
+**Department Logins:**
+- Maintenance: `wrench`
+- Housekeeping: `broom`
+- Room Service: `plate`
+- Concierge: `bell`
+- Laundry: `shirt`
 
-### 3. Configure Environment
-1. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-2. Update `.env` with your Supabase credentials:
-   ```env
-   DATABASE_URL=postgres://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres
-   JWT_SECRET=your_super_secret_jwt_key_here
-   INIT_DB=true
-   ```
-
-### 4. Run Database Schema
-The server will automatically run `schema.sql` when `INIT_DB=true`, creating tables and seeding data.
-
-### 5. Test Connection
-```bash
-npm start
-# Should see: "Connected to PostgreSQL database" and "Database schema initialized"
-```
-
-### 6. Verify Setup
-Test the health endpoint:
-```bash
-curl http://localhost:3000/api/health
-# Should return: {"status":"OK","timestamp":"..."}
-```
+**Director Login:**
+- Username: `director`
+- Password: `luxury2025`
 
 ## Alternative: Local PostgreSQL
 
