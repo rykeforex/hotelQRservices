@@ -3,12 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LUXE · director suite</title>
+  <title>PeerLoom · director suite</title>
   <!-- Tailwind + Font Awesome -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-  <!-- Supabase -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&family=Playfair+Display:wght@400;500;600&display=swap');
     * { font-family: 'Inter', sans-serif; }
@@ -232,6 +230,15 @@
     </div>
   </div>
 
+  <!-- NEW: WIFI MANAGEMENT SECTION (Multi-WiFi) -->
+  <div class="glass-panel p-6 mt-6" id="wifiManagementSection">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-2xl font-serif gold flex items-center gap-2"><i class="fas fa-wifi"></i> WiFi Management</h2>
+      <button id="addWifiBtn" class="bg-gold/20 hover:bg-gold/30 px-4 py-2 rounded-full text-sm transition gold-glow"><i class="fas fa-plus"></i> Add Network</button>
+    </div>
+    <div id="wifiNetworksList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+  </div>
+
   <!-- REPORT GENERATOR + SEARCH -->
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
     <div class="glass-panel p-5 lg:col-span-2">
@@ -287,18 +294,30 @@
   </div>
 </div>
 
-  <!-- Supabase -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Socket.io for real-time updates -->
-  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<!-- NEW: WIFI MODAL for Add/Edit -->
+<div id="wifiModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
+  <div class="glass-panel max-w-md w-full p-6">
+    <div class="flex justify-between"><h3 class="text-xl gold" id="wifiModalTitle">Add WiFi Network</h3><button id="closeWifiModal" class="text-2xl">&times;</button></div>
+    <div class="mt-4 space-y-4">
+      <input type="text" id="wifiSsid" placeholder="SSID (e.g., LUXE_FLOOR_5)" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+      <input type="text" id="wifiPassword" placeholder="Password" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+      <select id="wifiScopeType" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+        <option value="floor">Floor</option>
+        <option value="block">Block</option>
+        <option value="global">Global (whole hotel)</option>
+      </select>
+      <input type="text" id="wifiScopeValue" placeholder="e.g., 5 or Block A (leave blank for global)" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+      <input type="hidden" id="wifiEditId" value="">
+      <div class="flex gap-3">
+        <button id="saveWifiBtn" class="flex-1 bg-gold text-black py-2 rounded-full hover:bg-yellow-400">Save</button>
+        <button id="cancelWifiBtn" class="flex-1 bg-gold/20 py-2 rounded-full">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
   (function() {
-    // Initialize Supabase
-    const supabaseUrl = 'https://your-project-url.supabase.co';
-    const supabaseKey = 'your-anon-key';
-    const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
-
     // ---------- SYSTEM STATE ----------
     const departments = ['Maintenance', 'Housekeeping', 'Room Service', 'Concierge', 'Laundry'];
     // Department passwords (simulated)
@@ -309,6 +328,18 @@
       'Concierge': 'conc123',
       'Laundry': 'laundry123'
     };
+
+    let allRequests = [];
+    let nextId = 100;
+    const seed = [
+      { id:1, room:'412', dept:'Maintenance', type:'AC broken', desc:'not cooling', voice:true, timestamp:Date.now()-25*60000, status:'pending' },
+      { id:2, room:'305', dept:'Housekeeping', type:'extra pillows', desc:'2 pillows', voice:false, timestamp:Date.now()-12*60000, status:'in-progress' },
+      { id:3, room:'510', dept:'Room Service', type:'breakfast', desc:'continental', voice:false, timestamp:Date.now()-80*60000, status:'completed' },
+      { id:4, room:'221', dept:'Concierge', type:'taxi', desc:'to airport 5pm', voice:true, timestamp:Date.now()-10*60000, status:'pending' },
+      { id:5, room:'189', dept:'Laundry', type:'wash & fold', desc:'3 shirts', voice:false, timestamp:Date.now()-5*60000, status:'pending' },
+      { id:6, room:'333', dept:'Maintenance', type:'light issue', desc:'flickering', voice:true, timestamp:Date.now()-2*60000, status:'pending' },
+    ];
+    allRequests.push(...seed); nextId = 7;
 
     let voiceUsed = 42;
     const voiceLimitStandard = 100;
@@ -321,6 +352,106 @@
     ];
 
     let deptEnabled = { Maintenance:true, Housekeeping:true, 'Room Service':true, Concierge:true, Laundry:true };
+
+    // ---------- NEW: WiFi Management Data ----------
+    let wifiNetworks = [];
+    const HOTEL_ID = 1;
+
+    function loadWifiNetworks() {
+      const stored = localStorage.getItem('wifiNetworks');
+      if (stored) {
+        wifiNetworks = JSON.parse(stored);
+      } else {
+        // seed default networks
+        wifiNetworks = [
+          { id: 1, hotel_id: HOTEL_ID, ssid: 'LUXE_GLOBAL', password: 'welcome2025', scope_type: 'global', scope_value: '' },
+          { id: 2, hotel_id: HOTEL_ID, ssid: 'LUXE_FLOOR_1', password: 'floor1pass', scope_type: 'floor', scope_value: '1' },
+          { id: 3, hotel_id: HOTEL_ID, ssid: 'LUXE_FLOOR_2', password: 'floor2pass', scope_type: 'floor', scope_value: '2' },
+          { id: 4, hotel_id: HOTEL_ID, ssid: 'LUXE_BLOCK_A', password: 'blockApass', scope_type: 'block', scope_value: 'Block A' }
+        ];
+        saveWifiNetworks();
+      }
+      renderWifiNetworks();
+    }
+
+    function saveWifiNetworks() {
+      localStorage.setItem('wifiNetworks', JSON.stringify(wifiNetworks));
+    }
+
+    function renderWifiNetworks() {
+      const container = document.getElementById('wifiNetworksList');
+      if (!container) return;
+      if (wifiNetworks.length === 0) {
+        container.innerHTML = '<div class="col-span-2 text-center opacity-60 py-8">No WiFi networks configured. Click "Add Network" to create one.</div>';
+        return;
+      }
+      let html = '';
+      wifiNetworks.forEach(net => {
+        const scopeDisplay = net.scope_type === 'global' ? '🌍 Global' : (net.scope_type === 'floor' ? `Floor ${net.scope_value}` : `Block ${net.scope_value}`);
+        html += `
+          <div class="glass-panel p-4 relative" data-id="${net.id}">
+            <div class="flex justify-between items-start">
+              <div>
+                <div class="font-medium text-lg gold">${net.ssid}</div>
+                <div class="text-sm opacity-70 mt-1">Password: ********</div>
+                <div class="text-xs mt-1"><span class="gold">Scope:</span> ${scopeDisplay}</div>
+              </div>
+              <div class="flex gap-2">
+                <button class="edit-wifi text-gold hover:text-yellow-300 transition" data-id="${net.id}"><i class="fas fa-edit"></i></button>
+                <button class="delete-wifi text-gold hover:text-red-400 transition" data-id="${net.id}"><i class="fas fa-trash"></i></button>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+      container.innerHTML = html;
+
+      // attach event listeners
+      document.querySelectorAll('.edit-wifi').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const id = parseInt(e.currentTarget.dataset.id);
+          const net = wifiNetworks.find(n => n.id === id);
+          if (net) openWifiModal(net);
+        });
+      });
+      document.querySelectorAll('.delete-wifi').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const id = parseInt(e.currentTarget.dataset.id);
+          if (confirm('Delete this WiFi network?')) {
+            wifiNetworks = wifiNetworks.filter(n => n.id !== id);
+            saveWifiNetworks();
+            renderWifiNetworks();
+          }
+        });
+      });
+    }
+
+    function openWifiModal(net = null) {
+      const modal = document.getElementById('wifiModal');
+      const title = document.getElementById('wifiModalTitle');
+      const ssidInput = document.getElementById('wifiSsid');
+      const passInput = document.getElementById('wifiPassword');
+      const scopeType = document.getElementById('wifiScopeType');
+      const scopeValue = document.getElementById('wifiScopeValue');
+      const editId = document.getElementById('wifiEditId');
+      if (net) {
+        title.innerText = 'Edit WiFi Network';
+        ssidInput.value = net.ssid;
+        passInput.value = net.password;
+        scopeType.value = net.scope_type;
+        scopeValue.value = net.scope_value || '';
+        editId.value = net.id;
+      } else {
+        title.innerText = 'Add WiFi Network';
+        ssidInput.value = '';
+        passInput.value = '';
+        scopeType.value = 'floor';
+        scopeValue.value = '';
+        editId.value = '';
+      }
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
 
     // ---------- DOM elements ----------
     const loginDiv = document.getElementById('loginContainer');
@@ -378,42 +509,6 @@
 
     let currentResetDept = null;
 
-    // Socket.io connection for real-time updates
-    const socket = io('http://localhost:3000');
-
-    socket.on('newRequest', (newRequest) => {
-      console.log('New request received:', newRequest);
-      refreshStats();
-      renderMonitor();
-      refreshAlerts();
-    });
-
-    socket.on('statusUpdate', (update) => {
-      console.log('Status update:', update);
-      refreshStats();
-      renderMonitor();
-    });
-
-    // API functions
-    async function loginDirector(username, password) {
-      // For demo, simple password check (in production, use proper auth)
-      if (username === 'director' && password === 'luxury2025') {
-        return { success: true, user: { username } };
-      } else {
-        throw new Error('Invalid credentials');
-      }
-    }
-
-    async function fetchAllRequests() {
-      const { data, error } = await supabase
-        .from('requests')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      return data;
-    }
-
     // ---------- helper functions ----------
     function getTimeGreeting() {
       const h = new Date().getHours();
@@ -428,106 +523,58 @@
       dateTimeEl.innerText = now.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) + ' ' + now.toLocaleTimeString();
     }
 
-    async function refreshStats() {
-      try {
-        const requests = await fetchAllRequests();
-        const today = new Date().setHours(0,0,0,0);
-        const todayReqs = requests.filter(r => new Date(r.created_at).getTime() >= today);
+    function refreshStats() {
+      const today = new Date().setHours(0,0,0,0);
+      const todayReqs = allRequests.filter(r => r.timestamp >= today);
+      totalToday.innerText = todayReqs.length;
+      pendingCount.innerText = allRequests.filter(r => r.status==='pending').length;
+      inProgressCount.innerText = allRequests.filter(r => r.status==='in-progress').length;
+      completedCount.innerText = allRequests.filter(r => r.status==='completed').length;
+      avgResponse.innerText = (2.4 + Math.random()*0.5).toFixed(1);
+      activeRooms.innerText = [...new Set(allRequests.map(r=>r.room))].length;
 
-        totalToday.innerText = todayReqs.length;
-        pendingCount.innerText = requests.filter(r => r.status==='pending').length;
-        inProgressCount.innerText = requests.filter(r => r.status==='in-progress').length;
-        completedCount.innerText = requests.filter(r => r.status==='completed').length;
-        avgResponse.innerText = (2.4 + Math.random()*0.5).toFixed(1);
-        activeRooms.innerText = [...new Set(requests.map(r=>r.room_number))].length;
-
-        // Department stats (map services to departments)
-        const serviceToDept = {
-          'maintenance': 'Maintenance',
-          'housekeeping': 'Housekeeping',
-          'roomservice': 'Room Service',
-          'concierge': 'Concierge',
-          'laundry': 'Laundry',
-          'towels': 'Housekeeping',
-          'donotdisturb': 'Housekeeping',
-          'report': 'Maintenance'
-        };
-
-        const maint = requests.filter(r => serviceToDept[r.service] === 'Maintenance');
-        maintPending.innerText = maint.filter(r => r.status==='pending').length;
-        maintCompleted.innerText = maint.filter(r => r.status==='completed').length;
-
-        const house = requests.filter(r => ['housekeeping', 'towels', 'donotdisturb'].includes(r.service));
-        housePending.innerText = house.filter(r => r.status==='pending').length;
-        houseCompleted.innerText = house.filter(r => r.status==='completed').length;
-
-        const room = requests.filter(r => r.service === 'roomservice');
-        roomPending.innerText = room.filter(r => r.status==='pending').length;
-        roomCompleted.innerText = room.filter(r => r.status==='completed').length;
-
-        const conc = requests.filter(r => r.service === 'concierge');
-        concPending.innerText = conc.filter(r => r.status==='pending').length;
-        concCompleted.innerText = conc.filter(r => r.status==='completed').length;
-
-        const laun = requests.filter(r => r.service === 'laundry');
-        launPending.innerText = laun.filter(r => r.status==='pending').length;
-        launCompleted.innerText = laun.filter(r => r.status==='completed').length;
-      } catch (error) {
-        console.error('Error refreshing stats:', error);
-      }
+      const maint = allRequests.filter(r => r.dept==='Maintenance');
+      maintPending.innerText = maint.filter(r => r.status==='pending').length;
+      maintCompleted.innerText = maint.filter(r => r.status==='completed').length;
+      const house = allRequests.filter(r => r.dept==='Housekeeping');
+      housePending.innerText = house.filter(r => r.status==='pending').length;
+      houseCompleted.innerText = house.filter(r => r.status==='completed').length;
+      const room = allRequests.filter(r => r.dept==='Room Service');
+      roomPending.innerText = room.filter(r => r.status==='pending').length;
+      roomCompleted.innerText = room.filter(r => r.status==='completed').length;
+      const conc = allRequests.filter(r => r.dept==='Concierge');
+      concPending.innerText = conc.filter(r => r.status==='pending').length;
+      concCompleted.innerText = conc.filter(r => r.status==='completed').length;
+      const laun = allRequests.filter(r => r.dept==='Laundry');
+      launPending.innerText = laun.filter(r => r.status==='pending').length;
+      launCompleted.innerText = laun.filter(r => r.status==='completed').length;
     }
 
-    async function renderMonitor(filter='') {
-      try {
-        let requests = await fetchAllRequests();
-        if (filter) {
-          const f = filter.toLowerCase();
-          requests = requests.filter(r =>
-            r.room_number.toLowerCase().includes(f) ||
-            r.service.toLowerCase().includes(f) ||
-            r.request_text.toLowerCase().includes(f)
-          );
-        }
-        requests.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
-
-        let html = '';
-        requests.slice(0,15).forEach(req => {
-          const time = new Date(req.created_at).toLocaleTimeString();
-          const statusClass = req.status==='pending'?'text-yellow-400': req.status==='in-progress'?'text-blue-400':'text-green-400';
-          const dept = getDepartmentFromService(req.service);
-          html += `<tr class="border-b border-gray-700/30 hover:bg-gold/5 cursor-pointer request-row" data-id="${req.id}">
-            <td class="py-2">${req.room_number}</td><td>${dept}</td><td>${req.service}</td><td>${time}</td>
-            <td><span class="text-xs ${statusClass}">${req.status}</span></td>
-            <td><i class="fas fa-chevron-right gold"></i></td>
-          </tr>`;
-        });
-        monitorBody.innerHTML = html;
-        document.querySelectorAll('.request-row').forEach(row => {
-          row.addEventListener('click', () => {
-            const id = parseInt(row.dataset.id);
-            fetchAllRequests().then(requests => {
-              const req = requests.find(r=>r.id===id);
-              if (req) showDetailModal(req);
-            });
-          });
-        });
-      } catch (error) {
-        console.error('Error rendering monitor:', error);
+    function renderMonitor(filter='') {
+      let filtered = allRequests;
+      if (filter) {
+        const f = filter.toLowerCase();
+        filtered = allRequests.filter(r => r.room.toLowerCase().includes(f) || r.dept.toLowerCase().includes(f) || r.type.toLowerCase().includes(f));
       }
-    }
-
-    function getDepartmentFromService(service) {
-      const serviceToDept = {
-        'maintenance': 'Maintenance',
-        'housekeeping': 'Housekeeping',
-        'roomservice': 'Room Service',
-        'concierge': 'Concierge',
-        'laundry': 'Laundry',
-        'towels': 'Housekeeping',
-        'donotdisturb': 'Housekeeping',
-        'report': 'Maintenance'
-      };
-      return serviceToDept[service] || 'Unknown';
+      filtered.sort((a,b)=> b.timestamp - a.timestamp);
+      let html = '';
+      filtered.slice(0,15).forEach(req => {
+        const time = new Date(req.timestamp).toLocaleTimeString();
+        const statusClass = req.status==='pending'?'text-yellow-400': req.status==='in-progress'?'text-blue-400':'text-green-400';
+        html += `<tr class="border-b border-gray-700/30 hover:bg-gold/5 cursor-pointer request-row" data-id="${req.id}">
+          <td class="py-2">${req.room}</td><td>${req.dept}</td><td>${req.type}</td><td>${time}</td>
+          <td><span class="text-xs ${statusClass}">${req.status}</span></td>
+          <td><i class="fas fa-chevron-right gold"></i></td>
+        </tr>`;
+      });
+      monitorBody.innerHTML = html;
+      document.querySelectorAll('.request-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const id = parseInt(row.dataset.id);
+          const req = allRequests.find(r=>r.id===id);
+          if (req) showDetailModal(req);
+        });
+      });
     }
 
     function refreshAlerts() {
@@ -605,25 +652,17 @@
 
     function showDetailModal(req) {
       const modalDetail = document.getElementById('modalDetail');
-      const dept = getDepartmentFromService(req.service);
       modalDetail.innerHTML = `
-        <p><span class="gold">room:</span> ${req.room_number}</p>
-        <p><span class="gold">dept:</span> ${dept}</p>
-        <p><span class="gold">service:</span> ${req.service}</p>
-        <p><span class="gold">description:</span> ${req.request_text}</p>
-        <p><span class="gold">time:</span> ${new Date(req.created_at).toLocaleString()}</p>
-        <p><span class="gold">voice:</span> ${req.voice_url ? '🎤 recorded' : '—'}</p>
+        <p><span class="gold">room:</span> ${req.room}</p>
+        <p><span class="gold">dept:</span> ${req.dept}</p>
+        <p><span class="gold">type:</span> ${req.type}</p>
+        <p><span class="gold">description:</span> ${req.desc}</p>
+        <p><span class="gold">time:</span> ${new Date(req.timestamp).toLocaleString()}</p>
+        <p><span class="gold">voice:</span> ${req.voice ? '🎤 recorded' : '—'}</p>
       `;
       requestModal.classList.remove('hidden');
       requestModal.classList.add('flex');
-      playVoiceBtn.onclick = () => {
-        if (req.voice_url) {
-          const { data } = supabase.storage.from('voice-recordings').getPublicUrl(req.voice_url);
-          window.open(data.publicUrl, '_blank');
-        } else {
-          alert('No voice recording available');
-        }
-      };
+      playVoiceBtn.onclick = () => alert('🎤 playing voice (demo)');
     }
 
     closeModal.addEventListener('click', () => requestModal.classList.add('hidden'));
@@ -678,40 +717,52 @@
       voiceMeter.style.width = percent + '%';
     }
 
+    // Simulate new requests every 20s
+    setInterval(() => {
+      const dept = departments[Math.floor(Math.random()*departments.length)];
+      const room = Math.floor(Math.random()*500)+100;
+      const types = ['extra towel','light issue','food order','taxi','laundry'];
+      const hasVoice = Math.random()>0.6;
+      const newReq = {
+        id: nextId++,
+        room: room.toString(),
+        dept: dept,
+        type: types[Math.floor(Math.random()*types.length)],
+        desc: 'guest request',
+        voice: hasVoice && (subscriptionPlan==='premium' || voiceUsed < voiceLimitStandard),
+        timestamp: Date.now(),
+        status: 'pending'
+      };
+      if (newReq.voice) voiceUsed++;
+      allRequests.push(newReq);
+      renderMonitor(searchMonitor.value);
+      refreshStats();
+      refreshAlerts();
+      updateSubscriptionUI();
+    }, 20000);
+
     // ---------- LOGIN & SPLASH ----------
-    loginBtn.addEventListener('click', async (e) => {
+    loginBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      const username = document.getElementById('dirUser').value;
-      const password = document.getElementById('dirPass').value;
+      loginDiv.classList.add('hidden');
+      splashGreeting.innerText = `${getTimeGreeting()}, Director`;
+      splashTime.innerText = new Date().toLocaleString();
+      splashDiv.classList.remove('hidden');
 
-      try {
-        const result = await loginDirector(username, password);
-        if (result.error) {
-          alert(result.error);
-          return;
-        }
-
-        loginDiv.classList.add('hidden');
-        splashGreeting.innerText = `${getTimeGreeting()}, Director`;
-        splashTime.innerText = new Date().toLocaleString();
-        splashDiv.classList.remove('hidden');
-
-        setTimeout(() => {
-          splashDiv.classList.add('hidden');
-          dashDiv.classList.remove('hidden');
-          updateDateTime();
-          setInterval(updateDateTime, 1000);
-          renderMonitor();
-          refreshStats();
-          refreshAlerts();
-          renderDeptControls();
-          renderResetRequests();
-          updateSubscriptionUI();
-        }, 2500);
-      } catch (error) {
-        console.error('Login error:', error);
-        alert('Login failed. Please try again.');
-      }
+      setTimeout(() => {
+        splashDiv.classList.add('hidden');
+        dashDiv.classList.remove('hidden');
+        updateDateTime();
+        setInterval(updateDateTime, 1000);
+        renderMonitor();
+        refreshStats();
+        refreshAlerts();
+        renderDeptControls();
+        renderResetRequests();
+        updateSubscriptionUI();
+        // Load WiFi networks
+        loadWifiNetworks();
+      }, 2500);
     });
 
     logoutBtn.addEventListener('click', () => {
@@ -741,10 +792,69 @@
     });
 
     // Close modals on background click
-    [requestModal, pwResetModal, reportModal].forEach(modal => {
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) modal.classList.add('hidden');
-      });
+    [requestModal, pwResetModal, reportModal, document.getElementById('wifiModal')].forEach(modal => {
+      if (modal) {
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) modal.classList.add('hidden');
+        });
+      }
+    });
+
+    // ---------- WiFi Modal Event Listeners ----------
+    document.getElementById('addWifiBtn').addEventListener('click', () => openWifiModal());
+
+    document.getElementById('saveWifiBtn').addEventListener('click', () => {
+      const ssid = document.getElementById('wifiSsid').value.trim();
+      const password = document.getElementById('wifiPassword').value.trim();
+      const scopeType = document.getElementById('wifiScopeType').value;
+      let scopeValue = document.getElementById('wifiScopeValue').value.trim();
+      const editId = document.getElementById('wifiEditId').value;
+
+      if (!ssid || !password) {
+        alert('SSID and password are required.');
+        return;
+      }
+      if (scopeType !== 'global' && !scopeValue) {
+        alert('Please enter a scope value (floor number or block name) for non-global networks.');
+        return;
+      }
+      if (scopeType === 'global') scopeValue = '';
+
+      // Check for duplicate scope
+      const existing = wifiNetworks.find(n => n.scope_type === scopeType && n.scope_value === scopeValue && (editId ? n.id != editId : true));
+      if (existing) {
+        alert('A WiFi network for this scope already exists. Please choose a different scope.');
+        return;
+      }
+
+      if (editId) {
+        // update
+        const index = wifiNetworks.findIndex(n => n.id == editId);
+        if (index !== -1) {
+          wifiNetworks[index] = { ...wifiNetworks[index], ssid, password, scope_type: scopeType, scope_value: scopeValue };
+        }
+      } else {
+        // add new
+        const newId = wifiNetworks.length > 0 ? Math.max(...wifiNetworks.map(n => n.id)) + 1 : 1;
+        wifiNetworks.push({
+          id: newId,
+          hotel_id: HOTEL_ID,
+          ssid,
+          password,
+          scope_type: scopeType,
+          scope_value: scopeValue
+        });
+      }
+      saveWifiNetworks();
+      renderWifiNetworks();
+      document.getElementById('wifiModal').classList.add('hidden');
+    });
+
+    document.getElementById('closeWifiModal').addEventListener('click', () => {
+      document.getElementById('wifiModal').classList.add('hidden');
+    });
+    document.getElementById('cancelWifiBtn').addEventListener('click', () => {
+      document.getElementById('wifiModal').classList.add('hidden');
     });
 
     updateDateTime();
