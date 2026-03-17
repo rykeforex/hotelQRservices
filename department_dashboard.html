@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LUXE · department access</title>
+  <title>PeerLoom · director suite</title>
   <!-- Tailwind + Font Awesome -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
@@ -12,15 +12,15 @@
     * { font-family: 'Inter', sans-serif; }
     body { transition: background-color 0.5s ease, color 0.3s ease; overflow-x: hidden; }
     .font-serif { font-family: 'Playfair Display', serif; }
-
+    
     :root {
       --gold: #c9a227;
       --gold-light: #e5c87b;
     }
-
+    
     .dark { background-color: #121416; color: #f0f2f4; }
     .light { background-color: #f8fafc; color: #1e262c; }
-
+    
     .glass-panel {
       backdrop-filter: blur(14px);
       -webkit-backdrop-filter: blur(14px);
@@ -30,11 +30,11 @@
     }
     .dark .glass-panel { background: rgba(10, 12, 16, 0.5); }
     .light .glass-panel { background: rgba(255, 255, 255, 0.6); }
-
+    
     .gold { color: var(--gold); }
     .bg-gold { background: var(--gold); }
     .border-gold { border-color: var(--gold); }
-
+    
     .stat-card {
       background: rgba(255,255,255,0.03);
       backdrop-filter: blur(8px);
@@ -44,44 +44,44 @@
       transition: transform 0.2s, box-shadow 0.2s;
     }
     .stat-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -8px rgba(201,162,39,0.2); }
-
+    
+    @keyframes shimmerSlide {
+      0% { left: -50%; opacity: 0; }
+      20% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { left: 150%; opacity: 0; }
+    }
+    .shimmer::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -50%;
+      width: 60%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(201,162,39,0.3), transparent);
+      transform: skewX(-20deg);
+      animation: shimmerSlide 2s ease-in-out forwards;
+    }
+    
     .fade-up {
       opacity: 0;
       transform: translateY(20px);
       animation: fadeUp 0.5s ease forwards;
     }
     @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
-
+    
     .stagger-1 { animation-delay: 0.1s; }
     .stagger-2 { animation-delay: 0.15s; }
     .stagger-3 { animation-delay: 0.2s; }
-
+    .stagger-4 { animation-delay: 0.25s; }
+    .stagger-5 { animation-delay: 0.3s; }
+    .stagger-6 { animation-delay: 0.35s; }
+    
     /* modal */
     .modal-overlay {
       background: rgba(0,0,0,0.8);
       backdrop-filter: blur(8px);
     }
-
-    .request-row {
-      background: rgba(255,255,255,0.02);
-      border-radius: 1rem;
-      border: 1px solid rgba(201,162,39,0.1);
-      padding: 1rem;
-      margin-bottom: 0.5rem;
-      transition: all 0.2s;
-    }
-    .request-row:hover { background: rgba(201,162,39,0.05); border-color: rgba(201,162,39,0.3); }
-
-    .status-badge {
-      padding: 0.25rem 0.75rem;
-      border-radius: 1rem;
-      font-size: 0.75rem;
-      font-weight: 500;
-      text-transform: uppercase;
-    }
-    .status-pending { background: rgba(255,193,7,0.2); color: #ffc107; }
-    .status-in-progress { background: rgba(0,123,255,0.2); color: #007bff; }
-    .status-completed { background: rgba(40,167,69,0.2); color: #28a745; }
   </style>
 </head>
 <body class="dark antialiased">
@@ -90,344 +90,774 @@
 <div id="loginContainer" class="min-h-screen flex items-center justify-center p-4">
   <div class="glass-panel w-full max-w-md p-8 fade-up">
     <div class="text-center mb-8">
-      <i class="fas fa-users-cog text-5xl gold"></i>
-      <h2 class="text-3xl font-light mt-2 gold font-serif">department access</h2>
-      <p class="text-sm opacity-60">select department & enter credentials</p>
+      <i class="fas fa-crown text-5xl gold"></i>
+      <h2 class="text-3xl font-light mt-2 gold font-serif">Director access</h2>
+      <p class="text-sm opacity-60">enter secure credentials</p>
     </div>
     <div class="space-y-5">
-      <select id="deptSelect" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none transition">
-        <option value="">Select Department</option>
-        <option value="Maintenance">🔧 Maintenance</option>
-        <option value="Housekeeping">🧹 Housekeeping</option>
-        <option value="Room Service">🍽️ Room Service</option>
-        <option value="Concierge">✨ Concierge</option>
-        <option value="Laundry">🧺 Laundry</option>
-      </select>
-      <input type="password" id="deptPass" placeholder="Department Password" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none transition">
-      <button id="loginBtn" class="w-full py-3 bg-gold text-black font-semibold rounded-xl hover:bg-yellow-400 transition shadow-lg shadow-gold/20 disabled:opacity-50" disabled>enter</button>
+      <input type="text" id="dirUser" placeholder="Username" value="director" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none transition">
+      <input type="password" id="dirPass" placeholder="Password" value="pearl" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none transition">
+      <button id="loginBtn" class="w-full py-3 bg-gold text-black font-semibold rounded-xl hover:bg-yellow-400 transition shadow-lg shadow-gold/20">enter</button>
     </div>
   </div>
 </div>
 
-<!-- DEPARTMENT DASHBOARD -->
+<!-- SPLASH SCREEN -->
+<div id="splashScreen" class="fixed inset-0 flex items-center justify-center z-50 hidden modal-overlay">
+  <div class="text-center">
+    <i class="fas fa-crown text-6xl gold mb-6 shimmer"></i>
+    <div id="splashGreeting" class="font-serif text-5xl gold mb-4"></div>
+    <div class="text-xl text-gray-300" id="splashTime"></div>
+    <div class="mt-8 w-24 h-0.5 bg-gold mx-auto"></div>
+  </div>
+</div>
+
+<!-- MASTER DASHBOARD -->
 <div id="dashboardContainer" class="hidden min-h-screen p-4 md:p-6 transition-opacity duration-700">
 
   <!-- TOP BAR -->
   <div class="glass-panel p-4 flex flex-wrap items-center justify-between mb-6">
     <div class="flex items-center gap-3">
-      <i class="fas fa-users-cog text-2xl gold"></i>
-      <span class="text-xl font-medium" id="deptTitle">DEPARTMENT DASHBOARD</span>
+      <i class="fas fa-hotel text-2xl gold"></i>
+      <span class="text-xl font-medium">DIRECTOR’S SUITE</span>
     </div>
     <div class="flex items-center gap-6">
+      <div id="greeting" class="text-sm font-light"></div>
       <div id="currentDateTime" class="text-sm opacity-70"></div>
-      <button id="logoutBtn" class="text-sm bg-red-500/20 hover:bg-red-500/30 px-3 py-1 rounded-full transition">logout</button>
+      <button id="themeToggle" class="w-12 h-6 rounded-full bg-gray-600/30 flex items-center p-1 transition-all">
+        <div id="themeSlider" class="w-4 h-4 rounded-full bg-gold transform translate-x-0 transition-transform"></div>
+      </button>
+      <button id="logoutBtn" class="text-sm bg-gold/20 hover:bg-gold/30 px-4 py-2 rounded-full transition"><i class="fas fa-sign-out-alt mr-1"></i> logout</button>
     </div>
   </div>
 
   <!-- STATS CARDS -->
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-    <div class="stat-card fade-up stagger-1"><i class="fas fa-list gold text-xl"></i><div class="text-3xl font-light mt-1" id="totalRequests">0</div><div class="text-xs uppercase tracking-wider opacity-60">total requests</div></div>
+  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+    <div class="stat-card fade-up stagger-1"><i class="fas fa-calendar-day gold text-xl"></i><div class="text-3xl font-light mt-1" id="totalToday">0</div><div class="text-xs uppercase tracking-wider opacity-60">total today</div></div>
     <div class="stat-card fade-up stagger-2"><i class="fas fa-hourglass-half gold"></i><div class="text-3xl font-light" id="pendingCount">0</div><div class="text-xs">pending</div></div>
     <div class="stat-card fade-up stagger-3"><i class="fas fa-sync-alt gold"></i><div class="text-3xl font-light" id="inProgressCount">0</div><div class="text-xs">in progress</div></div>
     <div class="stat-card fade-up stagger-4"><i class="fas fa-check-circle gold"></i><div class="text-3xl font-light" id="completedCount">0</div><div class="text-xs">completed</div></div>
+    <div class="stat-card fade-up stagger-5"><i class="fas fa-clock gold"></i><div class="text-3xl font-light" id="avgResponse">2.4</div><div class="text-xs">avg resp (min)</div></div>
+    <div class="stat-card fade-up stagger-6"><i class="fas fa-door-open gold"></i><div class="text-3xl font-light" id="activeRooms">12</div><div class="text-xs">active rooms</div></div>
   </div>
 
-  <!-- REQUESTS LIST -->
-  <div class="glass-panel p-6">
+  <!-- DEPARTMENT PERFORMANCE -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+    <div class="glass-panel p-3 fade-up stagger-1"><div class="flex justify-between"><span class="font-medium">🔧 Maint</span><span class="gold" id="maintPending">0</span></div><div class="flex justify-between text-xs opacity-60"><span>pend</span><span id="maintCompleted">0</span></div></div>
+    <div class="glass-panel p-3 fade-up stagger-2"><div class="flex justify-between"><span>🧹 House</span><span class="gold" id="housePending">0</span></div><div class="flex justify-between text-xs"><span>pend</span><span id="houseCompleted">0</span></div></div>
+    <div class="glass-panel p-3 fade-up stagger-3"><div class="flex justify-between"><span>🍽️ Room</span><span class="gold" id="roomPending">0</span></div><div class="flex justify-between text-xs"><span>pend</span><span id="roomCompleted">0</span></div></div>
+    <div class="glass-panel p-3 fade-up stagger-4"><div class="flex justify-between"><span>✨ Concierge</span><span class="gold" id="concPending">0</span></div><div class="flex justify-between text-xs"><span>pend</span><span id="concCompleted">0</span></div></div>
+    <div class="glass-panel p-3 fade-up stagger-5"><div class="flex justify-between"><span>🧺 Laundry</span><span class="gold" id="launPending">0</span></div><div class="flex justify-between text-xs"><span>pend</span><span id="launCompleted">0</span></div></div>
+  </div>
+
+  <!-- MAIN TWO-COLUMN -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- LEFT: Live monitor + alerts -->
+    <div class="lg:col-span-2 space-y-6">
+      <div class="glass-panel p-5">
+        <h3 class="text-lg font-medium flex items-center gap-2 mb-3"><i class="fas fa-satellite-dish gold"></i> live request monitor</h3>
+        <input type="text" id="searchMonitor" placeholder="🔍 search room, department, type..." class="w-full bg-black/20 p-3 rounded-full text-sm border border-gray-600 focus:border-gold outline-none mb-3">
+        <div class="overflow-x-auto max-h-64 scrollbar-thin">
+          <table class="w-full text-sm">
+            <thead class="opacity-50"><tr><th>Rm</th><th>Dept</th><th>Type</th><th>Time</th><th>Status</th><th></th></tr></thead>
+            <tbody id="monitorTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="glass-panel p-5">
+        <h3 class="text-lg font-medium flex items-center gap-2"><i class="fas fa-exclamation-triangle gold"></i> priority alerts (>20 min)</h3>
+        <div id="alertPanel" class="space-y-2 mt-2"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Controls, password, health -->
+    <div class="space-y-6">
+      <div class="glass-panel p-5">
+        <h3 class="font-medium flex items-center gap-2"><i class="fas fa-sliders-h gold"></i> department control</h3>
+        <div id="deptControls" class="mt-3 space-y-3 text-sm"></div>
+      </div>
+      <div class="glass-panel p-5">
+        <h3 class="font-medium flex items-center gap-2"><i class="fas fa-key gold"></i> password reset requests</h3>
+        <div id="resetRequestsList" class="mt-2 space-y-2"></div>
+      </div>
+      <div class="glass-panel p-5">
+        <h3 class="font-medium flex items-center gap-2"><i class="fas fa-heartbeat gold"></i> system health</h3>
+        <div class="grid grid-cols-2 gap-2 mt-2 text-xs">
+          <div>traffic <span class="float-right gold" id="traffic">42 req/h</span></div>
+          <div>uptime <span class="float-right">99.98%</span></div>
+          <div>active depts <span class="float-right" id="activeDepts">5/5</span></div>
+          <div>server load <span class="float-right">14%</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SUBSCRIPTION & BILLING -->
+  <div class="glass-panel p-6 mt-6">
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+      <h2 class="text-2xl font-serif gold flex items-center gap-2"><i class="fas fa-credit-card"></i> subscription & billing</h2>
+      <div class="flex items-center gap-4">
+        <div class="text-sm"><span class="opacity-60">voice usage</span> <span class="gold font-medium" id="voiceUsed">42</span>/<span id="voiceLimit">100</span></div>
+        <div class="w-32 h-2 bg-gray-700 rounded-full"><div id="voiceMeter" class="h-2 bg-gold rounded-full" style="width:42%"></div></div>
+        <button id="upgradeBtn" class="bg-gold/20 hover:bg-gold/30 px-4 py-2 rounded-full text-sm transition">upgrade</button>
+      </div>
+    </div>
+
+    <!-- Pricing cards -->
+    <div class="grid md:grid-cols-2 gap-6">
+      <div class="plan-card relative glass-panel p-6">
+        <div class="absolute -top-3 left-6 bg-gold text-black px-4 py-1 rounded-full text-xs font-bold">STANDARD</div>
+        <div class="text-3xl font-light mt-4">$399.99 <span class="text-sm opacity-60">/4 months</span></div>
+        <ul class="mt-4 space-y-3 text-sm">
+          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Up to 250 rooms</li>
+          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Full department dashboards</li>
+          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> <span class="gold">100 voice requests</span> / cycle</li>
+          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Daily reports & email support</li>
+        </ul>
+        <button id="standardPlanBtn" class="mt-6 w-full py-2 rounded-full border border-gold/50 hover:bg-gold/20 transition">current plan</button>
+      </div>
+      <div class="plan-card relative glass-panel p-6 border-gold">
+        <div class="absolute -top-3 left-6 bg-gold text-black px-4 py-1 rounded-full text-xs font-bold">PREMIUM</div>
+        <div class="text-3xl font-light mt-4">$799.99 <span class="text-sm opacity-60">/4 months</span></div>
+        <ul class="mt-4 space-y-3 text-sm">
+          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Unlimited rooms</li>
+          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Advanced analytics & alerts</li>
+          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> <span class="gold">Unlimited voice</span></li>
+          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Multi‑property & priority support</li>
+        </ul>
+        <button id="premiumPlanBtn" class="mt-6 w-full py-2 rounded-full bg-gold text-black hover:bg-yellow-400 transition">subscribe</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NEW: WIFI MANAGEMENT SECTION (Multi-WiFi) -->
+  <div class="glass-panel p-6 mt-6" id="wifiManagementSection">
     <div class="flex justify-between items-center mb-4">
-      <h3 class="text-xl gold font-serif">Active Requests</h3>
-      <input type="text" id="searchRequests" placeholder="Search requests..." class="px-3 py-2 rounded-lg bg-black/20 border border-gray-600 focus:border-gold outline-none">
+      <h2 class="text-2xl font-serif gold flex items-center gap-2"><i class="fas fa-wifi"></i> WiFi Management</h2>
+      <button id="addWifiBtn" class="bg-gold/20 hover:bg-gold/30 px-4 py-2 rounded-full text-sm transition gold-glow"><i class="fas fa-plus"></i> Add Network</button>
     </div>
-    <div id="requestsContainer" class="space-y-3 max-h-96 overflow-y-auto">
-      <!-- Requests will be populated here -->
+    <div id="wifiNetworksList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+  </div>
+
+  <!-- REPORT GENERATOR + SEARCH -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+    <div class="glass-panel p-5 lg:col-span-2">
+      <h3 class="font-medium flex items-center gap-2"><i class="fas fa-file-alt gold"></i> report generator</h3>
+      <div class="flex flex-wrap gap-2 mt-3">
+        <button id="dailyReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📋 daily</button>
+        <button id="weeklyReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📅 weekly</button>
+        <button id="deptReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📊 department</button>
+        <button id="pdfReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📄 PDF</button>
+        <button id="csvReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📈 CSV</button>
+      </div>
+    </div>
+    <div class="glass-panel p-5">
+      <h3 class="font-medium flex items-center gap-2"><i class="fas fa-search gold"></i> search</h3>
+      <input type="text" id="globalSearch" placeholder="room, dept, type..." class="w-full bg-black/20 p-2 rounded-full text-sm border border-gray-600 mt-2">
     </div>
   </div>
 
+  <!-- FOOTER -->
+  <footer class="text-center py-4 text-xs opacity-40 mt-8">Powered by PeerLoom Technologies</footer>
 </div>
 
 <!-- REQUEST DETAIL MODAL -->
 <div id="requestModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
-  <div class="glass-panel max-w-lg w-full p-6">
-    <div class="flex justify-between mb-4"><h3 class="text-xl gold">request details</h3><button id="closeModal" class="text-2xl">&times;</button></div>
-    <div id="modalDetail" class="space-y-3"></div>
-    <div class="mt-6 flex gap-3">
-      <select id="statusSelect" class="flex-1 px-3 py-2 rounded-lg bg-black/20 border border-gray-600 focus:border-gold outline-none">
-        <option value="pending">Pending</option>
-        <option value="in-progress">In Progress</option>
-        <option value="completed">Completed</option>
-      </select>
-      <button id="updateStatusBtn" class="bg-gold text-black px-4 py-2 rounded-lg hover:bg-yellow-400 transition">Update</button>
-    </div>
+  <div class="glass-panel max-w-md w-full p-6">
+    <div class="flex justify-between"><h3 class="text-xl gold">request detail</h3><button id="closeModal" class="text-2xl">&times;</button></div>
+    <div id="modalDetail" class="mt-3 space-y-2"></div>
     <div class="mt-4 flex justify-end"><button id="playVoiceBtn" class="bg-gold/30 px-4 py-2 rounded-full">▶ play voice</button></div>
   </div>
 </div>
 
-  <!-- Supabase Client -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Socket.io for real-time updates -->
-  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<!-- PASSWORD RESET MODAL -->
+<div id="passwordResetModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
+  <div class="glass-panel max-w-md w-full p-6">
+    <div class="flex justify-between"><h3 class="text-xl gold">set new password</h3><button id="closePwModal" class="text-2xl">&times;</button></div>
+    <div class="mt-4 space-y-4">
+      <p class="text-sm opacity-80" id="resetDeptName">for department: </p>
+      <input type="password" id="newPassword" placeholder="new password" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+      <input type="password" id="confirmPassword" placeholder="confirm password" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+      <div class="flex gap-3">
+        <button id="approvePasswordBtn" class="flex-1 bg-gold text-black py-2 rounded-full hover:bg-yellow-400">approve</button>
+        <button id="cancelPwBtn" class="flex-1 bg-gold/20 py-2 rounded-full">cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- REPORT MODAL -->
+<div id="reportModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
+  <div class="glass-panel max-w-lg w-full p-6">
+    <div class="flex justify-between"><h3 class="text-xl gold" id="reportModalTitle">report</h3><button id="closeReportModal" class="text-2xl">&times;</button></div>
+    <div id="reportModalContent" class="mt-4 text-sm whitespace-pre-wrap"></div>
+  </div>
+</div>
+
+<!-- NEW: WIFI MODAL for Add/Edit -->
+<div id="wifiModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
+  <div class="glass-panel max-w-md w-full p-6">
+    <div class="flex justify-between"><h3 class="text-xl gold" id="wifiModalTitle">Add WiFi Network</h3><button id="closeWifiModal" class="text-2xl">&times;</button></div>
+    <div class="mt-4 space-y-4">
+      <input type="text" id="wifiSsid" placeholder="SSID (e.g., LUXE_FLOOR_5)" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+      <input type="text" id="wifiPassword" placeholder="Password" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+      <select id="wifiScopeType" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+        <option value="floor">Floor</option>
+        <option value="block">Block</option>
+        <option value="global">Global (whole hotel)</option>
+      </select>
+      <input type="text" id="wifiScopeValue" placeholder="e.g., 5 or Block A (leave blank for global)" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+      <input type="hidden" id="wifiEditId" value="">
+      <div class="flex gap-3">
+        <button id="saveWifiBtn" class="flex-1 bg-gold text-black py-2 rounded-full hover:bg-yellow-400">Save</button>
+        <button id="cancelWifiBtn" class="flex-1 bg-gold/20 py-2 rounded-full">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   (function() {
-    // Supabase configuration
-    const SUPABASE_URL = 'YOUR_SUPABASE_URL'; // Replace with your Supabase project URL
-    const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // Replace with your Supabase anon key
-    
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    let allRequests = [
-      { id: 1, room: '201', service: 'maintenance', request: 'Broken air conditioning', status: 'pending', time: '10:30 AM', voice: null },
-      { id: 2, room: '305', service: 'housekeeping', request: 'Clean my room', status: 'in-progress', time: '11:15 AM', voice: null },
-      { id: 3, room: '412', service: 'roomservice', request: 'Order breakfast', status: 'completed', time: '8:45 AM', voice: null },
-      { id: 4, room: '108', service: 'concierge', request: 'Taxi request', status: 'pending', time: '2:20 PM', voice: null },
-      { id: 5, room: '256', service: 'laundry', request: 'Wash & fold', status: 'in-progress', time: '1:10 PM', voice: null },
-      { id: 6, room: '189', service: 'maintenance', request: 'TV not working', status: 'pending', time: '3:45 PM', voice: null }
-    ];
-
-    // Map service names to departments
-    const serviceToDept = {
-      'maintenance': 'Maintenance',
-      'housekeeping': 'Housekeeping',
-      'roomservice': 'Room Service',
-      'concierge': 'Concierge',
-      'laundry': 'Laundry',
-      'towels': 'Housekeeping',
-      'donotdisturb': 'Housekeeping',
-      'report': 'Maintenance'
+    // ---------- SYSTEM STATE ----------
+    const departments = ['Maintenance', 'Housekeeping', 'Room Service', 'Concierge', 'Laundry'];
+    // Department passwords (simulated)
+    let DEPT_PASSWORDS = {
+      'Maintenance': 'maint123',
+      'Housekeeping': 'house123',
+      'Room Service': 'room123',
+      'Concierge': 'conc123',
+      'Laundry': 'laundry123'
     };
 
-    let currentDept = null;
-    let currentRequest = null;
+    let allRequests = [];
+    let nextId = 100;
+    const seed = [
+      { id:1, room:'412', dept:'Maintenance', type:'AC broken', desc:'not cooling', voice:true, timestamp:Date.now()-25*60000, status:'pending' },
+      { id:2, room:'305', dept:'Housekeeping', type:'extra pillows', desc:'2 pillows', voice:false, timestamp:Date.now()-12*60000, status:'in-progress' },
+      { id:3, room:'510', dept:'Room Service', type:'breakfast', desc:'continental', voice:false, timestamp:Date.now()-80*60000, status:'completed' },
+      { id:4, room:'221', dept:'Concierge', type:'taxi', desc:'to airport 5pm', voice:true, timestamp:Date.now()-10*60000, status:'pending' },
+      { id:5, room:'189', dept:'Laundry', type:'wash & fold', desc:'3 shirts', voice:false, timestamp:Date.now()-5*60000, status:'pending' },
+      { id:6, room:'333', dept:'Maintenance', type:'light issue', desc:'flickering', voice:true, timestamp:Date.now()-2*60000, status:'pending' },
+    ];
+    allRequests.push(...seed); nextId = 7;
 
-    // Socket.io connection for real-time updates
-    const socket = io('http://localhost:3000');
+    let voiceUsed = 42;
+    const voiceLimitStandard = 100;
+    let subscriptionPlan = 'standard'; // 'standard' or 'premium'
 
-    socket.on('newRequest', (newRequest) => {
-      console.log('New request received:', newRequest);
-      if (currentDept) {
-        refreshDashboard();
-      }
-    });
+    // Password reset requests (from departments)
+    let passwordResetRequests = [
+      { dept:'Housekeeping', time: Date.now()-50000 },
+      { dept:'Laundry', time: Date.now()-120000 }
+    ];
 
-    socket.on('statusUpdate', (update) => {
-      console.log('Status update:', update);
-      if (currentDept) {
-        refreshDashboard();
-      }
-    });
+    let deptEnabled = { Maintenance:true, Housekeeping:true, 'Room Service':true, Concierge:true, Laundry:true };
 
-    // API functions
-    async function loginDepartment(department, password) {
-      // For demo, simple password check (in production, use proper auth)
-      const passwords = {
-        'Maintenance': 'wrench',
-        'Housekeeping': 'broom',
-        'Room Service': 'plate',
-        'Concierge': 'bell',
-        'Laundry': 'shirt'
-      };
-      
-      if (passwords[department] === password) {
-        return { success: true, department };
+    // ---------- NEW: WiFi Management Data ----------
+    let wifiNetworks = [];
+    const HOTEL_ID = 1;
+
+    function loadWifiNetworks() {
+      const stored = localStorage.getItem('wifiNetworks');
+      if (stored) {
+        wifiNetworks = JSON.parse(stored);
       } else {
-        throw new Error('Invalid password');
+        // seed default networks
+        wifiNetworks = [
+          { id: 1, hotel_id: HOTEL_ID, ssid: 'LUXE_GLOBAL', password: 'welcome2025', scope_type: 'global', scope_value: '' },
+          { id: 2, hotel_id: HOTEL_ID, ssid: 'LUXE_FLOOR_1', password: 'floor1pass', scope_type: 'floor', scope_value: '1' },
+          { id: 3, hotel_id: HOTEL_ID, ssid: 'LUXE_FLOOR_2', password: 'floor2pass', scope_type: 'floor', scope_value: '2' },
+          { id: 4, hotel_id: HOTEL_ID, ssid: 'LUXE_BLOCK_A', password: 'blockApass', scope_type: 'block', scope_value: 'Block A' }
+        ];
+        saveWifiNetworks();
       }
+      renderWifiNetworks();
     }
 
-    async function fetchDepartmentRequests(department) {
-      // Map department to services
-      const deptToServices = {
-        'Maintenance': ['maintenance', 'report'],
-        'Housekeeping': ['housekeeping', 'towels', 'donotdisturb'],
-        'Room Service': ['roomservice'],
-        'Concierge': ['concierge'],
-        'Laundry': ['laundry']
-      };
+    function saveWifiNetworks() {
+      localStorage.setItem('wifiNetworks', JSON.stringify(wifiNetworks));
+    }
 
-      const services = deptToServices[department];
-      if (!services) {
-        throw new Error('Invalid department');
+    function renderWifiNetworks() {
+      const container = document.getElementById('wifiNetworksList');
+      if (!container) return;
+      if (wifiNetworks.length === 0) {
+        container.innerHTML = '<div class="col-span-2 text-center opacity-60 py-8">No WiFi networks configured. Click "Add Network" to create one.</div>';
+        return;
       }
-
-      const { data, error } = await supabase
-        .from('requests')
-        .select('*')
-        .in('service', services)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      return data;
-    }
-
-    async function updateRequestStatus(id, status) {
-      const { data, error } = await supabase
-        .from('requests')
-        .update({ status, updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .select();
-
-      if (error) throw error;
-
-      // Emit socket event for real-time updates
-      socket.emit('statusUpdated', { id: parseInt(id), status });
-
-      return data[0];
-    }
-
-    // DOM elements
-    const loginDiv = document.getElementById('loginContainer');
-    const dashDiv = document.getElementById('dashboardContainer');
-    const deptSelect = document.getElementById('deptSelect');
-    const deptPass = document.getElementById('deptPass');
-    const loginBtn = document.getElementById('loginBtn');
-    const logoutBtn = document.getElementById('logoutBtn');
-    const deptTitle = document.getElementById('deptTitle');
-    const dateTimeEl = document.getElementById('currentDateTime');
-    const totalRequests = document.getElementById('totalRequests');
-    const pendingCount = document.getElementById('pendingCount');
-    const inProgressCount = document.getElementById('inProgressCount');
-    const completedCount = document.getElementById('completedCount');
-    const searchRequests = document.getElementById('searchRequests');
-    const requestsContainer = document.getElementById('requestsContainer');
-    const requestModal = document.getElementById('requestModal');
-    const closeModal = document.getElementById('closeModal');
-    const modalDetail = document.getElementById('modalDetail');
-    const statusSelect = document.getElementById('statusSelect');
-    const updateStatusBtn = document.getElementById('updateStatusBtn');
-    const playVoiceBtn = document.getElementById('playVoiceBtn');
-
-    // Enable login button when department is selected
-    deptSelect.addEventListener('change', () => {
-      loginBtn.disabled = !deptSelect.value;
-    });
-
-    // Login
-    loginBtn.addEventListener('click', async () => {
-      const selectedDept = deptSelect.value;
-      const password = deptPass.value;
-
-      try {
-        const result = await loginDepartment(selectedDept, password);
-        if (result.error) {
-          alert(result.error);
-          return;
-        }
-
-        currentDept = selectedDept;
-        deptTitle.textContent = `${selectedDept.toUpperCase()} DASHBOARD`;
-        loginDiv.classList.add('hidden');
-        dashDiv.classList.remove('hidden');
-        updateDateTime();
-        refreshDashboard();
-      } catch (error) {
-        console.error('Login error:', error);
-        alert('Login failed. Please try again.');
-      }
-    });
-
-    // Logout
-    logoutBtn.addEventListener('click', () => {
-      currentDept = null;
-      dashDiv.classList.add('hidden');
-      loginDiv.classList.remove('hidden');
-      deptPass.value = '';
-      deptSelect.value = '';
-      loginBtn.disabled = true;
-    });
-
-    // Update date/time
-    function updateDateTime() {
-      const now = new Date();
-      dateTimeEl.textContent = now.toLocaleString();
-    }
-    setInterval(updateDateTime, 60000); // Update every minute
-
-    // Refresh dashboard
-    async function refreshDashboard() {
-      try {
-        const requests = await fetchDepartmentRequests(currentDept);
-        const filteredRequests = requests.filter(req =>
-          req.room_number.includes(searchRequests.value) ||
-          req.request_text.toLowerCase().includes(searchRequests.value.toLowerCase())
-        );
-
-        totalRequests.textContent = requests.length;
-        pendingCount.textContent = requests.filter(r => r.status === 'pending').length;
-        inProgressCount.textContent = requests.filter(r => r.status === 'in-progress').length;
-        completedCount.textContent = requests.filter(r => r.status === 'completed').length;
-
-        renderRequests(filteredRequests);
-      } catch (error) {
-        console.error('Error refreshing dashboard:', error);
-      }
-    }
-
-    // Render requests
-    function renderRequests(requests) {
-      requestsContainer.innerHTML = '';
-      requests.forEach(req => {
-        const time = new Date(req.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-        const row = document.createElement('div');
-        row.className = 'request-row cursor-pointer';
-        row.innerHTML = `
-          <div class="flex justify-between items-start">
-            <div>
-              <div class="font-medium">Room ${req.room_number}</div>
-              <div class="text-sm opacity-70">${req.request_text}</div>
-              <div class="text-xs opacity-50 mt-1">${time}</div>
+      let html = '';
+      wifiNetworks.forEach(net => {
+        const scopeDisplay = net.scope_type === 'global' ? '🌍 Global' : (net.scope_type === 'floor' ? `Floor ${net.scope_value}` : `Block ${net.scope_value}`);
+        html += `
+          <div class="glass-panel p-4 relative" data-id="${net.id}">
+            <div class="flex justify-between items-start">
+              <div>
+                <div class="font-medium text-lg gold">${net.ssid}</div>
+                <div class="text-sm opacity-70 mt-1">Password: ********</div>
+                <div class="text-xs mt-1"><span class="gold">Scope:</span> ${scopeDisplay}</div>
+              </div>
+              <div class="flex gap-2">
+                <button class="edit-wifi text-gold hover:text-yellow-300 transition" data-id="${net.id}"><i class="fas fa-edit"></i></button>
+                <button class="delete-wifi text-gold hover:text-red-400 transition" data-id="${net.id}"><i class="fas fa-trash"></i></button>
+              </div>
             </div>
-            <div class="status-badge status-${req.status.replace('-', '')}">${req.status.replace('-', ' ')}</div>
           </div>
         `;
-        row.addEventListener('click', () => showRequestModal(req));
-        requestsContainer.appendChild(row);
+      });
+      container.innerHTML = html;
+
+      // attach event listeners
+      document.querySelectorAll('.edit-wifi').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const id = parseInt(e.currentTarget.dataset.id);
+          const net = wifiNetworks.find(n => n.id === id);
+          if (net) openWifiModal(net);
+        });
+      });
+      document.querySelectorAll('.delete-wifi').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const id = parseInt(e.currentTarget.dataset.id);
+          if (confirm('Delete this WiFi network?')) {
+            wifiNetworks = wifiNetworks.filter(n => n.id !== id);
+            saveWifiNetworks();
+            renderWifiNetworks();
+          }
+        });
       });
     }
 
-    // Show request modal
-    function showRequestModal(req) {
-      currentRequest = req;
-      const time = new Date(req.created_at).toLocaleString();
-      modalDetail.innerHTML = `
-        <div><strong>Room:</strong> ${req.room_number}</div>
-        <div><strong>Service:</strong> ${req.service}</div>
-        <div><strong>Request:</strong> ${req.request_text}</div>
-        <div><strong>Time:</strong> ${time}</div>
-        <div><strong>Status:</strong> <span class="status-badge status-${req.status.replace('-', '')}">${req.status.replace('-', ' ')}</span></div>
-      `;
-      statusSelect.value = req.status;
-      requestModal.classList.remove('hidden');
+    function openWifiModal(net = null) {
+      const modal = document.getElementById('wifiModal');
+      const title = document.getElementById('wifiModalTitle');
+      const ssidInput = document.getElementById('wifiSsid');
+      const passInput = document.getElementById('wifiPassword');
+      const scopeType = document.getElementById('wifiScopeType');
+      const scopeValue = document.getElementById('wifiScopeValue');
+      const editId = document.getElementById('wifiEditId');
+      if (net) {
+        title.innerText = 'Edit WiFi Network';
+        ssidInput.value = net.ssid;
+        passInput.value = net.password;
+        scopeType.value = net.scope_type;
+        scopeValue.value = net.scope_value || '';
+        editId.value = net.id;
+      } else {
+        title.innerText = 'Add WiFi Network';
+        ssidInput.value = '';
+        passInput.value = '';
+        scopeType.value = 'floor';
+        scopeValue.value = '';
+        editId.value = '';
+      }
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
     }
 
-    // Update status
-    updateStatusBtn.addEventListener('click', async () => {
-      if (currentRequest) {
-        try {
-          await updateRequestStatus(currentRequest.id, statusSelect.value);
-          requestModal.classList.add('hidden');
-          refreshDashboard();
-        } catch (error) {
-          console.error('Error updating status:', error);
-          alert('Failed to update status');
-        }
+    // ---------- DOM elements ----------
+    const loginDiv = document.getElementById('loginContainer');
+    const splashDiv = document.getElementById('splashScreen');
+    const dashDiv = document.getElementById('dashboardContainer');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const themeToggle = document.getElementById('themeToggle');
+    const themeSlider = document.getElementById('themeSlider');
+    const greetingEl = document.getElementById('greeting');
+    const dateTimeEl = document.getElementById('currentDateTime');
+    const monitorBody = document.getElementById('monitorTableBody');
+    const alertPanel = document.getElementById('alertPanel');
+    const deptControlsDiv = document.getElementById('deptControls');
+    const resetRequestsDiv = document.getElementById('resetRequestsList');
+    const totalToday = document.getElementById('totalToday');
+    const pendingCount = document.getElementById('pendingCount');
+    const inProgressCount = document.getElementById('inProgressCount');
+    const completedCount = document.getElementById('completedCount');
+    const avgResponse = document.getElementById('avgResponse');
+    const activeRooms = document.getElementById('activeRooms');
+    const maintPending = document.getElementById('maintPending');
+    const housePending = document.getElementById('housePending');
+    const roomPending = document.getElementById('roomPending');
+    const concPending = document.getElementById('concPending');
+    const launPending = document.getElementById('launPending');
+    const maintCompleted = document.getElementById('maintCompleted');
+    const houseCompleted = document.getElementById('houseCompleted');
+    const roomCompleted = document.getElementById('roomCompleted');
+    const concCompleted = document.getElementById('concCompleted');
+    const launCompleted = document.getElementById('launCompleted');
+    const searchMonitor = document.getElementById('searchMonitor');
+    const globalSearch = document.getElementById('globalSearch');
+    const voiceUsedSpan = document.getElementById('voiceUsed');
+    const voiceLimitSpan = document.getElementById('voiceLimit');
+    const voiceMeter = document.getElementById('voiceMeter');
+    const splashGreeting = document.getElementById('splashGreeting');
+    const splashTime = document.getElementById('splashTime');
+
+    // Modals
+    const requestModal = document.getElementById('requestModal');
+    const closeModal = document.getElementById('closeModal');
+    const playVoiceBtn = document.getElementById('playVoiceBtn');
+    const pwResetModal = document.getElementById('passwordResetModal');
+    const closePwModal = document.getElementById('closePwModal');
+    const cancelPwBtn = document.getElementById('cancelPwBtn');
+    const approvePasswordBtn = document.getElementById('approvePasswordBtn');
+    const resetDeptName = document.getElementById('resetDeptName');
+    const newPasswordInput = document.getElementById('newPassword');
+    const confirmPasswordInput = document.getElementById('confirmPassword');
+    const reportModal = document.getElementById('reportModal');
+    const closeReportModal = document.getElementById('closeReportModal');
+    const reportModalTitle = document.getElementById('reportModalTitle');
+    const reportModalContent = document.getElementById('reportModalContent');
+
+    let currentResetDept = null;
+
+    // ---------- helper functions ----------
+    function getTimeGreeting() {
+      const h = new Date().getHours();
+      if (h<12) return 'Good Morning';
+      if (h<18) return 'Good Afternoon';
+      return 'Good Evening';
+    }
+
+    function updateDateTime() {
+      const now = new Date();
+      greetingEl.innerText = `${getTimeGreeting()}, Director`;
+      dateTimeEl.innerText = now.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) + ' ' + now.toLocaleTimeString();
+    }
+
+    function refreshStats() {
+      const today = new Date().setHours(0,0,0,0);
+      const todayReqs = allRequests.filter(r => r.timestamp >= today);
+      totalToday.innerText = todayReqs.length;
+      pendingCount.innerText = allRequests.filter(r => r.status==='pending').length;
+      inProgressCount.innerText = allRequests.filter(r => r.status==='in-progress').length;
+      completedCount.innerText = allRequests.filter(r => r.status==='completed').length;
+      avgResponse.innerText = (2.4 + Math.random()*0.5).toFixed(1);
+      activeRooms.innerText = [...new Set(allRequests.map(r=>r.room))].length;
+
+      const maint = allRequests.filter(r => r.dept==='Maintenance');
+      maintPending.innerText = maint.filter(r => r.status==='pending').length;
+      maintCompleted.innerText = maint.filter(r => r.status==='completed').length;
+      const house = allRequests.filter(r => r.dept==='Housekeeping');
+      housePending.innerText = house.filter(r => r.status==='pending').length;
+      houseCompleted.innerText = house.filter(r => r.status==='completed').length;
+      const room = allRequests.filter(r => r.dept==='Room Service');
+      roomPending.innerText = room.filter(r => r.status==='pending').length;
+      roomCompleted.innerText = room.filter(r => r.status==='completed').length;
+      const conc = allRequests.filter(r => r.dept==='Concierge');
+      concPending.innerText = conc.filter(r => r.status==='pending').length;
+      concCompleted.innerText = conc.filter(r => r.status==='completed').length;
+      const laun = allRequests.filter(r => r.dept==='Laundry');
+      launPending.innerText = laun.filter(r => r.status==='pending').length;
+      launCompleted.innerText = laun.filter(r => r.status==='completed').length;
+    }
+
+    function renderMonitor(filter='') {
+      let filtered = allRequests;
+      if (filter) {
+        const f = filter.toLowerCase();
+        filtered = allRequests.filter(r => r.room.toLowerCase().includes(f) || r.dept.toLowerCase().includes(f) || r.type.toLowerCase().includes(f));
+      }
+      filtered.sort((a,b)=> b.timestamp - a.timestamp);
+      let html = '';
+      filtered.slice(0,15).forEach(req => {
+        const time = new Date(req.timestamp).toLocaleTimeString();
+        const statusClass = req.status==='pending'?'text-yellow-400': req.status==='in-progress'?'text-blue-400':'text-green-400';
+        html += `<tr class="border-b border-gray-700/30 hover:bg-gold/5 cursor-pointer request-row" data-id="${req.id}">
+          <td class="py-2">${req.room}</td><td>${req.dept}</td><td>${req.type}</td><td>${time}</td>
+          <td><span class="text-xs ${statusClass}">${req.status}</span></td>
+          <td><i class="fas fa-chevron-right gold"></i></td>
+        </tr>`;
+      });
+      monitorBody.innerHTML = html;
+      document.querySelectorAll('.request-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const id = parseInt(row.dataset.id);
+          const req = allRequests.find(r=>r.id===id);
+          if (req) showDetailModal(req);
+        });
+      });
+    }
+
+    function refreshAlerts() {
+      const now = Date.now();
+      const longPending = allRequests.filter(r => r.status==='pending' && (now - r.timestamp) > 20*60000);
+      if (longPending.length===0) { alertPanel.innerHTML = '<div class="opacity-40 text-sm">✨ no priority alerts</div>'; return; }
+      let html = '';
+      longPending.forEach(r => {
+        const wait = Math.round((now - r.timestamp)/60000);
+        html += `<div class="bg-gold/10 p-2 rounded-lg flex justify-between text-sm border-l-4 border-gold"><span>🚨 ${r.room} · ${r.dept}</span> <span class="gold">${wait} min</span></div>`;
+      });
+      alertPanel.innerHTML = html;
+    }
+
+    function renderDeptControls() {
+      let html = '';
+      departments.forEach(d => {
+        const enabled = deptEnabled[d];
+        html += `<div class="flex items-center justify-between"><span>${d}</span>
+          <button class="toggle-dept text-xs px-3 py-1 rounded-full ${enabled ? 'bg-gold text-black' : 'bg-gray-700'}" data-dept="${d}">${enabled ? 'enabled' : 'disabled'}</button>
+        </div>`;
+      });
+      deptControlsDiv.innerHTML = html;
+      document.querySelectorAll('.toggle-dept').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const d = e.target.dataset.dept;
+          deptEnabled[d] = !deptEnabled[d];
+          renderDeptControls();
+        });
+      });
+    }
+
+    function renderResetRequests() {
+      if (passwordResetRequests.length===0) { resetRequestsDiv.innerHTML = '<div class="text-xs opacity-40">no pending resets</div>'; return; }
+      let html = '';
+      passwordResetRequests.forEach((r,idx) => {
+        html += `<div class="flex justify-between items-center bg-gold/5 p-2 rounded-lg"><span>🔑 ${r.dept}</span><button class="approve-reset text-xs bg-gold/30 px-2 py-1 rounded-full" data-index="${idx}">approve</button></div>`;
+      });
+      resetRequestsDiv.innerHTML = html;
+      document.querySelectorAll('.approve-reset').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const idx = e.target.dataset.index;
+          const req = passwordResetRequests[idx];
+          if (req) {
+            currentResetDept = req.dept;
+            resetDeptName.innerText = `for department: ${req.dept}`;
+            pwResetModal.classList.remove('hidden');
+            pwResetModal.classList.add('flex');
+          }
+        });
+      });
+    }
+
+    // Approve password reset
+    approvePasswordBtn.addEventListener('click', () => {
+      const newPw = newPasswordInput.value;
+      const confirmPw = confirmPasswordInput.value;
+      if (!newPw || newPw !== confirmPw) {
+        alert('Passwords do not match or empty');
+        return;
+      }
+      // Update password
+      DEPT_PASSWORDS[currentResetDept] = newPw;
+      // Remove from requests list
+      passwordResetRequests = passwordResetRequests.filter(r => r.dept !== currentResetDept);
+      renderResetRequests();
+      pwResetModal.classList.add('hidden');
+      newPasswordInput.value = '';
+      confirmPasswordInput.value = '';
+      alert(`✅ Password for ${currentResetDept} updated`);
+    });
+
+    closePwModal.addEventListener('click', () => pwResetModal.classList.add('hidden'));
+    cancelPwBtn.addEventListener('click', () => pwResetModal.classList.add('hidden'));
+
+    function showDetailModal(req) {
+      const modalDetail = document.getElementById('modalDetail');
+      modalDetail.innerHTML = `
+        <p><span class="gold">room:</span> ${req.room}</p>
+        <p><span class="gold">dept:</span> ${req.dept}</p>
+        <p><span class="gold">type:</span> ${req.type}</p>
+        <p><span class="gold">description:</span> ${req.desc}</p>
+        <p><span class="gold">time:</span> ${new Date(req.timestamp).toLocaleString()}</p>
+        <p><span class="gold">voice:</span> ${req.voice ? '🎤 recorded' : '—'}</p>
+      `;
+      requestModal.classList.remove('hidden');
+      requestModal.classList.add('flex');
+      playVoiceBtn.onclick = () => alert('🎤 playing voice (demo)');
+    }
+
+    closeModal.addEventListener('click', () => requestModal.classList.add('hidden'));
+
+    // Report functions
+    function showReport(title, content) {
+      reportModalTitle.innerText = title;
+      reportModalContent.innerText = content;
+      reportModal.classList.remove('hidden');
+      reportModal.classList.add('flex');
+    }
+    closeReportModal.addEventListener('click', () => reportModal.classList.add('hidden'));
+
+    document.getElementById('dailyReportBtn').addEventListener('click', () => {
+      const today = new Date().toLocaleDateString();
+      const total = allRequests.length;
+      const completed = allRequests.filter(r => r.status==='completed').length;
+      showReport('Daily Report', `Date: ${today}\nTotal requests: ${total}\nCompleted: ${completed}\nPending: ${allRequests.filter(r => r.status==='pending').length}\nIn progress: ${allRequests.filter(r => r.status==='in-progress').length}`);
+    });
+    document.getElementById('weeklyReportBtn').addEventListener('click', () => {
+      showReport('Weekly Report', 'Week 12, 2025\nTotal: 187\nCompleted: 152\nAvg response: 2.3 min');
+    });
+    document.getElementById('deptReportBtn').addEventListener('click', () => {
+      let deptStats = '';
+      departments.forEach(d => {
+        const deptReqs = allRequests.filter(r => r.dept === d);
+        deptStats += `${d}: ${deptReqs.length} total, ${deptReqs.filter(r => r.status==='completed').length} completed\n`;
+      });
+      showReport('Department Performance', deptStats);
+    });
+    document.getElementById('pdfReportBtn').addEventListener('click', () => alert('📄 PDF generated (demo)'));
+    document.getElementById('csvReportBtn').addEventListener('click', () => alert('📈 CSV downloaded (demo)'));
+
+    // Subscription buttons
+    document.getElementById('upgradeBtn').addEventListener('click', () => alert('✨ Upgrade to Premium for unlimited voice and analytics'));
+    document.getElementById('standardPlanBtn').addEventListener('click', () => alert('You are on Standard plan'));
+    document.getElementById('premiumPlanBtn').addEventListener('click', () => {
+      if (confirm('Switch to Premium? (demo)')) {
+        subscriptionPlan = 'premium';
+        voiceLimitSpan.innerText = '∞';
+        voiceMeter.style.width = '100%';
+        alert('Now on Premium plan');
       }
     });
 
-    // Close modal
-    closeModal.addEventListener('click', () => requestModal.classList.add('hidden'));
-    requestModal.addEventListener('click', (e) => { if (e.target === requestModal) requestModal.classList.add('hidden'); });
+    // Update subscription UI
+    function updateSubscriptionUI() {
+      voiceUsedSpan.innerText = voiceUsed;
+      voiceLimitSpan.innerText = subscriptionPlan === 'premium' ? '∞' : voiceLimitStandard;
+      let percent = (voiceUsed / voiceLimitStandard) * 100;
+      if (percent > 100) percent = 100;
+      voiceMeter.style.width = percent + '%';
+    }
 
-    // Play voice
-    playVoiceBtn.addEventListener('click', () => {
-      if (currentRequest && currentRequest.voice_url) {
-        const { data } = supabase.storage.from('voice-recordings').getPublicUrl(currentRequest.voice_url);
-        window.open(data.publicUrl, '_blank');
+    // Simulate new requests every 20s
+    setInterval(() => {
+      const dept = departments[Math.floor(Math.random()*departments.length)];
+      const room = Math.floor(Math.random()*500)+100;
+      const types = ['extra towel','light issue','food order','taxi','laundry'];
+      const hasVoice = Math.random()>0.6;
+      const newReq = {
+        id: nextId++,
+        room: room.toString(),
+        dept: dept,
+        type: types[Math.floor(Math.random()*types.length)],
+        desc: 'guest request',
+        voice: hasVoice && (subscriptionPlan==='premium' || voiceUsed < voiceLimitStandard),
+        timestamp: Date.now(),
+        status: 'pending'
+      };
+      if (newReq.voice) voiceUsed++;
+      allRequests.push(newReq);
+      renderMonitor(searchMonitor.value);
+      refreshStats();
+      refreshAlerts();
+      updateSubscriptionUI();
+    }, 20000);
+
+    // ---------- LOGIN & SPLASH ----------
+    loginBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      loginDiv.classList.add('hidden');
+      splashGreeting.innerText = `${getTimeGreeting()}, Director`;
+      splashTime.innerText = new Date().toLocaleString();
+      splashDiv.classList.remove('hidden');
+
+      setTimeout(() => {
+        splashDiv.classList.add('hidden');
+        dashDiv.classList.remove('hidden');
+        updateDateTime();
+        setInterval(updateDateTime, 1000);
+        renderMonitor();
+        refreshStats();
+        refreshAlerts();
+        renderDeptControls();
+        renderResetRequests();
+        updateSubscriptionUI();
+        // Load WiFi networks
+        loadWifiNetworks();
+      }, 2500);
+    });
+
+    logoutBtn.addEventListener('click', () => {
+      dashDiv.classList.add('hidden');
+      loginDiv.classList.remove('hidden');
+    });
+
+    // Theme toggle
+    themeToggle.addEventListener('click', () => {
+      const body = document.body;
+      if (body.classList.contains('dark')) {
+        body.classList.remove('dark');
+        body.classList.add('light');
+        themeSlider.style.transform = 'translateX(1.5rem)';
       } else {
-        alert('No voice recording available');
+        body.classList.remove('light');
+        body.classList.add('dark');
+        themeSlider.style.transform = 'translateX(0)';
       }
     });
 
     // Search
-    searchRequests.addEventListener('input', refreshDashboard);
+    searchMonitor.addEventListener('input', (e) => renderMonitor(e.target.value));
+    globalSearch.addEventListener('input', (e) => {
+      searchMonitor.value = e.target.value;
+      renderMonitor(e.target.value);
+    });
 
+    // Close modals on background click
+    [requestModal, pwResetModal, reportModal, document.getElementById('wifiModal')].forEach(modal => {
+      if (modal) {
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) modal.classList.add('hidden');
+        });
+      }
+    });
+
+    // ---------- WiFi Modal Event Listeners ----------
+    document.getElementById('addWifiBtn').addEventListener('click', () => openWifiModal());
+
+    document.getElementById('saveWifiBtn').addEventListener('click', () => {
+      const ssid = document.getElementById('wifiSsid').value.trim();
+      const password = document.getElementById('wifiPassword').value.trim();
+      const scopeType = document.getElementById('wifiScopeType').value;
+      let scopeValue = document.getElementById('wifiScopeValue').value.trim();
+      const editId = document.getElementById('wifiEditId').value;
+
+      if (!ssid || !password) {
+        alert('SSID and password are required.');
+        return;
+      }
+      if (scopeType !== 'global' && !scopeValue) {
+        alert('Please enter a scope value (floor number or block name) for non-global networks.');
+        return;
+      }
+      if (scopeType === 'global') scopeValue = '';
+
+      // Check for duplicate scope
+      const existing = wifiNetworks.find(n => n.scope_type === scopeType && n.scope_value === scopeValue && (editId ? n.id != editId : true));
+      if (existing) {
+        alert('A WiFi network for this scope already exists. Please choose a different scope.');
+        return;
+      }
+
+      if (editId) {
+        // update
+        const index = wifiNetworks.findIndex(n => n.id == editId);
+        if (index !== -1) {
+          wifiNetworks[index] = { ...wifiNetworks[index], ssid, password, scope_type: scopeType, scope_value: scopeValue };
+        }
+      } else {
+        // add new
+        const newId = wifiNetworks.length > 0 ? Math.max(...wifiNetworks.map(n => n.id)) + 1 : 1;
+        wifiNetworks.push({
+          id: newId,
+          hotel_id: HOTEL_ID,
+          ssid,
+          password,
+          scope_type: scopeType,
+          scope_value: scopeValue
+        });
+      }
+      saveWifiNetworks();
+      renderWifiNetworks();
+      document.getElementById('wifiModal').classList.add('hidden');
+    });
+
+    document.getElementById('closeWifiModal').addEventListener('click', () => {
+      document.getElementById('wifiModal').classList.add('hidden');
+    });
+    document.getElementById('cancelWifiBtn').addEventListener('click', () => {
+      document.getElementById('wifiModal').classList.add('hidden');
+    });
+
+    updateDateTime();
   })();
 </script>
 </body>
