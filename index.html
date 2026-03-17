@@ -4,10 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
   <title>LUXE · digital concierge</title>
-  <!-- Supabase Client -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Socket.io for real-time updates -->
-  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <!-- Tailwind + Font Awesome -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600&display=swap');
     
@@ -255,7 +254,7 @@
       </div>
     </div>
 
-    <!-- main service grid (8 buttons) -->
+    <!-- main service grid (9 buttons now) -->
     <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
       <!-- each button triggers modal with service data -->
       <button class="service-card gold-glow" data-service="housekeeping"><i class="fas fa-broom"></i><span>Housekeeping</span></button>
@@ -266,6 +265,8 @@
       <button class="service-card gold-glow" data-service="laundry"><i class="fas fa-tshirt"></i><span>Laundry Service</span></button>
       <button class="service-card gold-glow" data-service="donotdisturb"><i class="fas fa-moon"></i><span>Do Not Disturb</span></button>
       <button class="service-card gold-glow" data-service="report"><i class="fas fa-exclamation-triangle"></i><span>Report an Issue</span></button>
+      <!-- NEW WIFI BUTTON -->
+      <button class="service-card gold-glow" data-service="wifi"><i class="fas fa-wifi"></i><span>WiFi Access</span></button>
     </div>
   </div>
 
@@ -296,8 +297,31 @@
       <!-- options grid (filled by js) -->
       <div id="modalOptions" class="grid grid-cols-2 gap-3 mb-6"></div>
 
-      <!-- voice section: explain your request -->
-      <div class="mt-8">
+      <!-- NEW WIFI CONTENT (hidden by default) -->
+      <div id="wifiContent" class="hidden mb-6">
+        <div class="bg-gray-800 bg-opacity-30 rounded-2xl p-5 border border-gold border-opacity-30">
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-gray-300">Network Name (SSID)</span>
+            <span id="wifiSsid" class="text-white font-mono text-lg">LUXE_HOTEL_GUEST</span>
+          </div>
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-gray-300">Password</span>
+            <div class="flex items-center gap-2">
+              <span id="wifiPasswordDisplay" class="text-white font-mono text-lg">********</span>
+              <button id="revealPasswordBtn" class="text-gold hover:text-yellow-300 transition"><i class="fas fa-eye"></i></button>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-3 justify-center mt-4">
+            <button id="tapToConnectBtn" class="opt-btn flex items-center gap-2"><i class="fas fa-wifi"></i> Tap to Connect</button>
+            <button id="copyPasswordBtn" class="opt-btn flex items-center gap-2"><i class="fas fa-copy"></i> Copy Password</button>
+          </div>
+          <div id="roomContext" class="text-center mt-4 text-sm text-gold"></div>
+          <div id="wifiMessage" class="text-center mt-2 text-sm text-green-400"></div>
+        </div>
+      </div>
+
+      <!-- voice section: explain your request (hidden for wifi) -->
+      <div id="voiceSection" class="mt-8">
         <p class="text-gray-300 uppercase tracking-wider text-sm mb-3 flex items-center"><i class="fas fa-microphone-alt text-gold mr-2"></i> EXPLAIN YOUR REQUEST</p>
         <div class="flex flex-wrap items-center gap-3 justify-center sm:justify-start">
           <!-- mic button with state -->
@@ -310,8 +334,8 @@
         <audio id="recordingAudio" controls style="display:none;" class="w-full mt-2"></audio>
       </div>
 
-      <!-- send request button -->
-      <div class="mt-8 text-center">
+      <!-- send request button (hidden for wifi) -->
+      <div id="sendButtonSection" class="mt-8 text-center">
         <button id="sendRequestBtn" class="send-btn w-full sm:w-auto px-12 py-4 text-lg"><i class="fas fa-paper-plane mr-2"></i> Send Request</button>
       </div>
     </div>
@@ -330,18 +354,16 @@
 
   <script>
     (function() {
-      // Supabase configuration
-      const SUPABASE_URL = 'YOUR_SUPABASE_URL'; // Replace with your Supabase project URL
-      const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // Replace with your Supabase anon key
-      
-      const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-      // Socket.io connection for real-time updates
-      const socket = io('http://localhost:3000');
       // ------- room number dynamic -------
       const roomSpan = document.getElementById('roomDisplay');
       const randomRoom = Math.floor(Math.random() * 200) + 100; // 100-299
       roomSpan.textContent = `Room ${randomRoom}`;
+
+      // ------- simulated backend WiFi credentials -------
+      const wifiCredentials = {
+        ssid: 'LUXE_HOTEL_GUEST',
+        password: 'Welcome2025!'
+      };
 
       // ------- service definitions (including "Other request" everywhere) -------
       const services = {
@@ -398,6 +420,18 @@
       const step2 = document.getElementById('step2');
       const step3 = document.getElementById('step3');
 
+      // WiFi elements
+      const wifiContent = document.getElementById('wifiContent');
+      const voiceSection = document.getElementById('voiceSection');
+      const sendButtonSection = document.getElementById('sendButtonSection');
+      const wifiSsidSpan = document.getElementById('wifiSsid');
+      const wifiPasswordDisplay = document.getElementById('wifiPasswordDisplay');
+      const revealPasswordBtn = document.getElementById('revealPasswordBtn');
+      const tapToConnectBtn = document.getElementById('tapToConnectBtn');
+      const copyPasswordBtn = document.getElementById('copyPasswordBtn');
+      const roomContextSpan = document.getElementById('roomContext');
+      const wifiMessage = document.getElementById('wifiMessage');
+
       // State
       let currentService = 'housekeeping';
       let selectedOption = null;
@@ -406,6 +440,7 @@
       let recordedBlob = null;
       let stream = null;
       let isRecording = false;
+      let passwordRevealed = false; // for WiFi
 
       // Helper: time-based suggestions for concierge
       function getTimeSuggestions() {
@@ -429,6 +464,13 @@
         audioPlayer.src = '';
         recordedBlob = null;
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+      }
+
+      // Reset WiFi UI
+      function resetWiFiUI() {
+        wifiPasswordDisplay.textContent = '********';
+        passwordRevealed = false;
+        wifiMessage.textContent = '';
       }
 
       // Request mic and setup recorder
@@ -516,43 +558,68 @@
       // open modal with service
       function openModal(serviceKey) {
         currentService = serviceKey;
-        renderOptions(serviceKey);
         selectedOption = null;
         resetRecorderUI();
+        resetWiFiUI();
 
-        // handle concierge suggestions
-        if (serviceKey === 'concierge') {
-          const suggestions = getTimeSuggestions();
-          let cardsHtml = '';
-          suggestions.forEach(s => {
-            cardsHtml += `<div class="time-card" data-suggestion="${s}"><i class="fas fa-star"></i> ${s}</div>`;
-          });
-          suggestionCardsDiv.innerHTML = cardsHtml;
-          conciergeSuggestionsDiv.classList.remove('hidden');
+        // Hide wifi content and show regular sections by default
+        wifiContent.classList.add('hidden');
+        voiceSection.classList.remove('hidden');
+        sendButtonSection.classList.remove('hidden');
+        modalOptionsDiv.classList.remove('hidden');
+        conciergeSuggestionsDiv.classList.add('hidden'); // hide concierge suggestions unless it's concierge
 
-          // make suggestion cards clickable – they auto-select the matching option if exists, else just highlight
-          document.querySelectorAll('.time-card').forEach(card => {
-            card.addEventListener('click', (e) => {
-              const suggestionText = card.dataset.suggestion;
-              // try to find matching option in the options list
-              const optionBtns = document.querySelectorAll('.opt-btn');
-              let found = false;
-              optionBtns.forEach(btn => {
-                if (btn.dataset.option.toLowerCase().includes(suggestionText.toLowerCase()) || suggestionText.toLowerCase().includes(btn.dataset.option.toLowerCase())) {
-                  btn.click();
-                  found = true;
+        if (serviceKey === 'wifi') {
+          // WiFi specific setup
+          modalTitle.innerText = 'WiFi Access';
+          wifiContent.classList.remove('hidden');
+          voiceSection.classList.add('hidden');
+          sendButtonSection.classList.add('hidden');
+          modalOptionsDiv.classList.add('hidden');
+          
+          // Set SSID and room context from backend simulation
+          wifiSsidSpan.textContent = wifiCredentials.ssid;
+          roomContextSpan.textContent = `Connected from ${roomSpan.textContent}`;
+
+          // Reveal password button: reveals with fade, copies, shows confirmation
+          // We'll implement this event listener only once, but ensure it's not duplicated.
+          // Use a flag or remove existing listeners? We'll define inside openModal? Better to define once outside.
+        } else {
+          // Regular service flow
+          renderOptions(serviceKey);
+
+          // handle concierge suggestions
+          if (serviceKey === 'concierge') {
+            const suggestions = getTimeSuggestions();
+            let cardsHtml = '';
+            suggestions.forEach(s => {
+              cardsHtml += `<div class="time-card" data-suggestion="${s}"><i class="fas fa-star"></i> ${s}</div>`;
+            });
+            suggestionCardsDiv.innerHTML = cardsHtml;
+            conciergeSuggestionsDiv.classList.remove('hidden');
+
+            // make suggestion cards clickable
+            document.querySelectorAll('.time-card').forEach(card => {
+              card.addEventListener('click', (e) => {
+                const suggestionText = card.dataset.suggestion;
+                const optionBtns = document.querySelectorAll('.opt-btn');
+                let found = false;
+                optionBtns.forEach(btn => {
+                  if (btn.dataset.option.toLowerCase().includes(suggestionText.toLowerCase()) || suggestionText.toLowerCase().includes(btn.dataset.option.toLowerCase())) {
+                    btn.click();
+                    found = true;
+                  }
+                });
+                if (!found) {
+                  card.style.backgroundColor = '#d4af37';
+                  card.style.color = 'black';
+                  setTimeout(() => { card.style.backgroundColor = ''; card.style.color = ''; }, 200);
                 }
               });
-              if (!found) {
-                // just visually indicate card click
-                card.style.backgroundColor = '#d4af37';
-                card.style.color = 'black';
-                setTimeout(() => { card.style.backgroundColor = ''; card.style.color = ''; }, 200);
-              }
             });
-          });
-        } else {
-          conciergeSuggestionsDiv.classList.add('hidden');
+          } else {
+            conciergeSuggestionsDiv.classList.add('hidden');
+          }
         }
 
         modal.classList.remove('hidden');
@@ -563,6 +630,7 @@
         modal.classList.add('hidden');
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
         mediaRecorder = null;
+        resetWiFiUI();
       });
       modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
 
@@ -575,59 +643,30 @@
       });
 
       // send request with success animation & status tracker
-      sendBtn.addEventListener('click', async () => {
+      sendBtn.addEventListener('click', () => {
         if (!selectedOption && !recordedBlob) {
           recordingStatus.innerText = 'Please select an option or record a message.';
           return;
         }
-
-        // Get request data
-        const roomNumber = document.getElementById('roomDisplay').textContent.replace('Room ', '');
-        const requestText = selectedOption || 'Voice request';
-
-        // Show loading
+        // simulate loading
         sendBtn.innerHTML = '<span class="spinner mr-2"></span> Sending...';
         sendBtn.disabled = true;
 
-        try {
-          // Upload voice file to Supabase Storage if exists
-          let voiceUrl = null;
-          if (recordedBlob) {
-            const fileName = `voice-${Date.now()}.webm`;
-            const { data: uploadData, error: uploadError } = await supabase.storage
-              .from('voices')
-              .upload(fileName, recordedBlob);
-            
-            if (uploadError) throw uploadError;
-            voiceUrl = uploadData.path;
-          }
+        setTimeout(() => {
+          sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send Request';
+          sendBtn.disabled = false;
+          
+          // show success toast
+          toast.classList.remove('hidden');
+          setTimeout(() => toast.classList.add('hidden'), 3500);
 
-          // Insert request into database
-          const { data, error } = await supabase
-            .from('requests')
-            .insert([
-              {
-                room_number: roomNumber,
-                service: currentService,
-                request_text: requestText,
-                voice_url: voiceUrl,
-                status: 'pending'
-              }
-            ])
-            .select();
-
-          if (error) throw error;
-
-          console.log('Request sent:', data[0]);
-
-          // Emit socket event for real-time updates
-          socket.emit('requestCreated', data[0]);
-
+          // close modal
+          modal.classList.add('hidden');
           resetRecorderUI();
 
           // show status tracker with progress animation
           statusTracker.classList.remove('hidden');
-
+          
           // reset steps
           step1.classList.remove('active', 'completed');
           step2.classList.remove('active', 'completed');
@@ -663,13 +702,7 @@
           setTimeout(() => {
             statusTracker.classList.add('hidden');
           }, 8000);
-
-        } catch (error) {
-          console.error('Error sending request:', error);
-          sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send Request';
-          sendBtn.disabled = false;
-          recordingStatus.innerText = 'Failed to send request. Please try again.';
-        }
+        }, 1200);
       });
 
       // ensure recorder cleanup on modal close
@@ -679,6 +712,76 @@
           mediaRecorder = null;
         }
       });
+
+      // ---------- WiFi Feature Event Listeners ----------
+      // Reveal password button
+      revealPasswordBtn.addEventListener('click', () => {
+        if (!passwordRevealed) {
+          // Smooth fade animation: we can use a simple class or style transition
+          wifiPasswordDisplay.style.transition = 'opacity 0.3s ease';
+          wifiPasswordDisplay.style.opacity = '0';
+          setTimeout(() => {
+            wifiPasswordDisplay.textContent = wifiCredentials.password;
+            wifiPasswordDisplay.style.opacity = '1';
+          }, 150);
+          passwordRevealed = true;
+          
+          // Automatically copy to clipboard
+          navigator.clipboard.writeText(wifiCredentials.password).then(() => {
+            wifiMessage.textContent = 'Password copied successfully';
+            setTimeout(() => { wifiMessage.textContent = ''; }, 2000);
+          }).catch(() => {
+            wifiMessage.textContent = 'Failed to copy';
+          });
+        } else {
+          // If already revealed, just copy (no need to fade)
+          navigator.clipboard.writeText(wifiCredentials.password).then(() => {
+            wifiMessage.textContent = 'Password copied successfully';
+            setTimeout(() => { wifiMessage.textContent = ''; }, 2000);
+          });
+        }
+      });
+
+      // Copy Password button
+      copyPasswordBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(wifiCredentials.password).then(() => {
+          wifiMessage.textContent = 'Password copied successfully';
+          setTimeout(() => { wifiMessage.textContent = ''; }, 2000);
+        });
+      });
+
+      // Tap to Connect button
+      tapToConnectBtn.addEventListener('click', () => {
+        const ssid = wifiCredentials.ssid;
+        const pwd = wifiCredentials.password;
+        const wifiUri = `WIFI:T:WPA;S:${ssid};P:${pwd};;`;
+        
+        // Check if device supports automatic connection (via intent or webview)
+        // We'll attempt to use window.location or an iframe. If it fails, fallback to copy.
+        const isSupported = /android|iphone|ipad|ipod/i.test(navigator.userAgent); // heuristic
+        if (isSupported) {
+          try {
+            // For iOS, you can't auto-connect via JS, but you can open settings or use universal links?
+            // We'll use a hidden iframe to trigger the URI.
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = wifiUri;
+            document.body.appendChild(iframe);
+            setTimeout(() => document.body.removeChild(iframe), 1000);
+            wifiMessage.textContent = 'Attempting to connect...';
+          } catch (e) {
+            // fallback
+            navigator.clipboard.writeText(pwd);
+            wifiMessage.textContent = 'Auto-connect not supported. Password copied.';
+          }
+        } else {
+          // fallback: copy password
+          navigator.clipboard.writeText(pwd);
+          wifiMessage.textContent = 'Password copied (auto-connect not supported)';
+        }
+        setTimeout(() => { if (wifiMessage.textContent) wifiMessage.textContent = ''; }, 3000);
+      });
+
     })();
   </script>
   <style>
