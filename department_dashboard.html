@@ -6,6 +6,7 @@
   <title>PeerLoom · staff dashboard</title>
   <!-- Tailwind & Font Awesome -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:opsz@14..32&display=swap');
@@ -317,19 +318,99 @@
     // master request store
     let allRequests = [];
     let nextId = 100;
+    let supabaseSubscription = null;
 
-    // seed some initial requests
-    const seedRequests = [
-      { id: 1, room: '412', department: 'Maintenance', type: 'Broken AC', description: 'AC not cooling', voice: true, timestamp: Date.now() - 7200000, status: 'pending' },
-      { id: 2, room: '305', department: 'Housekeeping', type: 'Extra pillows', description: '2 extra pillows', voice: false, timestamp: Date.now() - 3600000, status: 'in-progress' },
-      { id: 3, room: '510', department: 'Room Service', type: 'Order breakfast', description: 'continental breakfast', voice: false, timestamp: Date.now() - 1800000, status: 'completed' },
-      { id: 4, room: '221', department: 'Concierge', type: 'Taxi', description: 'taxi to airport 5pm', voice: true, timestamp: Date.now() - 900000, status: 'pending' },
-      { id: 5, room: '189', department: 'Laundry', type: 'Wash & fold', description: '3 shirts, 2 pants', voice: false, timestamp: Date.now() - 4500000, status: 'pending' },
-      { id: 6, room: '333', department: 'Maintenance', type: 'Light broken', description: 'bathroom light flickers', voice: true, timestamp: Date.now() - 10800000, status: 'completed' },
-      { id: 7, room: '804', department: 'Maintenance', type: 'Leak', description: 'sink leaking urgent', voice: true, timestamp: Date.now() - 7200000, status: 'pending' },
-    ];
-    allRequests.push(...seedRequests);
-    nextId = 8;
+    const serviceToDepartment = {
+      housekeeping: 'Housekeeping', maintenance: 'Maintenance', roomservice: 'Room Service', concierge: 'Concierge', towels: 'Housekeeping', laundry: 'Laundry', donotdisturb: 'Housekeeping', report: 'Maintenance'
+    };
+
+    async function initSupabaseClient() {
+      try {
+        const res = await fetch('/api/config');
+        if (!res.ok) throw new Error('Unable to load /api/config');
+        const cfg = await res.json();
+        if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) throw new Error('Missing Supabase config values');
+        window.supabaseClient = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+        return true;
+      } catch (err) {
+        console.error('Supabase init failed:', err);
+        return false;
+      }
+    }
+
+    function toLocalRequest(row) {
+      return {
+        id: row.id,
+        room: row.room_number,
+        department: serviceToDepartment[row.service] || row.service || 'Unknown',
+        type: row.service || 'Unknown',
+        description: row.request_text || '',
+        voice: Boolean(row.voice_url),
+        timestamp: new Date(row.created_at).getTime(),
+        status: row.status || 'pending',
+        escalated: false
+      };
+    }
+
+    async function loadRequestsFromSupabase() {
+      if (!window.supabaseClient) return;
+      const { data, error } = await window.supabaseClient
+        .from('requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error('Supabase query error:', error);
+        return;
+      }
+      allRequests = (data || []).map(toLocalRequest);
+      renderRequests();
+      renderPerformanceStats();
+      renderInsights();
+      renderRouteSuggestion();
+    }
+
+    async function updateRequestStatusSupabase(reqId, status) {
+      if (!window.supabaseClient) return;
+      const { error } = await window.supabaseClient
+        .from('requests')
+        .update({ status: status, updated_at: new Date().toISOString() })
+        .eq('id', reqId);
+      if (error) console.error('Supabase update error:', error);
+      return !error;
+    }
+
+    function handleRealtimeChange(payload) {
+      const row = payload.new || payload.old;
+      if (!row || !row.id) return;
+      const request = toLocalRequest(row);
+      const existingIndex = allRequests.findIndex(r => r.id === request.id);
+      if (payload.eventType === 'INSERT') {
+        allRequests.unshift(request);
+        if (request.department === currentDept) {
+          addNotification(1); playNotificationSound();
+        }
+      } else if (payload.eventType === 'UPDATE') {
+        if (existingIndex >= 0) {
+          allRequests[existingIndex] = request;
+        } else {
+          allRequests.unshift(request);
+        }
+      } else if (payload.eventType === 'DELETE') {
+        if (existingIndex >= 0) allRequests.splice(existingIndex, 1);
+      }
+      renderRequests();
+      renderPerformanceStats();
+      renderInsights();
+      renderRouteSuggestion();
+    }
+
+    function subscribeToRequestUpdates() {
+      if (!window.supabaseClient || supabaseSubscription) return;
+      supabaseSubscription = window.supabaseClient
+        .channel('requests_realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, handleRealtimeChange)
+        .subscribe();
+    }
 
     // department login state
     let currentDept = null;
@@ -653,22 +734,26 @@
 
       // attach event listeners to status updates
       document.querySelectorAll('.status-update').forEach(sel => {
-        sel.addEventListener('change', (e) => {
+        sel.addEventListener('change', async (e) => {
           const reqId = parseInt(e.target.dataset.id);
           const newStatus = e.target.value;
           const req = allRequests.find(r => r.id === reqId);
           if (req) {
             if (newStatus === 'completed') {
-              // open completion modal
               currentRequestForCompletion = req;
               completionModal.classList.remove('hidden');
               completionModal.classList.add('flex');
-              // revert dropdown to previous status until saved
               e.target.value = req.status;
             } else {
-              req.status = newStatus;
-              renderRequests();
-              renderPerformanceStats();
+              const success = await updateRequestStatusSupabase(reqId, newStatus);
+              if (success) {
+                req.status = newStatus;
+                renderRequests();
+                renderPerformanceStats();
+              } else {
+                alert('Unable to update status at this time');
+                e.target.value = req.status;
+              }
             }
           }
         });
@@ -744,35 +829,9 @@
         updateSlidingBg(allTab);
       }
 
-      // start interval for new requests
+      // Supabase real-time subscription keeps requests updated; no local tooltip-only simulation needed.
       if (newRequestInterval) clearInterval(newRequestInterval);
-      newRequestInterval = setInterval(() => {
-        const depts = ['Maintenance','Housekeeping','Room Service','Concierge','Laundry'];
-        const randomDept = depts[Math.floor(Math.random() * depts.length)];
-        const randomRoom = Math.floor(Math.random() * 500) + 100;
-        const types = ['Extra towels','Light issue','Food order','Taxi','Laundry'];
-        const desc = ['urgent','guest called','please ASAP','special request'];
-        const newReq = {
-          id: nextId++,
-          room: randomRoom.toString(),
-          department: randomDept,
-          type: types[Math.floor(Math.random() * types.length)],
-          description: desc[Math.floor(Math.random() * desc.length)],
-          voice: Math.random() > 0.5,
-          timestamp: Date.now(),
-          status: 'pending'
-        };
-        allRequests.push(newReq);
-
-        if (currentDept === randomDept) {
-          addNotification(1);
-          playNotificationSound();
-          renderRequests();
-          renderInsights();
-          renderRouteSuggestion();
-          renderPerformanceStats();
-        }
-      }, 18000); // every 18 seconds
+      newRequestInterval = null;
 
       // start escalation checker
       if (escalationInterval) clearInterval(escalationInterval);
@@ -782,12 +841,20 @@
     }
 
     // login handler
-    function attemptLogin() {
+    async function attemptLogin() {
       const dept = deptSelect.value;
       const pw = passwordInput.value;
       if (DEPT_PASSWORDS[dept] === pw) {
+        const supabaseOk = await initSupabaseClient();
+        if (!supabaseOk) {
+          alert('Unable to initialize Supabase. Check server configuration.');
+          return;
+        }
+
         loginContainer.classList.add('hidden');
         dashboardContainer.classList.remove('hidden');
+        await loadRequestsFromSupabase();
+        subscribeToRequestUpdates();
         initDashboard(dept);
       } else {
         alert('Invalid password. (Hint: try e.g., maintenance123)');
@@ -919,21 +986,28 @@
     // completion modal
     closeCompletionModal.addEventListener('click', () => completionModal.classList.add('hidden'));
     cancelCompletionBtn.addEventListener('click', () => completionModal.classList.add('hidden'));
-    saveCompletionBtn.addEventListener('click', () => {
+    saveCompletionBtn.addEventListener('click', async () => {
       if (currentRequestForCompletion) {
         const note = completionNote.value;
         const photo = completionPhoto.files[0];
-        // In real system, upload photo and store note
+
         if (note) {
           if (!chatMessages[currentRequestForCompletion.id]) chatMessages[currentRequestForCompletion.id] = [];
           chatMessages[currentRequestForCompletion.id].push({ staff: 'System', message: 'Completion note: ' + note, timestamp: Date.now() });
         }
         if (photo) {
-          alert('📸 Photo would be uploaded in production.');
+          alert('📸 Photo upload placeholder (not implemented).');
         }
-        currentRequestForCompletion.status = 'completed';
-        renderRequests();
-        renderPerformanceStats();
+
+        const success = await updateRequestStatusSupabase(currentRequestForCompletion.id, 'completed');
+        if (success) {
+          currentRequestForCompletion.status = 'completed';
+          renderRequests();
+          renderPerformanceStats();
+        } else {
+          alert('Unable to mark complete right now.');
+        }
+
         completionModal.classList.add('hidden');
         completionNote.value = '';
         completionPhoto.value = '';

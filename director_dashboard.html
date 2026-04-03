@@ -6,6 +6,7 @@
   <title>PeerLoom · director suite</title>
   <!-- Tailwind + Font Awesome -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&family=Playfair+Display:wght@400;500;600&display=swap');
@@ -331,15 +332,89 @@
 
     let allRequests = [];
     let nextId = 100;
-    const seed = [
-      { id:1, room:'412', dept:'Maintenance', type:'AC broken', desc:'not cooling', voice:true, timestamp:Date.now()-25*60000, status:'pending' },
-      { id:2, room:'305', dept:'Housekeeping', type:'extra pillows', desc:'2 pillows', voice:false, timestamp:Date.now()-12*60000, status:'in-progress' },
-      { id:3, room:'510', dept:'Room Service', type:'breakfast', desc:'continental', voice:false, timestamp:Date.now()-80*60000, status:'completed' },
-      { id:4, room:'221', dept:'Concierge', type:'taxi', desc:'to airport 5pm', voice:true, timestamp:Date.now()-10*60000, status:'pending' },
-      { id:5, room:'189', dept:'Laundry', type:'wash & fold', desc:'3 shirts', voice:false, timestamp:Date.now()-5*60000, status:'pending' },
-      { id:6, room:'333', dept:'Maintenance', type:'light issue', desc:'flickering', voice:true, timestamp:Date.now()-2*60000, status:'pending' },
-    ];
-    allRequests.push(...seed); nextId = 7;
+    let supabaseSubscription = null;
+
+    const serviceToDepartment = {
+      housekeeping: 'Housekeeping', maintenance: 'Maintenance', roomservice: 'Room Service', concierge: 'Concierge', towels: 'Housekeeping', laundry: 'Laundry', donotdisturb: 'Housekeeping', report: 'Maintenance'
+    };
+
+    async function initSupabaseClient() {
+      try {
+        const res = await fetch('/api/config');
+        if (!res.ok) throw new Error('Unable to load /api/config');
+        const cfg = await res.json();
+        window.supabaseClient = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+        return true;
+      } catch (err) {
+        console.error('Supabase init error:', err);
+        return false;
+      }
+    }
+
+    function toDirectorRequest(row) {
+      return {
+        id: row.id,
+        room: row.room_number,
+        dept: serviceToDepartment[row.service] || row.service || 'Unknown',
+        type: row.service || 'Unknown',
+        desc: row.request_text || '',
+        voice: Boolean(row.voice_url),
+        timestamp: new Date(row.created_at).getTime(),
+        status: row.status || 'pending'
+      };
+    }
+
+    async function loadRequestsFromSupabase() {
+      if (!window.supabaseClient) return;
+      const { data, error } = await window.supabaseClient
+        .from('requests')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error('Supabase query error:', error);
+        return;
+      }
+      allRequests = (data || []).map(toDirectorRequest);
+      renderMonitor(searchMonitor.value);
+      refreshStats();
+      refreshAlerts();
+    }
+
+    function handleDirectorRealtime(payload) {
+      const row = payload.new || payload.old;
+      if (!row) return;
+      const req = toDirectorRequest(row);
+      const existing = allRequests.findIndex(r => r.id === req.id);
+      if (payload.eventType === 'INSERT') {
+        allRequests.unshift(req);
+      } else if (payload.eventType === 'UPDATE') {
+        if (existing >= 0) allRequests[existing] = req;
+        else allRequests.unshift(req);
+      } else if (payload.eventType === 'DELETE') {
+        if (existing >= 0) allRequests.splice(existing, 1);
+      }
+      renderMonitor(searchMonitor.value);
+      refreshStats();
+      refreshAlerts();
+    }
+
+    function subscribeDirectorRealtime() {
+      if (!window.supabaseClient || supabaseSubscription) return;
+      supabaseSubscription = window.supabaseClient
+        .channel('director_requests')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, handleDirectorRealtime)
+        .subscribe();
+    }
+
+    async function updateDirectorRequestStatus(id, status) {
+      if (!window.supabaseClient) return false;
+      const { error } = await window.supabaseClient
+        .from('requests')
+        .update({ status: status, updated_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) console.error('Supabase update error:', error);
+      return !error;
+    }
 
     let voiceUsed = 42;
     const voiceLimitStandard = 100;
@@ -717,8 +792,9 @@
       voiceMeter.style.width = percent + '%';
     }
 
-    // Simulate new requests every 20s
+    // Simulate local requests only when Supabase realtime is not enabled
     setInterval(() => {
+      if (window.supabaseClient) return;
       const dept = departments[Math.floor(Math.random()*departments.length)];
       const room = Math.floor(Math.random()*500)+100;
       const types = ['extra towel','light issue','food order','taxi','laundry'];
@@ -742,18 +818,28 @@
     }, 20000);
 
     // ---------- LOGIN & SPLASH ----------
-    loginBtn.addEventListener('click', (e) => {
+    loginBtn.addEventListener('click', async (e) => {
       e.preventDefault();
+      const supabaseOk = await initSupabaseClient();
+      if (!supabaseOk) {
+        alert('Unable to initialize Supabase configuration (check /api/config).');
+        return;
+      }
+
       loginDiv.classList.add('hidden');
       splashGreeting.innerText = `${getTimeGreeting()}, Director`;
       splashTime.innerText = new Date().toLocaleString();
       splashDiv.classList.remove('hidden');
 
-      setTimeout(() => {
+      setTimeout(async () => {
         splashDiv.classList.add('hidden');
         dashDiv.classList.remove('hidden');
         updateDateTime();
         setInterval(updateDateTime, 1000);
+
+        await loadRequestsFromSupabase();
+        subscribeDirectorRealtime();
+
         renderMonitor();
         refreshStats();
         refreshAlerts();

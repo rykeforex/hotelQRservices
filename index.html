@@ -352,12 +352,47 @@
     © Powered by PeerLoom Technologies
   </footer>
 
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/socket.io/socket.io.js"></script>
   <script>
     (function() {
       // ------- room number dynamic -------
       const roomSpan = document.getElementById('roomDisplay');
       const randomRoom = Math.floor(Math.random() * 200) + 100; // 100-299
       roomSpan.textContent = `Room ${randomRoom}`;
+
+      // ------- socket.io + Supabase config -------
+      const socket = typeof io !== 'undefined' ? io('http://localhost:3000') : null;
+      if (socket) {
+        socket.on('connect', () => console.info('Socket connected', socket.id));
+        socket.on('disconnect', () => console.warn('Socket disconnected'));
+
+        socket.on('newRequest', (data) => {
+          console.info('New request received via socket:', data);
+        });
+
+        socket.on('statusUpdate', (update) => {
+          console.info('Status update via socket:', update);
+        });
+      } else {
+        console.warn('Socket.io not loaded (server not running or CDN blocked)');
+      }
+
+      async function initSupabase() {
+        try {
+          const resp = await fetch('/api/config');
+          if (!resp.ok) throw new Error('Supabase config route returned ' + resp.status);
+
+          const { supabaseUrl, supabaseAnonKey } = await resp.json();
+          window.supabaseClient = supabase.createClient(supabaseUrl, supabaseAnonKey);
+          console.info('Supabase client initialized from /api/config');
+        } catch (err) {
+          console.error('Failed to initialize Supabase:', err);
+          document.body.insertAdjacentHTML('afterbegin', '<div style="position:fixed;top:0;left:0;width:100%;background:#c53030;color:white;padding:.75rem;text-align:center;z-index:9999;">Unable to load Supabase configuration. Please check server env values.</div>');
+        }
+      }
+      initSupabase();
 
       // ------- simulated backend WiFi credentials -------
       const wifiCredentials = {
@@ -642,32 +677,46 @@
         });
       });
 
-      // send request with success animation & status tracker
-      sendBtn.addEventListener('click', () => {
+      // send request with backend + socket and optional voice file
+      async function submitRequest() {
         if (!selectedOption && !recordedBlob) {
           recordingStatus.innerText = 'Please select an option or record a message.';
           return;
         }
-        // simulate loading
+
+        const roomNumber = roomSpan.textContent.replace('Room ', '');
+        const requestText = selectedOption || `Voice request (${new Date().toLocaleTimeString()})`;
+        const service = currentService;
+
+        const formData = new FormData();
+        formData.append('roomNumber', roomNumber);
+        formData.append('service', service);
+        formData.append('requestText', requestText);
+
+        if (recordedBlob) {
+          formData.append('voice', recordedBlob, 'voice.webm');
+        }
+
         sendBtn.innerHTML = '<span class="spinner mr-2"></span> Sending...';
         sendBtn.disabled = true;
 
-        setTimeout(() => {
-          sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send Request';
-          sendBtn.disabled = false;
-          
+        try {
+          const response = await fetch('/api/requests', {
+            method: 'POST',
+            body: formData
+          });
+          if (!response.ok) throw new Error('Request failed');
+
           // show success toast
           toast.classList.remove('hidden');
           setTimeout(() => toast.classList.add('hidden'), 3500);
 
-          // close modal
+          // close modal + reset
           modal.classList.add('hidden');
           resetRecorderUI();
 
           // show status tracker with progress animation
           statusTracker.classList.remove('hidden');
-          
-          // reset steps
           step1.classList.remove('active', 'completed');
           step2.classList.remove('active', 'completed');
           step3.classList.remove('active', 'completed');
@@ -675,35 +724,25 @@
           step2.querySelector('i').className = 'far fa-circle';
           step3.querySelector('i').className = 'far fa-circle';
 
-          // animate steps
-          setTimeout(() => {
-            step1.classList.add('active');
-            step1.querySelector('i').className = 'fas fa-spinner fa-pulse';
-          }, 300);
-          setTimeout(() => {
-            step1.classList.remove('active');
-            step1.classList.add('completed');
-            step1.querySelector('i').className = 'fas fa-check-circle';
-            step2.classList.add('active');
-            step2.querySelector('i').className = 'fas fa-spinner fa-pulse';
-          }, 2000);
-          setTimeout(() => {
-            step2.classList.remove('active');
-            step2.classList.add('completed');
-            step2.querySelector('i').className = 'fas fa-check-circle';
-            step3.classList.add('active');
-            step3.querySelector('i').className = 'fas fa-spinner fa-pulse';
-          }, 4000);
-          setTimeout(() => {
-            step3.classList.remove('active');
-            step3.classList.add('completed');
-            step3.querySelector('i').className = 'fas fa-check-circle';
-          }, 6000);
-          setTimeout(() => {
-            statusTracker.classList.add('hidden');
-          }, 8000);
-        }, 1200);
-      });
+          setTimeout(() => { step1.classList.add('active'); step1.querySelector('i').className = 'fas fa-spinner fa-pulse'; }, 300);
+          setTimeout(() => { step1.classList.remove('active'); step1.classList.add('completed'); step1.querySelector('i').className = 'fas fa-check-circle'; step2.classList.add('active'); step2.querySelector('i').className = 'fas fa-spinner fa-pulse'; }, 2000);
+          setTimeout(() => { step2.classList.remove('active'); step2.classList.add('completed'); step2.querySelector('i').className = 'fas fa-check-circle'; step3.classList.add('active'); step3.querySelector('i').className = 'fas fa-spinner fa-pulse'; }, 4000);
+          setTimeout(() => { step3.classList.remove('active'); step3.classList.add('completed'); step3.querySelector('i').className = 'fas fa-check-circle'; }, 6000);
+          setTimeout(() => { statusTracker.classList.add('hidden'); }, 8000);
+
+          // Clear selection
+          selectedOption = null;
+
+        } catch (err) {
+          console.error('Error submitting request:', err);
+          recordingStatus.innerText = 'Unable to submit request. Try again later.';
+        } finally {
+          sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i> Send Request';
+          sendBtn.disabled = false;
+        }
+      }
+
+      sendBtn.addEventListener('click', submitRequest);
 
       // ensure recorder cleanup on modal close
       window.addEventListener('click', function (e) {

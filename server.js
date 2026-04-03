@@ -10,6 +10,9 @@ const fs = require('fs');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
+console.log('CWD:', process.cwd());
+console.log('.env file exists:', fs.existsSync('.env'));
+
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
@@ -21,6 +24,15 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'luxehotel2026';
+
+// Supabase client config from env
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+
+console.log('SUPABASE_URL loaded:', SUPABASE_URL ? 'YES' : 'NO');
+console.log('SUPABASE_ANON_KEY loaded:', SUPABASE_ANON_KEY ? 'YES' : 'NO');
+console.log('SUPABASE_URL value:', process.env.SUPABASE_URL);
+console.log('SUPABASE_ANON_KEY length:', process.env.SUPABASE_ANON_KEY ? process.env.SUPABASE_ANON_KEY.length : 0);
 
 // Database (PostgreSQL / Supabase)
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -51,6 +63,12 @@ initDb().catch(console.error);
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// Serve HTML files from root
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/department_dashboard.html', (req, res) => res.sendFile(path.join(__dirname, 'department_dashboard.html')));
+app.get('/director_dashboard.html', (req, res) => res.sendFile(path.join(__dirname, 'director_dashboard.html')));
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -86,12 +104,27 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Frontend config endpoint (pass safe env vars)
+app.get('/api/config', (req, res) => {
+  console.log('/api/config called');
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.error('Missing SUPABASE_URL or SUPABASE_ANON_KEY');
+    return res.status(500).json({ error: 'Supabase config is missing on server' });
+  }
+  res.json({ supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY });
+});
+
 // Create new request (from guest interface)
 app.post('/api/requests', upload.single('voice'), async (req, res) => {
+  console.log('POST /api/requests called');
+  console.log('Body:', req.body);
+  console.log('File:', req.file);
+
   const { roomNumber, service, requestText } = req.body;
   const voiceUrl = req.file ? `/uploads/${req.file.filename}` : null;
 
   if (!roomNumber || !service || !requestText) {
+    console.log('Missing required fields');
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
@@ -101,9 +134,11 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
       VALUES ($1, $2, $3, $4)
       RETURNING *
     `;
+    console.log('Executing insert:', [roomNumber, service, requestText, voiceUrl]);
     const { rows } = await pool.query(insert, [roomNumber, service, requestText, voiceUrl]);
     const newRequest = rows[0];
 
+    console.log('Insert successful:', newRequest);
     io.emit('newRequest', newRequest);
     res.status(201).json(newRequest);
   } catch (err) {
