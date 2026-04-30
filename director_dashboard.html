@@ -338,15 +338,17 @@
       housekeeping: 'Housekeeping', maintenance: 'Maintenance', roomservice: 'Room Service', concierge: 'Concierge', towels: 'Housekeeping', laundry: 'Laundry', donotdisturb: 'Housekeeping', report: 'Maintenance'
     };
 
+    // ========== USE SERVER API INSTEAD OF DIRECT SUPABASE CLIENT ==========
+    
     async function initSupabaseClient() {
       try {
         const res = await fetch('/api/config');
         if (!res.ok) throw new Error('Unable to load /api/config');
         const cfg = await res.json();
-        window.supabaseClient = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+        window.supabaseConfig = cfg;
         return true;
       } catch (err) {
-        console.error('Supabase init error:', err);
+        console.error('Config init error:', err);
         return false;
       }
     }
@@ -364,23 +366,23 @@
       };
     }
 
+    // Load requests from server API
     async function loadRequestsFromSupabase() {
-      if (!window.supabaseClient) return;
-      const { data, error } = await window.supabaseClient
-        .from('requests')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) {
-        console.error('Supabase query error:', error);
-        return;
+      try {
+        const res = await fetch('/api/requests');
+        if (!res.ok) throw new Error('Failed to fetch requests');
+        const data = await res.json();
+        allRequests = (data || []).map(toDirectorRequest);
+        renderMonitor(searchMonitor.value);
+        refreshStats();
+        refreshAlerts();
+      } catch (err) {
+        console.error('Error loading requests:', err);
       }
-      allRequests = (data || []).map(toDirectorRequest);
-      renderMonitor(searchMonitor.value);
-      refreshStats();
-      refreshAlerts();
     }
 
     function handleDirectorRealtime(payload) {
+      // Socket.io will handle real-time updates
       const row = payload.new || payload.old;
       if (!row) return;
       const req = toDirectorRequest(row);
@@ -399,21 +401,38 @@
     }
 
     function subscribeDirectorRealtime() {
-      if (!window.supabaseClient || supabaseSubscription) return;
-      supabaseSubscription = window.supabaseClient
-        .channel('director_requests')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, handleDirectorRealtime)
-        .subscribe();
+      // Connect to Socket.io for real-time updates
+      if (typeof io !== 'undefined') {
+        const socket = io();
+        socket.on('newRequest', (data) => {
+          const req = toDirectorRequest(data);
+          allRequests.unshift(req);
+          refreshStats();
+          refreshAlerts();
+        });
+        socket.on('statusUpdate', (update) => {
+          const idx = allRequests.findIndex(r => r.id === update.id);
+          if (idx >= 0) {
+            allRequests[idx].status = update.status;
+            refreshStats();
+          }
+        });
+      }
     }
 
     async function updateDirectorRequestStatus(id, status) {
-      if (!window.supabaseClient) return false;
-      const { error } = await window.supabaseClient
-        .from('requests')
-        .update({ status: status, updated_at: new Date().toISOString() })
-        .eq('id', id);
-      if (error) console.error('Supabase update error:', error);
-      return !error;
+      try {
+        const res = await fetch(`/api/requests/${id}/status`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status })
+        });
+        if (!res.ok) throw new Error('Failed to update status');
+        return true;
+      } catch (err) {
+        console.error('Update error:', err);
+        return false;
+      }
     }
 
     let voiceUsed = 42;

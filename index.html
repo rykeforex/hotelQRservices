@@ -357,10 +357,35 @@
   <script src="/socket.io/socket.io.js"></script>
   <script>
     (function() {
-      // ------- room number dynamic -------
+      // ------- room number from URL parameter or random -------
       const roomSpan = document.getElementById('roomDisplay');
-      const randomRoom = Math.floor(Math.random() * 200) + 100; // 100-299
+      
+      // Check for room parameter in URL (e.g., index.html?room=242)
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomParam = urlParams.get('room');
+      
+      let randomRoom;
+      let isFromQR = false;
+      
+      if (roomParam) {
+        // Room provided via QR code URL
+        randomRoom = roomParam;
+        isFromQR = true;
+      } else {
+        // Generate random room for demo purposes
+        randomRoom = Math.floor(Math.random() * 200) + 100; // 100-299
+      }
+      
       roomSpan.textContent = `Room ${randomRoom}`;
+      
+      // If from QR, add visual indicator and lock the room
+      if (isFromQR) {
+        document.body.insertAdjacentHTML('afterbegin', 
+          '<div style="position:fixed;top:0;left:0;width:100%;background:#b49450;color:white;padding:0.5rem;text-align:center;z-index:9999;font-size:0.85rem;">📱 Connected to Room ' + randomRoom + ' via QR Code</div>'
+        );
+        // Add margin-top to body to account for the banner
+        document.body.style.marginTop = '2rem';
+      }
 
       // ------- socket.io + Supabase config -------
       const socket = typeof io !== 'undefined' ? io('http://localhost:3000') : null;

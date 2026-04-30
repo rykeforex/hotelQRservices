@@ -43,7 +43,9 @@ if (!DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  //  always enables SSL for Supabase
+ssl: { rejectUnauthorized: false }
+  // ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
 async function initDb() {
@@ -69,6 +71,7 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/department_dashboard.html', (req, res) => res.sendFile(path.join(__dirname, 'department_dashboard.html')));
 app.get('/director_dashboard.html', (req, res) => res.sendFile(path.join(__dirname, 'director_dashboard.html')));
+app.get('/qr-generator.html', (req, res) => res.sendFile(path.join(__dirname, 'qr-generator.html')));
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -114,6 +117,47 @@ app.get('/api/config', (req, res) => {
   res.json({ supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY });
 });
 
+// Supabase REST API helper functions
+async function supabaseInsert(table, data) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Prefer': 'return=representation'
+    },
+    body: JSON.stringify(data)
+  });
+  
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Supabase insert failed: ${error}`);
+  }
+  
+  return response.json();
+}
+
+async function supabaseSelect(table, filters = {}) {
+  const params = new URLSearchParams(filters).toString();
+  const url = `${SUPABASE_URL}/rest/v1/${table}${params ? '?' + params : ''}`;
+  
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+    }
+  });
+  
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Supabase select failed: ${error}`);
+  }
+  
+  return response.json();
+}
+
 // Create new request (from guest interface)
 app.post('/api/requests', upload.single('voice'), async (req, res) => {
   console.log('POST /api/requests called');
@@ -129,14 +173,17 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
   }
 
   try {
-    const insert = `
-      INSERT INTO requests (room_number, service, request_text, voice_url)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *
-    `;
-    console.log('Executing insert:', [roomNumber, service, requestText, voiceUrl]);
-    const { rows } = await pool.query(insert, [roomNumber, service, requestText, voiceUrl]);
-    const newRequest = rows[0];
+    const requestData = {
+      room_number: roomNumber,
+      service: service,
+      request_text: requestText,
+      voice_url: voiceUrl,
+      status: 'pending',
+      created_at: new Date().toISOString()
+    };
+    
+    console.log('Inserting via Supabase REST API:', requestData);
+    const newRequest = await supabaseInsert('requests', requestData);
 
     console.log('Insert successful:', newRequest);
     io.emit('newRequest', newRequest);
@@ -150,8 +197,7 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
 // Get all requests (for director)
 app.get('/api/requests', async (req, res) => {
   try {
-    const sql = `SELECT * FROM requests ORDER BY created_at DESC`;
-    const { rows } = await pool.query(sql);
+    const rows = await supabaseSelect('requests', { order: 'created_at.desc' });
     res.json(rows);
   } catch (err) {
     console.error('Error fetching requests:', err);
@@ -177,10 +223,10 @@ app.get('/api/requests/:department', async (req, res) => {
   }
 
   try {
-    const placeholders = services.map((_, idx) => `$${idx + 1}`).join(',');
-    const sql = `SELECT * FROM requests WHERE service IN (${placeholders}) ORDER BY created_at DESC`;
-    const { rows } = await pool.query(sql, services);
-    res.json(rows);
+    // Use Supabase REST API with filter
+    const allRequests = await supabaseSelect('requests', { order: 'created_at.desc' });
+    const filtered = allRequests.filter(r => services.includes(r.service));
+    res.json(filtered);
   } catch (err) {
     console.error('Error fetching department requests:', err);
     res.status(500).json({ error: 'Failed to fetch requests' });
@@ -197,20 +243,28 @@ app.put('/api/requests/:id/status', async (req, res) => {
   }
 
   try {
-    const sql = `
-      UPDATE requests
-      SET status = $1, updated_at = NOW()
-      WHERE id = $2
-      RETURNING id
-    `;
-    const { rowCount } = await pool.query(sql, [status, id]);
+    // Use Supabase REST API to update
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/requests?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify({ status, updated_at: new Date().toISOString() })
+    });
 
-    if (rowCount === 0) {
+    if (!response.ok) {
+      throw new Error('Failed to update request');
+    }
+
+    const updated = await response.json();
+    if (!updated.length) {
       return res.status(404).json({ error: 'Request not found' });
     }
 
     io.emit('statusUpdate', { id: parseInt(id), status });
-
     res.json({ id: parseInt(id), status });
   } catch (err) {
     console.error('Error updating request:', err);
@@ -227,9 +281,9 @@ app.post('/api/auth/department', async (req, res) => {
   }
 
   try {
-    const sql = `SELECT * FROM departments WHERE name = $1`;
-    const { rows } = await pool.query(sql, [department]);
-    const row = rows[0];
+    // Use Supabase REST API
+    const departments = await supabaseSelect('departments', { name: `eq.${department}` });
+    const row = departments[0];
 
     if (!row) {
       return res.status(401).json({ error: 'Invalid department' });
@@ -259,9 +313,9 @@ app.post('/api/auth/director', async (req, res) => {
   }
 
   try {
-    const sql = `SELECT * FROM director WHERE username = $1`;
-    const { rows } = await pool.query(sql, [username]);
-    const row = rows[0];
+    // Use Supabase REST API
+    const directors = await supabaseSelect('director', { username: `eq.${username}` });
+    const row = directors[0];
 
     if (!row) {
       return res.status(401).json({ error: 'Invalid credentials' });

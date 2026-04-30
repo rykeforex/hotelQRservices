@@ -324,16 +324,20 @@
       housekeeping: 'Housekeeping', maintenance: 'Maintenance', roomservice: 'Room Service', concierge: 'Concierge', towels: 'Housekeeping', laundry: 'Laundry', donotdisturb: 'Housekeeping', report: 'Maintenance'
     };
 
+    // ========== USE SERVER API INSTEAD OF DIRECT SUPABASE CLIENT ==========
+    // The server uses Supabase REST API which works around DNS issues
+    
     async function initSupabaseClient() {
+      // Initialize via server config (for Socket.io if needed)
       try {
         const res = await fetch('/api/config');
         if (!res.ok) throw new Error('Unable to load /api/config');
         const cfg = await res.json();
-        if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) throw new Error('Missing Supabase config values');
-        window.supabaseClient = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+        // Store config but use server API for data operations
+        window.supabaseConfig = cfg;
         return true;
       } catch (err) {
-        console.error('Supabase init failed:', err);
+        console.error('Config init failed:', err);
         return false;
       }
     }
@@ -352,34 +356,40 @@
       };
     }
 
+    // Load requests from server API (which uses Supabase REST API)
     async function loadRequestsFromSupabase() {
-      if (!window.supabaseClient) return;
-      const { data, error } = await window.supabaseClient
-        .from('requests')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) {
-        console.error('Supabase query error:', error);
-        return;
+      try {
+        const res = await fetch('/api/requests');
+        if (!res.ok) throw new Error('Failed to fetch requests');
+        const data = await res.json();
+        allRequests = (data || []).map(toLocalRequest);
+        renderRequests();
+        renderPerformanceStats();
+        renderInsights();
+        renderRouteSuggestion();
+      } catch (err) {
+        console.error('Error loading requests:', err);
       }
-      allRequests = (data || []).map(toLocalRequest);
-      renderRequests();
-      renderPerformanceStats();
-      renderInsights();
-      renderRouteSuggestion();
     }
 
+    // Update request status via server API
     async function updateRequestStatusSupabase(reqId, status) {
-      if (!window.supabaseClient) return;
-      const { error } = await window.supabaseClient
-        .from('requests')
-        .update({ status: status, updated_at: new Date().toISOString() })
-        .eq('id', reqId);
-      if (error) console.error('Supabase update error:', error);
-      return !error;
+      try {
+        const res = await fetch(`/api/requests/${reqId}/status`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status })
+        });
+        if (!res.ok) throw new Error('Failed to update status');
+        return true;
+      } catch (err) {
+        console.error('Supabase update error:', err);
+        return false;
+      }
     }
 
     function handleRealtimeChange(payload) {
+      // Socket.io will handle real-time updates from server
       const row = payload.new || payload.old;
       if (!row || !row.id) return;
       const request = toLocalRequest(row);
@@ -405,11 +415,25 @@
     }
 
     function subscribeToRequestUpdates() {
-      if (!window.supabaseClient || supabaseSubscription) return;
-      supabaseSubscription = window.supabaseClient
-        .channel('requests_realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'requests' }, handleRealtimeChange)
-        .subscribe();
+      // Connect to Socket.io for real-time updates from server
+      if (typeof io !== 'undefined') {
+        const socket = io();
+        socket.on('newRequest', (data) => {
+          const request = toLocalRequest(data);
+          if (request.department === currentDept) {
+            allRequests.unshift(request);
+            addNotification(1); playNotificationSound();
+            renderRequests();
+          }
+        });
+        socket.on('statusUpdate', (update) => {
+          const idx = allRequests.findIndex(r => r.id === update.id);
+          if (idx >= 0) {
+            allRequests[idx].status = update.status;
+            renderRequests();
+          }
+        });
+      }
     }
 
     // department login state
