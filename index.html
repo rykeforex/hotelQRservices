@@ -355,6 +355,7 @@
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/socket.io/socket.io.js"></script>
+  <script src="/api-config.js"></script>
   <script>
     (function() {
       // ------- room number from URL parameter or random -------
@@ -406,15 +407,12 @@
 
       async function initSupabase() {
         try {
-          const resp = await fetch('/api/config');
-          if (!resp.ok) throw new Error('Supabase config route returned ' + resp.status);
-
-          const { supabaseUrl, supabaseAnonKey } = await resp.json();
+          const { supabaseUrl, supabaseAnonKey } = await apiCall('/api/config');
           window.supabaseClient = supabase.createClient(supabaseUrl, supabaseAnonKey);
           console.info('Supabase client initialized from /api/config');
         } catch (err) {
           console.error('Failed to initialize Supabase:', err);
-          document.body.insertAdjacentHTML('afterbegin', '<div style="position:fixed;top:0;left:0;width:100%;background:#c53030;color:white;padding:.75rem;text-align:center;z-index:9999;">Unable to load Supabase configuration. Please check server env values.</div>');
+          document.body.insertAdjacentHTML('afterbegin', '<div style="position:fixed;top:0;left:0;width:100%;background:#c53030;color:white;padding:.75rem;text-align:center;z-index:9999;">Unable to load Supabase configuration. Please check server.</div>');
         }
       }
       initSupabase();
@@ -726,7 +724,7 @@
         sendBtn.disabled = true;
 
         try {
-          const response = await fetch('/api/requests', {
+          const response = await fetch(API_BASE_URL + '/api/requests', {
             method: 'POST',
             body: formData
           });

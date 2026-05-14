@@ -304,6 +304,7 @@
 <!-- hidden audio for beep (simple) -->
 <audio id="notificationSound" src="data:audio/wav;base64,UklGRlwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVoAAACAgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f38=" preload="auto"></audio>
 
+<script src="/api-config.js"></script>
 <script>
   (function() {
     // ========== FAKE BACKEND ==========
@@ -330,7 +331,7 @@
     async function initSupabaseClient() {
       // Initialize via server config (for Socket.io if needed)
       try {
-        const res = await fetch('/api/config');
+        const res = await fetch(API_BASE_URL + '/api/config');
         if (!res.ok) throw new Error('Unable to load /api/config');
         const cfg = await res.json();
         // Store config but use server API for data operations
@@ -359,7 +360,7 @@
     // Load requests from server API (which uses Supabase REST API)
     async function loadRequestsFromSupabase() {
       try {
-        const res = await fetch('/api/requests');
+        const res = await fetch(API_BASE_URL + '/api/requests');
         if (!res.ok) throw new Error('Failed to fetch requests');
         const data = await res.json();
         allRequests = (data || []).map(toLocalRequest);
@@ -375,7 +376,7 @@
     // Update request status via server API
     async function updateRequestStatusSupabase(reqId, status) {
       try {
-        const res = await fetch(`/api/requests/${reqId}/status`, {
+        const res = await fetch(`${API_BASE_URL}/api/requests/${reqId}/status`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status })

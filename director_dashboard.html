@@ -342,7 +342,7 @@
     
     async function initSupabaseClient() {
       try {
-        const res = await fetch('/api/config');
+        const res = await fetch(API_BASE_URL + '/api/config');
         if (!res.ok) throw new Error('Unable to load /api/config');
         const cfg = await res.json();
         window.supabaseConfig = cfg;
@@ -369,7 +369,7 @@
     // Load requests from server API
     async function loadRequestsFromSupabase() {
       try {
-        const res = await fetch('/api/requests');
+        const res = await fetch(API_BASE_URL + '/api/requests');
         if (!res.ok) throw new Error('Failed to fetch requests');
         const data = await res.json();
         allRequests = (data || []).map(toDirectorRequest);
@@ -422,7 +422,7 @@
 
     async function updateDirectorRequestStatus(id, status) {
       try {
-        const res = await fetch(`/api/requests/${id}/status`, {
+        const res = await fetch(`${API_BASE_URL}/api/requests/${id}/status`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status })
