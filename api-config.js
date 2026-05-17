@@ -5,7 +5,7 @@
 const API_BASE_URL = 
   window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:3000'
-    : 'https://your-server-url.railway.app'; // UPDATE THIS WITH YOUR DEPLOYED SERVER URL
+    : 'https://hotelqrservices-production.up.railway.app'; // production backend URL
 
 // Helper function for API calls
 async function apiCall(endpoint, options = {}) {
