@@ -403,7 +403,7 @@
     function subscribeDirectorRealtime() {
       // Connect to Socket.io for real-time updates
       if (typeof io !== 'undefined') {
-        const socket = io();
+        const socket = io(API_BASE_URL);
         socket.on('newRequest', (data) => {
           const req = toDirectorRequest(data);
           allRequests.unshift(req);

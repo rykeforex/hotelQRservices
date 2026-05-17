@@ -36,30 +36,28 @@ console.log('SUPABASE_ANON_KEY length:', process.env.SUPABASE_ANON_KEY ? process
 
 // Database (PostgreSQL / Supabase)
 const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) {
-  console.error('ERROR: DATABASE_URL is not set. Set it to your Supabase/Postgres URL.');
-  process.exit(1);
-}
+if (DATABASE_URL) {
+  console.log('DATABASE_URL loaded: YES');
+  const pool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
 
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  //  always enables SSL for Supabase
-ssl: { rejectUnauthorized: false }
-  // ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
-
-async function initDb() {
-  if (process.env.INIT_DB !== 'true') return;
-  try {
-    const sql = await fs.promises.readFile(path.join(__dirname, 'schema.sql'), 'utf8');
-    await pool.query(sql);
-    console.log('Database schema initialized.');
-  } catch (err) {
-    console.error('Error initializing database schema:', err);
+  async function initDb() {
+    if (process.env.INIT_DB !== 'true') return;
+    try {
+      const sql = await fs.promises.readFile(path.join(__dirname, 'schema.sql'), 'utf8');
+      await pool.query(sql);
+      console.log('Database schema initialized.');
+    } catch (err) {
+      console.error('Error initializing database schema:', err);
+    }
   }
-}
 
-initDb().catch(console.error);
+  initDb().catch(console.error);
+} else {
+  console.warn('DATABASE_URL is not set. Skipping postgres pool initialization.');
+}
 
 // Middleware
 app.use(cors());

@@ -389,7 +389,7 @@
       }
 
       // ------- socket.io + Supabase config -------
-      const socket = typeof io !== 'undefined' ? io('http://localhost:3000') : null;
+      const socket = typeof io !== 'undefined' && typeof API_BASE_URL !== 'undefined' ? io(API_BASE_URL) : null;
       if (socket) {
         socket.on('connect', () => console.info('Socket connected', socket.id));
         socket.on('disconnect', () => console.warn('Socket disconnected'));

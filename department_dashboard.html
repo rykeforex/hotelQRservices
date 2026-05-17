@@ -418,7 +418,7 @@
     function subscribeToRequestUpdates() {
       // Connect to Socket.io for real-time updates from server
       if (typeof io !== 'undefined') {
-        const socket = io();
+        const socket = io(API_BASE_URL);
         socket.on('newRequest', (data) => {
           const request = toLocalRequest(data);
           if (request.department === currentDept) {
