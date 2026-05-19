@@ -64,6 +64,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
+// Serve root-level static files needed by the UI
+app.get('/api-config.js', (req, res) => res.sendFile(path.join(__dirname, 'api-config.js')));
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
 // Serve HTML files from root
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
