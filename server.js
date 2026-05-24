@@ -73,6 +73,7 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/department_dashboard.html', (req, res) => res.sendFile(path.join(__dirname, 'department_dashboard.html')));
 app.get('/director_dashboard.html', (req, res) => res.sendFile(path.join(__dirname, 'director_dashboard.html')));
+app.get('/request.html', (req, res) => res.sendFile(path.join(__dirname, 'request.html')));
 app.get('/qr-generator.html', (req, res) => res.sendFile(path.join(__dirname, 'qr-generator.html')));
 
 // Ensure uploads directory exists

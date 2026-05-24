@@ -18,6 +18,37 @@
     .qr-card:hover {
       transform: translateY(-2px);
     }
+    @keyframes fadeInScale {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .animate-result {
+      animation: fadeInScale 0.3s ease-out forwards;
+    }
+
+    @media print {
+      /* Hide all UI navigation, inputs, and buttons */
+      .text-center.mb-8, 
+      .text-center.mt-8, 
+      button, 
+      input, 
+      label, 
+      h2,
+      .qr-card > .flex,
+      .qr-card > .grid:first-of-type {
+        display: none !important;
+      }
+
+      /* Reset layout for paper */
+      body { background: white !important; padding: 0 !important; }
+      .max-w-4xl { max-width: 100% !important; width: 100% !important; padding: 0 !important; }
+      .qr-card {
+        box-shadow: none !important;
+        border: 1px solid #eee !important;
+        margin-bottom: 1rem !important;
+        page-break-inside: avoid;
+      }
+    }
   </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -92,9 +123,11 @@
         return;
       }
 
-      const url = `${BASE_URL}/index.html?room=${room}`;
+      const url = `${BASE_URL}/request.html?room=${room}`;
       
-      document.getElementById('singleQRResult').classList.remove('hidden');
+      const result = document.getElementById('singleQRResult');
+      result.classList.remove('hidden');
+      result.classList.add('animate-result');
       document.getElementById('singleRoomDisplay').textContent = room;
       document.getElementById('singleURL').textContent = url;
       
@@ -131,10 +164,10 @@
 
       for (let i = start; i <= end; i++) {
         const room = prefix + i;
-        const url = `${BASE_URL}/index.html?room=${room}`;
+        const url = `${BASE_URL}/request.html?room=${room}`;
         
         const card = document.createElement('div');
-        card.className = 'qr-card p-4 text-center';
+        card.className = 'qr-card p-4 text-center animate-result';
         card.innerHTML = `
           <div id="qr-${room}" class="mb-2"></div>
           <div class="font-medium text-gray-800">Room ${room}</div>

@@ -96,7 +96,16 @@
       border-radius: 1.2rem;
       padding: 1rem;
       box-shadow: 0 2px 10px rgba(0,0,0,0.02);
+      animation: slideIn 0.4s ease-out forwards;
+      opacity: 0;
     }
+    @keyframes slideIn {
+      from { transform: translateX(-10px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    .performance-card:nth-child(1) { animation-delay: 0.1s; }
+    .performance-card:nth-child(2) { animation-delay: 0.2s; }
+    .performance-card:nth-child(3) { animation-delay: 0.3s; }
   </style>
 </head>
 <body class="antialiased">
@@ -965,7 +974,7 @@
         <p><span class="font-medium">Requests per room:</span> ${roomSummary || 'none'}</p>
         <p><span class="font-medium">Requests per type:</span> ${typeSummary || 'none'}</p>
       `;
-      reportContent.innerHTML = reportHtml;
+      document.getElementById('reportContent').innerHTML = reportHtml;
       reportModal.classList.remove('hidden');
       reportModal.classList.add('flex');
     });
@@ -990,13 +999,14 @@
 
     exportPdfBtn.addEventListener('click', () => {
       const printWindow = window.open('', '_blank');
+      if (!printWindow) return alert('Please allow popups to export PDF');
       printWindow.document.write(`
-        <html><head><title>PeerLoom Report</title>
-        <style>body { font-family: Inter, sans-serif; padding: 2rem; }</style>
-        </head><body>
-        <h2>${currentDept} daily report</h2>
-        ${reportContent.innerHTML}
-        </body></html>
+        <html><head><title>PeerLoom Report<\/title>
+        <style>body { font-family: Inter, sans-serif; padding: 2rem; }<\/style>
+        <\/head><body>
+        <h2>${currentDept} daily report<\/h2>
+        ${document.getElementById('reportContent').innerHTML}
+        <\/body><\/html>
       `);
       printWindow.document.close();
       printWindow.print();
@@ -1033,7 +1043,6 @@
         } else {
           alert('Unable to mark complete right now.');
         }
-
         completionModal.classList.add('hidden');
         completionNote.value = '';
         completionPhoto.value = '';
