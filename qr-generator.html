@@ -114,7 +114,9 @@
   <!-- QRCode.js library -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
   <script>
-    const BASE_URL = window.location.origin;
+    const currentPath = window.location.pathname || '/';
+    const BASE_PATH = currentPath.replace(/[^/]*$/, '');
+    const BASE_URL = window.location.origin + BASE_PATH;
 
     function generateSingleQR() {
       const room = document.getElementById('singleRoom').value.trim();
