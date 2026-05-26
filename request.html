@@ -271,11 +271,11 @@
   </div>
 
   <!-- REQUEST STATUS TRACKER (hidden initially) -->
-  <div id="statusTracker" class="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-50 hidden" style="min-width: 300px;">
+  <div id="statusTracker" class="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-50 hidden" style="min-width: 320px;">
     <div class="status-tracker glass-panel">
-      <div class="status-step" id="step1"><i class="far fa-circle"></i> <span>Request received</span></div>
-      <div class="status-step" id="step2"><i class="far fa-circle"></i> <span>Staff on the way</span></div>
-      <div class="status-step" id="step3"><i class="far fa-circle"></i> <span>Request completed</span></div>
+      <div class="status-step" id="step1"><i class="far fa-circle"></i> <span>Pending</span></div>
+      <div class="status-step" id="step2"><i class="far fa-circle"></i> <span>In Progress</span></div>
+      <div class="status-step" id="step3"><i class="far fa-circle"></i> <span>Completed</span></div>
     </div>
   </div>
 
@@ -419,10 +419,24 @@
         socket.on('disconnect', () => console.warn('Socket disconnected'));
 
         socket.on('newRequest', (data) => {
+          const createdRequest = getRequestRecord(data);
+          if (createdRequest?.id) {
+            currentRequestId = createdRequest.id;
+          }
+          if (createdRequest?.status) {
+            syncStatusTracker(createdRequest.status);
+          }
           console.info('New request received via socket:', data);
         });
 
         socket.on('statusUpdate', (update) => {
+          const requestId = Number(update?.id);
+          if (!currentRequestId && requestId) {
+            currentRequestId = requestId;
+          }
+          if (currentRequestId && requestId === currentRequestId && update?.status) {
+            syncStatusTracker(update.status);
+          }
           console.info('Status update via socket:', update);
         });
       } else {
@@ -530,6 +544,8 @@
       let stream = null;
       let isRecording = false;
       let passwordRevealed = false; // for WiFi
+      let currentRequestId = null;
+      let currentRequestStatus = 'pending';
 
       // Helper: time-based suggestions for concierge
       function getTimeSuggestions() {
@@ -553,6 +569,51 @@
         audioPlayer.src = '';
         recordedBlob = null;
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+      }
+
+      function getRequestRecord(payload) {
+        if (!payload) return null;
+        if (Array.isArray(payload)) return payload[0] || null;
+        return payload;
+      }
+
+      function syncStatusTracker(status) {
+        currentRequestStatus = status || 'pending';
+        statusTracker.classList.remove('hidden');
+
+        step1.classList.remove('active');
+        step2.classList.remove('active');
+        step3.classList.remove('active');
+        step1.classList.remove('completed');
+        step2.classList.remove('completed');
+        step3.classList.remove('completed');
+
+        step1.querySelector('i').className = 'far fa-circle';
+        step2.querySelector('i').className = 'far fa-circle';
+        step3.querySelector('i').className = 'far fa-circle';
+
+        if (currentRequestStatus === 'pending') {
+          step1.classList.add('active');
+          step1.querySelector('i').className = 'fas fa-spinner fa-pulse';
+          clearTimeout(window._requestTrackerHideTimer);
+        } else if (currentRequestStatus === 'in-progress') {
+          step1.classList.add('completed');
+          step1.querySelector('i').className = 'fas fa-check-circle';
+          step2.classList.add('active');
+          step2.querySelector('i').className = 'fas fa-spinner fa-pulse';
+          clearTimeout(window._requestTrackerHideTimer);
+        } else if (currentRequestStatus === 'completed') {
+          step1.classList.add('completed');
+          step1.querySelector('i').className = 'fas fa-check-circle';
+          step2.classList.add('completed');
+          step2.querySelector('i').className = 'fas fa-check-circle';
+          step3.classList.add('completed');
+          step3.querySelector('i').className = 'fas fa-check-circle';
+          clearTimeout(window._requestTrackerHideTimer);
+          window._requestTrackerHideTimer = setTimeout(() => {
+            statusTracker.classList.add('hidden');
+          }, 4000);
+        }
       }
 
       // Reset WiFi UI
@@ -761,6 +822,13 @@
           });
           if (!response.ok) throw new Error('Request failed');
 
+          const responseData = await response.json();
+          const createdRequest = getRequestRecord(responseData);
+
+          if (createdRequest?.id) {
+            currentRequestId = createdRequest.id;
+          }
+
           // show success toast
           toast.classList.remove('hidden');
           setTimeout(() => toast.classList.add('hidden'), 3500);
@@ -769,20 +837,7 @@
           modal.classList.add('hidden');
           resetRecorderUI();
 
-          // show status tracker with progress animation
-          statusTracker.classList.remove('hidden');
-          step1.classList.remove('active', 'completed');
-          step2.classList.remove('active', 'completed');
-          step3.classList.remove('active', 'completed');
-          step1.querySelector('i').className = 'far fa-circle';
-          step2.querySelector('i').className = 'far fa-circle';
-          step3.querySelector('i').className = 'far fa-circle';
-
-          setTimeout(() => { step1.classList.add('active'); step1.querySelector('i').className = 'fas fa-spinner fa-pulse'; }, 300);
-          setTimeout(() => { step1.classList.remove('active'); step1.classList.add('completed'); step1.querySelector('i').className = 'fas fa-check-circle'; step2.classList.add('active'); step2.querySelector('i').className = 'fas fa-spinner fa-pulse'; }, 2000);
-          setTimeout(() => { step2.classList.remove('active'); step2.classList.add('completed'); step2.querySelector('i').className = 'fas fa-check-circle'; step3.classList.add('active'); step3.querySelector('i').className = 'fas fa-spinner fa-pulse'; }, 4000);
-          setTimeout(() => { step3.classList.remove('active'); step3.classList.add('completed'); step3.querySelector('i').className = 'fas fa-check-circle'; }, 6000);
-          setTimeout(() => { statusTracker.classList.add('hidden'); }, 8000);
+          syncStatusTracker(createdRequest?.status || 'pending');
 
           // Clear selection
           selectedOption = null;
