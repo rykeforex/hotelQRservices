@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "socket": "node socket-server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "build": "node -e \"console.log('No build step required')\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

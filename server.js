@@ -28,17 +28,21 @@ const JWT_SECRET = process.env.JWT_SECRET || 'luxehotel2026';
 // Supabase client config from env
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 console.log('SUPABASE_URL loaded:', SUPABASE_URL ? 'YES' : 'NO');
 console.log('SUPABASE_ANON_KEY loaded:', SUPABASE_ANON_KEY ? 'YES' : 'NO');
+console.log('SUPABASE_SERVICE_ROLE_KEY loaded:', SUPABASE_SERVICE_ROLE_KEY ? 'YES' : 'NO');
 console.log('SUPABASE_URL value:', process.env.SUPABASE_URL);
 console.log('SUPABASE_ANON_KEY length:', process.env.SUPABASE_ANON_KEY ? process.env.SUPABASE_ANON_KEY.length : 0);
 
 // Database (PostgreSQL / Supabase)
 const DATABASE_URL = process.env.DATABASE_URL;
+let pool = null;
+
 if (DATABASE_URL) {
   console.log('DATABASE_URL loaded: YES');
-  const pool = new Pool({
+  pool = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false }
   });
@@ -128,22 +132,25 @@ app.get('/api/config', (req, res) => {
 
 // Supabase REST API helper functions
 async function supabaseInsert(table, data) {
+  const isUsingServiceRole = Boolean(SUPABASE_SERVICE_ROLE_KEY);
+  const authKey = isUsingServiceRole ? SUPABASE_SERVICE_ROLE_KEY : SUPABASE_ANON_KEY;
+
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'apikey': authKey,
+      'Authorization': `Bearer ${authKey}`,
       'Prefer': 'return=representation'
     },
     body: JSON.stringify(data)
   });
-  
+
   if (!response.ok) {
     const error = await response.text();
     throw new Error(`Supabase insert failed: ${error}`);
   }
-  
+
   return response.json();
 }
 
@@ -165,6 +172,29 @@ async function supabaseSelect(table, filters = {}) {
   }
   
   return response.json();
+}
+
+async function insertRequestViaDatabase(requestData) {
+  if (!pool) {
+    throw new Error('DATABASE_URL is not configured');
+  }
+
+  const result = await pool.query(
+    `INSERT INTO requests (room_number, service, request_text, status, voice_url, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, room_number, service, request_text, status, voice_url, created_at, updated_at`,
+    [
+      requestData.room_number,
+      requestData.service,
+      requestData.request_text,
+      requestData.status,
+      requestData.voice_url,
+      requestData.created_at,
+      requestData.created_at
+    ]
+  );
+
+  return result.rows[0];
 }
 
 // Create new request (from guest interface)
@@ -190,9 +220,16 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
       status: 'pending',
       created_at: new Date().toISOString()
     };
-    
+
     console.log('Inserting via Supabase REST API:', requestData);
-    const newRequest = await supabaseInsert('requests', requestData);
+    let newRequest;
+
+    try {
+      newRequest = await supabaseInsert('requests', requestData);
+    } catch (supabaseErr) {
+      console.error('Supabase insert failed, trying database fallback:', supabaseErr.message);
+      newRequest = await insertRequestViaDatabase(requestData);
+    }
 
     console.log('Insert successful:', newRequest);
     io.emit('newRequest', newRequest);
