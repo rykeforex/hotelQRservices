@@ -9,7 +9,27 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
-  <script src="api-config.js"></script>
+  <script>
+    const API_BASE_URL =
+      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? 'http://localhost:3000'
+        : 'https://hotelqrservices-production.up.railway.app';
+
+    async function apiCall(endpoint, options = {}) {
+      const url = API_BASE_URL + endpoint;
+      const config = {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers
+        }
+      };
+
+      const res = await fetch(url, config);
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      return res.json();
+    }
+  </script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&family=Playfair+Display:wght@400;500;600&display=swap');

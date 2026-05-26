@@ -314,7 +314,27 @@
 <!-- hidden audio for beep (simple) -->
 <audio id="notificationSound" src="data:audio/wav;base64,UklGRlwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVoAAACAgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f38=" preload="auto"></audio>
 
-<script src="api-config.js"></script>
+<script>
+  const API_BASE_URL =
+    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:3000'
+      : 'https://hotelqrservices-production.up.railway.app';
+
+  async function apiCall(endpoint, options = {}) {
+    const url = API_BASE_URL + endpoint;
+    const config = {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+      }
+    };
+
+    const res = await fetch(url, config);
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+  }
+</script>
 <script>
   (function() {
     // ========== FAKE BACKEND ==========
