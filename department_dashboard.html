@@ -143,7 +143,7 @@
     </div>
 
     <!-- demo hint (soft) -->
-    <p class="text-xs text-gray-400 text-center mt-6">demo passwords: dept name + "123" (e.g. maintenance123)</p>
+    <p class="text-xs text-gray-400 text-center mt-6">demo passwords: Maintenance = "wrench", Housekeeping = "broom", Room Service = "plate", Concierge = "bell", Laundry = "shirt"</p>
   </div>
 </div>
 
@@ -394,10 +394,7 @@
         if (!res.ok) throw new Error('Failed to fetch requests');
         const data = await res.json();
         allRequests = (data || []).map(toLocalRequest);
-        renderRequests();
-        renderPerformanceStats();
-        renderInsights();
-        renderRouteSuggestion();
+        refreshDashboardUI();
       } catch (err) {
         console.error('Error loading requests:', err);
       }
@@ -439,10 +436,7 @@
       } else if (payload.eventType === 'DELETE') {
         if (existingIndex >= 0) allRequests.splice(existingIndex, 1);
       }
-      renderRequests();
-      renderPerformanceStats();
-      renderInsights();
-      renderRouteSuggestion();
+      refreshDashboardUI();
     }
 
     function subscribeToRequestUpdates() {
@@ -454,15 +448,15 @@
           if (request.department === currentDept) {
             allRequests.unshift(request);
             addNotification(1); playNotificationSound();
-            renderRequests();
           }
+          refreshDashboardUI();
         });
         socket.on('statusUpdate', (update) => {
           const idx = allRequests.findIndex(r => r.id === update.id);
           if (idx >= 0) {
             allRequests[idx].status = update.status;
-            renderRequests();
           }
+          refreshDashboardUI();
         });
       }
     }
@@ -709,6 +703,14 @@
       renderRequests(); // reflect escalated style
     }
 
+    function refreshDashboardUI() {
+      if (!currentDept) return;
+      renderRequests();
+      renderPerformanceStats();
+      renderInsights();
+      renderRouteSuggestion();
+    }
+
     // render requests based on currentDept, filter, search, focus mode
     function renderRequests() {
       if (!currentDept) return;
@@ -871,10 +873,7 @@
       deptNameHeader.innerText = dept;
       updateDate();
       resetNotifications();
-      renderRequests();
-      renderPerformanceStats();
-      renderInsights();
-      renderRouteSuggestion();
+      refreshDashboardUI();
 
       // set initial sliding bg to All tab
       const allTab = document.querySelector('.filter-tab[data-status="all"]');
@@ -899,20 +898,31 @@
     async function attemptLogin() {
       const dept = deptSelect.value;
       const pw = passwordInput.value;
-      if (DEPT_PASSWORDS[dept] === pw) {
+
+      try {
+        const authResponse = await apiCall('/api/auth/department', {
+          method: 'POST',
+          body: JSON.stringify({ department: dept, password: pw })
+        });
+
+        if (!authResponse || !authResponse.department) {
+          throw new Error('Authentication failed');
+        }
+
         const supabaseOk = await initSupabaseClient();
         if (!supabaseOk) {
           alert('Unable to initialize Supabase. Check server configuration.');
           return;
         }
 
+        localStorage.setItem('departmentAuthToken', authResponse.token || '');
         loginContainer.classList.add('hidden');
         dashboardContainer.classList.remove('hidden');
         await loadRequestsFromSupabase();
         subscribeToRequestUpdates();
-        initDashboard(dept);
-      } else {
-        alert('Invalid password. (Hint: try e.g., maintenance123)');
+        initDashboard(authResponse.department || dept);
+      } catch (err) {
+        alert('Invalid password or unable to authenticate.');
       }
     }
 

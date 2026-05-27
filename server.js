@@ -327,25 +327,34 @@ app.post('/api/auth/department', async (req, res) => {
   }
 
   try {
-    // Use Supabase REST API
-    const departments = await supabaseSelect('departments', { name: `eq.${department}` });
-    const row = departments[0];
+    // Use Supabase REST API if configured
+    let departments = [];
+    let row = null;
 
-    if (!row) {
+    try {
+      departments = await supabaseSelect('departments', { name: `eq.${department}` });
+      row = departments[0];
+    } catch (err) {
+      console.warn('Supabase departments lookup failed, falling back to demo auth:', err.message || err);
+    }
+
+    const demoPassword = getPlainPassword(department);
+    if (!row && !demoPassword) {
       return res.status(401).json({ error: 'Invalid department' });
     }
 
     // For demo, use plain text passwords (in production, use hashed)
-    const isValidPassword = password === getPlainPassword(department);
+    const isValidPassword = password === demoPassword;
 
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid password' });
     }
 
-    const token = jwt.sign({ type: 'department', department: row.name }, JWT_SECRET, { expiresIn: '8h' });
-    res.json({ token, department: row.name });
+    const departmentName = row?.name || department;
+    const token = jwt.sign({ type: 'department', department: departmentName }, JWT_SECRET, { expiresIn: '8h' });
+    res.json({ token, department: departmentName });
   } catch (err) {
-    console.error('Error fetching department:', err);
+    console.error('Error authenticating department:', err);
     res.status(500).json({ error: 'Authentication failed' });
   }
 });
