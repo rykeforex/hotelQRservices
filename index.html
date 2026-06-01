@@ -4,40 +4,333 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LUXE Hotel Portal</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
-    body { font-family: system-ui, sans-serif; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #C9A84C;
+      --gold-light: #E2C47A;
+      --gold-pale: #F0DFA0;
+      --gold-dim: rgba(201,168,76,0.18);
+      --gold-glow: rgba(201,168,76,0.32);
+      --cream: #FDFAF4;
+      --ivory: #F7F2E8;
+      --charcoal: #1C1A17;
+      --charcoal-soft: #3A3630;
+      --muted: #8A8070;
+    }
+
+    body {
+      min-height: 100vh;
+      background-color: var(--cream);
+      background-image:
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(201,168,76,0.13) 0%, transparent 70%),
+        url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23C9A84C' fill-opacity='0.04'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+      font-family: 'Montserrat', sans-serif;
+      color: var(--charcoal);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 24px;
+    }
+
     @keyframes fadeInUp {
-      from { opacity: 0; transform: translateY(20px); }
-      to { opacity: 1; transform: translateY(0); }
+      from { opacity: 0; transform: translateY(28px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
-    .animate-fade-in-up {
-      animation: fadeInUp 0.6s ease-out forwards;
+    @keyframes shimmer {
+      0%   { background-position: -200% center; }
+      100% { background-position: 200% center; }
     }
-    .delay-100 { animation-delay: 0.1s; }
-    .delay-200 { animation-delay: 0.2s; }
+    @keyframes lineExpand {
+      from { width: 0; opacity: 0; }
+      to   { width: 72px; opacity: 1; }
+    }
+
+    .portal-wrapper {
+      width: 100%;
+      max-width: 720px;
+      background: #fff;
+      border-radius: 28px;
+      border: 1px solid rgba(201,168,76,0.25);
+      padding: 60px 56px 56px;
+      box-shadow:
+        0 4px 24px rgba(180,150,60,0.10),
+        0 1px 3px rgba(180,150,60,0.08),
+        0 32px 80px rgba(100,80,20,0.07);
+      animation: fadeInUp 0.7s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 48px;
+      animation: fadeInUp 0.7s 0.1s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    .hotel-eyebrow {
+      font-family: 'Montserrat', sans-serif;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.42em;
+      text-transform: uppercase;
+      color: var(--gold);
+      background: linear-gradient(90deg, var(--gold) 0%, var(--gold-pale) 50%, var(--gold) 100%);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: shimmer 3.5s linear infinite;
+      display: block;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(52px, 8vw, 72px);
+      font-weight: 300;
+      line-height: 1;
+      letter-spacing: -0.01em;
+      color: var(--charcoal);
+    }
+    h1 em {
+      font-style: italic;
+      color: var(--gold);
+    }
+
+    .gold-divider {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin: 22px auto 20px;
+    }
+    .gold-divider span {
+      display: block;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold), transparent);
+      animation: lineExpand 0.8s 0.5s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    .gold-divider .diamond {
+      width: 6px;
+      height: 6px;
+      background: var(--gold);
+      transform: rotate(45deg);
+      flex-shrink: 0;
+      opacity: 0.85;
+    }
+
+    .header-sub {
+      font-size: 13px;
+      font-weight: 300;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .cards-grid {
+      display: grid;
+      gap: 20px;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    @media (max-width: 540px) {
+      .portal-wrapper { padding: 44px 28px 40px; }
+      .cards-grid { grid-template-columns: 1fr; }
+    }
+
+    .portal-card {
+      display: block;
+      background: #fff;
+      border-radius: 20px;
+      border: 1px solid rgba(201,168,76,0.28);
+      padding: 32px 28px 28px;
+      text-decoration: none;
+      color: inherit;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.35s cubic-bezier(0.22,1,0.36,1),
+                  box-shadow 0.35s cubic-bezier(0.22,1,0.36,1),
+                  border-color 0.35s ease;
+      animation: fadeInUp 0.7s 0.22s cubic-bezier(0.22,1,0.36,1) both;
+      box-shadow: 0 2px 12px rgba(180,150,60,0.07), 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .portal-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(201,168,76,0.06) 0%, transparent 60%);
+      opacity: 0;
+      transition: opacity 0.35s ease;
+      border-radius: inherit;
+    }
+
+    .portal-card::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--gold), transparent);
+      opacity: 0;
+      transition: opacity 0.35s ease;
+    }
+
+    .portal-card:hover {
+      transform: translateY(-5px);
+      border-color: rgba(201,168,76,0.65);
+      box-shadow:
+        0 16px 48px rgba(180,150,60,0.16),
+        0 4px 16px rgba(180,150,60,0.12),
+        0 0 0 1px rgba(201,168,76,0.2);
+    }
+    .portal-card:hover::before { opacity: 1; }
+    .portal-card:hover::after  { opacity: 1; }
+
+    .card-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(201,168,76,0.14), rgba(201,168,76,0.06));
+      border: 1px solid rgba(201,168,76,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 22px;
+      transition: background 0.35s, border-color 0.35s;
+    }
+    .portal-card:hover .card-icon {
+      background: linear-gradient(135deg, rgba(201,168,76,0.25), rgba(201,168,76,0.1));
+      border-color: rgba(201,168,76,0.55);
+    }
+    .card-icon svg {
+      width: 20px; height: 20px;
+      stroke: var(--gold);
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .card-role {
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 0.38em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 10px;
+      display: block;
+    }
+
+    .card-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 26px;
+      font-weight: 600;
+      color: var(--charcoal);
+      line-height: 1.15;
+      margin-bottom: 10px;
+      letter-spacing: 0.01em;
+    }
+
+    .card-desc {
+      font-size: 12.5px;
+      font-weight: 300;
+      line-height: 1.75;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
+
+    .card-arrow {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 22px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: var(--gold);
+      opacity: 0;
+      transform: translateX(-6px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .card-arrow svg {
+      width: 14px; height: 14px;
+      stroke: var(--gold);
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transition: transform 0.3s ease;
+    }
+    .portal-card:hover .card-arrow {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    .portal-card:hover .card-arrow svg {
+      transform: translateX(3px);
+    }
+
+    .footer-note {
+      text-align: center;
+      margin-top: 36px;
+      font-size: 10.5px;
+      letter-spacing: 0.18em;
+      color: rgba(138,128,112,0.55);
+      text-transform: uppercase;
+      animation: fadeInUp 0.7s 0.38s cubic-bezier(0.22,1,0.36,1) both;
+    }
   </style>
 </head>
-<body class="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-6 py-10">
-  <div class="w-full max-w-3xl rounded-[2rem] border border-white/10 bg-slate-900/80 p-8 shadow-2xl shadow-black/20 backdrop-blur-xl animate-fade-in-up">
-    <div class="mb-8 text-center animate-fade-in-up delay-100">
-      <p class="text-sm uppercase tracking-[0.3em] text-amber-300">LUXE Hotel</p>
-      <h1 class="mt-4 text-4xl font-bold text-white sm:text-5xl">Welcome</h1>
-      <p class="mx-auto mt-4 max-w-2xl text-slate-400">Choose your role and continue to the appropriate portal.</p>
+<body>
+
+  <div class="portal-wrapper">
+
+    <div class="header">
+      <span class="hotel-eyebrow">LUXE Hotel</span>
+      <h1>Wel<em>come</em></h1>
+      <div class="gold-divider">
+        <span style="width:72px"></span>
+        <div class="diamond"></div>
+        <span style="width:72px"></span>
+      </div>
+      <p class="header-sub">Choose your role and continue to the appropriate portal.</p>
     </div>
-    <div class="grid gap-4 sm:grid-cols-2">
-      
-      <a href="department_dashboard.html" class="rounded-[1.5rem] border border-white/10 bg-slate-800/90 p-6 text-left transition hover:-translate-y-1 hover:border-emerald-400/40 hover:bg-slate-800/100 animate-fade-in-up delay-200">
-        <div class="text-sm uppercase tracking-[0.25em] text-emerald-300">Staff</div>
-        <h2 class="mt-3 text-2xl font-semibold text-white">Staff Dashboard</h2>
-        <p class="mt-2 text-slate-400">View and manage incoming requests for your department.</p>
+
+    <div class="cards-grid">
+
+      <a href="department_dashboard.html" class="portal-card">
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <span class="card-role">Staff</span>
+        <div class="card-title">Staff Dashboard</div>
+        <p class="card-desc">View and manage incoming requests for your department.</p>
+        <div class="card-arrow">
+          Enter Portal
+          <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </div>
       </a>
-      <a href="director_dashboard.html" class="rounded-[1.5rem] border border-white/10 bg-slate-800/90 p-6 text-left transition hover:-translate-y-1 hover:border-sky-400/40 hover:bg-slate-800/100 animate-fade-in-up delay-200">
-        <div class="text-sm uppercase tracking-[0.25em] text-sky-300">Manager</div>
-        <h2 class="mt-3 text-2xl font-semibold text-white">Manager Portal</h2>
-        <p class="mt-2 text-slate-400">Monitor overall hotel operations, metrics, and requests.</p>
+
+      <a href="director_dashboard.html" class="portal-card">
+        <div class="card-icon">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><path d="M3 17h4m-2-2v4"/></svg>
+        </div>
+        <span class="card-role">Manager</span>
+        <div class="card-title">Manager Portal</div>
+        <p class="card-desc">Monitor overall hotel operations, metrics, and requests.</p>
+        <div class="card-arrow">
+          Enter Portal
+          <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </div>
       </a>
+
     </div>
+
+    <p class="footer-note">Private &nbsp;&bull;&nbsp; Authorised Access Only</p>
+    <p class="footer-note" style="margin-top: 10px; opacity: 0.7;">&copy; 2025 Peerloom Technologies. All rights reserved.</p>
+
   </div>
+
 </body>
 </html>
