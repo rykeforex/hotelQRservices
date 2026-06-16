@@ -28,6 +28,14 @@ CREATE TABLE IF NOT EXISTS requests (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Password reset requests (director approvals)
+CREATE TABLE IF NOT EXISTS password_resets (
+  id SERIAL PRIMARY KEY,
+  dept TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Seed default departments (will not overwrite existing)
 INSERT INTO departments (name, password_hash) VALUES
   ('Maintenance', '$2a$10$example.hash.for.wrench'),

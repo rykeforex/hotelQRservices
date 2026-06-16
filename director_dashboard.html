@@ -355,7 +355,6 @@
     };
 
     let allRequests = [];
-    let nextId = 100;
     let supabaseSubscription = null;
 
     const serviceToDepartment = {
@@ -405,6 +404,22 @@
       }
     }
 
+    // Load password reset requests from server
+    async function loadPasswordResetRequests() {
+      try {
+        const res = await fetch(API_BASE_URL + '/api/password_resets');
+        if (!res.ok) {
+          const text = await res.text().catch(() => '<no body>');
+          throw new Error(`Failed to fetch password reset requests: ${res.status} ${res.statusText} ${text}`);
+        }
+        const data = await res.json();
+        passwordResetRequests = (data || []).map(d => ({ id: d.id, dept: d.dept, time: new Date(d.time).getTime() }));
+        renderResetRequests();
+      } catch (err) {
+        console.error('Error loading password reset requests:', err);
+      }
+    }
+
     function handleDirectorRealtime(payload) {
       // Socket.io will handle real-time updates
       const row = payload.new || payload.old;
@@ -441,6 +456,10 @@
             refreshStats();
           }
         });
+        socket.on('passwordReset', (data) => {
+          passwordResetRequests.unshift({ id: data.id, dept: data.dept, time: new Date(data.time).getTime() });
+          renderResetRequests();
+        });
       }
     }
 
@@ -464,10 +483,8 @@
     let subscriptionPlan = 'standard'; // 'standard' or 'premium'
 
     // Password reset requests (from departments)
-    let passwordResetRequests = [
-      { dept:'Housekeeping', time: Date.now()-50000 },
-      { dept:'Laundry', time: Date.now()-120000 }
-    ];
+    let passwordResetRequests = [];
+    let currentResetId = null;
 
     let deptEnabled = { Maintenance:true, Housekeeping:true, 'Room Service':true, Concierge:true, Laundry:true };
 
@@ -728,16 +745,17 @@
     function renderResetRequests() {
       if (passwordResetRequests.length===0) { resetRequestsDiv.innerHTML = '<div class="text-xs opacity-40">no pending resets</div>'; return; }
       let html = '';
-      passwordResetRequests.forEach((r,idx) => {
-        html += `<div class="flex justify-between items-center bg-gold/5 p-2 rounded-lg"><span>🔑 ${r.dept}</span><button class="approve-reset text-xs bg-gold/30 px-2 py-1 rounded-full" data-index="${idx}">approve</button></div>`;
+      passwordResetRequests.forEach((r) => {
+        html += `<div class="flex justify-between items-center bg-gold/5 p-2 rounded-lg"><span>🔑 ${r.dept}</span><button class="approve-reset text-xs bg-gold/30 px-2 py-1 rounded-full" data-id="${r.id}">approve</button></div>`;
       });
       resetRequestsDiv.innerHTML = html;
       document.querySelectorAll('.approve-reset').forEach(btn => {
         btn.addEventListener('click', (e) => {
-          const idx = e.target.dataset.index;
-          const req = passwordResetRequests[idx];
+          const id = e.currentTarget.dataset.id;
+          const req = passwordResetRequests.find(p => String(p.id) === String(id));
           if (req) {
             currentResetDept = req.dept;
+            currentResetId = req.id;
             resetDeptName.innerText = `for department: ${req.dept}`;
             pwResetModal.classList.remove('hidden');
             pwResetModal.classList.add('flex');
@@ -747,22 +765,31 @@
     }
 
     // Approve password reset
-    approvePasswordBtn.addEventListener('click', () => {
+    approvePasswordBtn.addEventListener('click', async () => {
       const newPw = newPasswordInput.value;
       const confirmPw = confirmPasswordInput.value;
       if (!newPw || newPw !== confirmPw) {
         alert('Passwords do not match or empty');
         return;
       }
-      // Update password
+      // Update password locally (demo)
       DEPT_PASSWORDS[currentResetDept] = newPw;
-      // Remove from requests list
-      passwordResetRequests = passwordResetRequests.filter(r => r.dept !== currentResetDept);
+      // Notify server to remove the request
+      try {
+        if (currentResetId) {
+          await fetch(`${API_BASE_URL}/api/password_resets/${currentResetId}/approve`, { method: 'PUT' });
+        }
+      } catch (err) {
+        console.error('Failed to notify server about approved reset', err);
+      }
+      // Remove from requests list locally
+      passwordResetRequests = passwordResetRequests.filter(r => r.dept !== currentResetDept && r.id !== currentResetId);
       renderResetRequests();
       pwResetModal.classList.add('hidden');
       newPasswordInput.value = '';
       confirmPasswordInput.value = '';
       alert(`✅ Password for ${currentResetDept} updated`);
+      currentResetId = null;
     });
 
     closePwModal.addEventListener('click', () => pwResetModal.classList.add('hidden'));
@@ -835,30 +862,8 @@
       voiceMeter.style.width = percent + '%';
     }
 
-    // Simulate local requests only when Supabase realtime is not enabled
-    setInterval(() => {
-      if (window.supabaseClient) return;
-      const dept = departments[Math.floor(Math.random()*departments.length)];
-      const room = Math.floor(Math.random()*500)+100;
-      const types = ['extra towel','light issue','food order','taxi','laundry'];
-      const hasVoice = Math.random()>0.6;
-      const newReq = {
-        id: nextId++,
-        room: room.toString(),
-        dept: dept,
-        type: types[Math.floor(Math.random()*types.length)],
-        desc: 'guest request',
-        voice: hasVoice && (subscriptionPlan==='premium' || voiceUsed < voiceLimitStandard),
-        timestamp: Date.now(),
-        status: 'pending'
-      };
-      if (newReq.voice) voiceUsed++;
-      allRequests.push(newReq);
-      renderMonitor(searchMonitor.value);
-      refreshStats();
-      refreshAlerts();
-      updateSubscriptionUI();
-    }, 20000);
+    // Live request monitor only displays Supabase-sourced requests.
+    // No local request simulation is used here.
 
     // ---------- LOGIN & SPLASH ----------
     loginBtn.addEventListener('click', async (e) => {
@@ -887,7 +892,7 @@
         refreshStats();
         refreshAlerts();
         renderDeptControls();
-        renderResetRequests();
+        await loadPasswordResetRequests();
         updateSubscriptionUI();
         // Load WiFi networks
         loadWifiNetworks();

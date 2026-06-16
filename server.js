@@ -29,10 +29,12 @@ const JWT_SECRET = process.env.JWT_SECRET || 'luxehotel2026';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'audio';
 
 console.log('SUPABASE_URL loaded:', SUPABASE_URL ? 'YES' : 'NO');
 console.log('SUPABASE_ANON_KEY loaded:', SUPABASE_ANON_KEY ? 'YES' : 'NO');
 console.log('SUPABASE_SERVICE_ROLE_KEY loaded:', SUPABASE_SERVICE_ROLE_KEY ? 'YES' : 'NO');
+console.log('SUPABASE_STORAGE_BUCKET:', SUPABASE_STORAGE_BUCKET);
 console.log('SUPABASE_URL value:', process.env.SUPABASE_URL);
 console.log('SUPABASE_ANON_KEY length:', process.env.SUPABASE_ANON_KEY ? process.env.SUPABASE_ANON_KEY.length : 0);
 
@@ -174,6 +176,49 @@ async function supabaseSelect(table, filters = {}) {
   return response.json();
 }
 
+async function supabaseDelete(table, filterQuery) {
+  if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error('Service role key required for delete');
+  const url = `${SUPABASE_URL}/rest/v1/${table}${filterQuery ? '?' + filterQuery : ''}`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Prefer': 'return=representation'
+    }
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Supabase delete failed: ${error}`);
+  }
+  return response.json();
+}
+
+async function supabaseStorageUpload(bucket, objectPath, fileBuffer, contentType = 'application/octet-stream') {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('Supabase storage is not configured');
+  }
+  const url = `${SUPABASE_URL}/storage/v1/object/${bucket}/${encodeURIComponent(objectPath)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': contentType
+    },
+    body: fileBuffer
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Supabase storage upload failed: ${error}`);
+  }
+  return response.json();
+}
+
+function getSupabaseStoragePublicUrl(bucket, objectPath) {
+  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodeURIComponent(objectPath)}`;
+}
+
 async function insertRequestViaDatabase(requestData) {
   if (!pool) {
     throw new Error('DATABASE_URL is not configured');
@@ -204,11 +249,25 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
   console.log('File:', req.file);
 
   const { roomNumber, service, requestText } = req.body;
-  const voiceUrl = req.file ? `/uploads/${req.file.filename}` : null;
+  let voiceUrl = req.file ? `/uploads/${req.file.filename}` : null;
 
   if (!roomNumber || !service || !requestText) {
     console.log('Missing required fields');
     return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  if (req.file && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    const objectPath = req.file.filename;
+    try {
+      const fileBuffer = await fs.promises.readFile(req.file.path);
+      await supabaseStorageUpload(SUPABASE_STORAGE_BUCKET, objectPath, fileBuffer, req.file.mimetype || 'audio/webm');
+      voiceUrl = getSupabaseStoragePublicUrl(SUPABASE_STORAGE_BUCKET, objectPath);
+      fs.unlink(req.file.path, () => {});
+      console.log('Uploaded voice file to Supabase storage:', voiceUrl);
+    } catch (storageErr) {
+      console.error('Supabase storage upload failed, using local upload fallback:', storageErr.message);
+      voiceUrl = `/uploads/${req.file.filename}`;
+    }
   }
 
   try {
@@ -423,4 +482,111 @@ process.on('SIGINT', () => {
     }
     process.exit(0);
   });
+});
+
+// Password reset requests: persist to DB when available, otherwise fallback to in-memory
+let passwordResetRequests = [];
+
+app.post('/api/password_resets', async (req, res) => {
+  const { dept } = req.body;
+  if (!dept) return res.status(400).json({ error: 'Department required' });
+
+  // Prefer Supabase REST API when configured
+  if (SUPABASE_URL) {
+    try {
+      const inserted = await supabaseInsert('password_resets', { dept, status: 'pending', created_at: new Date().toISOString() });
+      const row = Array.isArray(inserted) ? inserted[0] : inserted;
+      const out = { id: row.id, dept: row.dept, time: row.created_at };
+      io.emit('passwordReset', out);
+      return res.status(201).json(out);
+    } catch (err) {
+      console.error('Supabase insert password_reset failed:', err);
+      // fall through to pool or memory
+    }
+  }
+
+  if (pool) {
+    try {
+      const result = await pool.query(
+        'INSERT INTO password_resets (dept, status, created_at) VALUES ($1, $2, NOW()) RETURNING id, dept, status, created_at',
+        [dept, 'pending']
+      );
+      const row = result.rows[0];
+      const out = { id: row.id, dept: row.dept, time: row.created_at };
+      io.emit('passwordReset', out);
+      return res.status(201).json(out);
+    } catch (err) {
+      console.error('DB insert password_reset failed:', err);
+      // fall back to in-memory storage rather than failing completely
+    }
+  }
+
+  // fallback in-memory
+  const entry = { id: Date.now(), dept, time: new Date().toISOString(), status: 'pending' };
+  passwordResetRequests.unshift(entry);
+  io.emit('passwordReset', entry);
+  res.status(201).json(entry);
+});
+
+app.get('/api/password_resets', async (req, res) => {
+  // Prefer Supabase REST API when configured
+  if (SUPABASE_URL) {
+    try {
+      const rows = await supabaseSelect('password_resets', { order: 'created_at.desc' });
+      const out = (rows || []).map(r => ({ id: r.id, dept: r.dept, time: r.created_at }));
+      return res.json(out);
+    } catch (err) {
+      console.error('Supabase fetch password_resets failed:', err);
+      // fall through to pool or memory
+    }
+  }
+
+  if (pool) {
+    try {
+      const result = await pool.query('SELECT id, dept, status, created_at FROM password_resets ORDER BY created_at DESC');
+      const rows = result.rows.map(r => ({ id: r.id, dept: r.dept, time: r.created_at }));
+      return res.json(rows);
+    } catch (err) {
+      console.error('DB fetch password_resets failed:', err);
+      // fall back to in-memory storage instead of failing
+    }
+  }
+
+  return res.json(passwordResetRequests);
+});
+
+app.put('/api/password_resets/:id/approve', async (req, res) => {
+  const id = parseInt(req.params.id);
+  // Prefer Supabase REST API when configured
+  if (SUPABASE_URL) {
+    try {
+      // delete via Supabase REST API using service role key
+      const deleted = await supabaseDelete('password_resets', `id=eq.${id}`);
+      const removed = Array.isArray(deleted) ? deleted[0] : deleted;
+      io.emit('passwordResetApproved', { id: removed.id, dept: removed.dept });
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('Supabase delete password_reset failed:', err);
+      // fall through to pool or memory
+    }
+  }
+
+  if (pool) {
+    try {
+      const result = await pool.query('DELETE FROM password_resets WHERE id = $1 RETURNING id, dept', [id]);
+      if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
+      const removed = result.rows[0];
+      io.emit('passwordResetApproved', { id: removed.id, dept: removed.dept });
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error('DB delete password_reset failed:', err);
+      // fall back to in-memory storage instead of failing
+    }
+  }
+
+  const idx = passwordResetRequests.findIndex(p => p.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  const removed = passwordResetRequests.splice(idx, 1)[0];
+  io.emit('passwordResetApproved', { id: removed.id, dept: removed.dept });
+  res.json({ ok: true });
 });

@@ -29,6 +29,27 @@
     .glass-dashboard { background: rgba(255,255,255,0.7); backdrop-filter: blur(4px); border-bottom: 1px solid #eee; }
     .toast { background: #1e1e2f; color: white; border-radius: 3rem; padding: 0.75rem 1.5rem; box-shadow: 0 15px 30px -10px rgba(0,0,0,0.3); }
 
+    /* notification drawer */
+    .notification-drawer {
+      width: 340px;
+      max-width: calc(100% - 32px);
+      position: fixed;
+      top: 72px;
+      right: 18px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.12);
+      z-index: 60;
+      max-height: 70vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .notification-drawer .drawer-header { padding: 10px 14px; border-bottom: 1px solid #f3f4f6; display:flex; align-items:center; justify-content:space-between; }
+    .notification-drawer .drawer-body { padding: 8px; overflow:auto; }
+    .notification-item { padding:8px 10px; border-radius:8px; display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; background:#fff; border:1px solid #f3f4f6; }
+    .notification-item time { font-size:11px; color:#9ca3af; margin-left:auto; }
+
     /* liquid glass filter tabs */
     .filter-tab-container {
       position: relative;
@@ -165,6 +186,17 @@
       <button id="logoutBtn" class="text-sm bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-full flex items-center gap-2 transition"><i class="fas fa-sign-out-alt"></i> Logout</button>
     </div>
   </header>
+  <div id="notificationToast" class="hidden fixed top-24 right-6 bg-[#b49450] text-white px-4 py-3 rounded-full shadow-lg z-50"></div>
+  <aside id="notificationDrawer" class="hidden notification-drawer" aria-hidden="true">
+    <div class="drawer-header">
+      <div class="font-medium">Notifications</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="markAllReadBtn" class="text-sm text-gray-500 hover:underline">Mark all read</button>
+        <button id="closeDrawerBtn" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+      </div>
+    </div>
+    <div id="notificationDrawerBody" class="drawer-body"></div>
+  </aside>
 
   <!-- main dashboard area -->
   <main class="flex-1 p-6 max-w-7xl mx-auto w-full">
@@ -443,20 +475,36 @@
       // Connect to Socket.io for real-time updates from server
       if (typeof io !== 'undefined') {
         const socket = io(API_BASE_URL);
+        socket.on('connect', () => {
+          console.log('Socket connected for department dashboard:', socket.id);
+        });
         socket.on('newRequest', (data) => {
+          console.log('socket newRequest', data);
           const request = toLocalRequest(data);
           if (request.department === currentDept) {
             allRequests.unshift(request);
-            addNotification(1); playNotificationSound();
+            addNotification(1);
+            playNotificationSound();
+            showNotificationToast('New request received.');
           }
           refreshDashboardUI();
         });
         socket.on('statusUpdate', (update) => {
+          console.log('socket statusUpdate', update);
           const idx = allRequests.findIndex(r => r.id === update.id);
           if (idx >= 0) {
             allRequests[idx].status = update.status;
           }
           refreshDashboardUI();
+        });
+        socket.on('passwordResetApproved', (data) => {
+          console.log('socket passwordResetApproved', data);
+          if (data.dept === currentDept) {
+            addNotification(1);
+            playNotificationSound();
+            showNotificationToast('Password reset approved by Director.');
+            alert(`✅ Your password reset request has been approved by the Hotel Director. Please use your new password to log in next time.`);
+          }
         });
       }
     }
@@ -490,6 +538,11 @@
     const slidingBg = document.getElementById('slidingBg');
     const notificationBadge = document.getElementById('notificationBadge');
     const notificationIcon = document.getElementById('notificationIcon');
+    const notificationToast = document.getElementById('notificationToast');
+    const notificationDrawer = document.getElementById('notificationDrawer');
+    const notificationDrawerBody = document.getElementById('notificationDrawerBody');
+    const closeDrawerBtn = document.getElementById('closeDrawerBtn');
+    const markAllReadBtn = document.getElementById('markAllReadBtn');
     const openReportBtn = document.getElementById('openReportBtn');
     const reportModal = document.getElementById('reportModal');
     const closeReportModal = document.getElementById('closeReportModal');
@@ -564,10 +617,126 @@
       return { level: 'low', class: 'priority-low' };
     }
 
+    let notificationAudioContext = null;
+    let notificationAudioUnlocked = false;
+
+    function unlockNotificationAudio() {
+      if (notificationAudioUnlocked) return;
+      notificationAudioUnlocked = true;
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          notificationAudioContext = new AudioCtx();
+          if (notificationAudioContext.state === 'suspended') {
+            notificationAudioContext.resume().catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.warn('Unlock audio context failed:', err);
+      }
+    }
+
     // play beep
     function playNotificationSound() {
-      notificationSound.play().catch(() => {});
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          if (!notificationAudioContext) {
+            unlockNotificationAudio();
+          }
+          const ctx = notificationAudioContext || new AudioCtx();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          gain.gain.setValueAtTime(0.12, ctx.currentTime);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.12);
+          setTimeout(() => {
+            try { if (ctx !== notificationAudioContext) ctx.close(); } catch (e) {}
+          }, 200);
+          return;
+        }
+      } catch (err) {
+        console.warn('Web Audio beep failed:', err);
+      }
+
+      if (!notificationSound) return;
+      try {
+        notificationSound.currentTime = 0;
+        notificationSound.muted = false;
+        notificationSound.play().catch((err) => {
+          console.warn('Notification sound blocked or unavailable:', err);
+        });
+      } catch (err) {
+        console.warn('Notification sound failed:', err);
+      }
     }
+
+    function showNotificationToast(message) {
+      if (!notificationToast) return;
+      notificationToast.innerText = message;
+      notificationToast.classList.remove('hidden');
+      notificationToast.style.opacity = '1';
+      clearTimeout(window.notificationToastTimeout);
+      window.notificationToastTimeout = setTimeout(() => {
+        if (notificationToast) {
+          notificationToast.style.opacity = '0';
+          setTimeout(() => notificationToast.classList.add('hidden'), 250);
+        }
+      }, 2500);
+      // push to drawer history
+      try {
+        const entry = { message, time: Date.now() };
+        notificationHistory.unshift(entry);
+        // keep history bounded
+        if (notificationHistory.length > 50) notificationHistory.length = 50;
+        renderNotificationsDrawer();
+      } catch (e) { /* ignore */ }
+    }
+
+    // notification drawer state
+    let notificationHistory = [];
+
+    function renderNotificationsDrawer() {
+      if (!notificationDrawerBody) return;
+      if (!notificationHistory.length) {
+        notificationDrawerBody.innerHTML = '<div class="text-sm text-gray-400 p-4">No notifications</div>';
+        return;
+      }
+      const html = notificationHistory.map(n => {
+        const t = new Date(n.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return `<div class="notification-item"><div class="flex-1 text-sm">${n.message}</div><time>${t}</time></div>`;
+      }).join('');
+      notificationDrawerBody.innerHTML = html;
+    }
+
+    function toggleNotificationDrawer() {
+      if (!notificationDrawer) return;
+      const open = !notificationDrawer.classList.contains('hidden');
+      if (open) {
+        notificationDrawer.classList.add('hidden');
+        notificationDrawer.setAttribute('aria-hidden', 'true');
+      } else {
+        renderNotificationsDrawer();
+        notificationDrawer.classList.remove('hidden');
+        notificationDrawer.setAttribute('aria-hidden', 'false');
+        // mark read visually but keep history
+        resetNotifications();
+      }
+    }
+
+    if (closeDrawerBtn) closeDrawerBtn.addEventListener('click', () => {
+      if (notificationDrawer) notificationDrawer.classList.add('hidden');
+    });
+
+    if (markAllReadBtn) markAllReadBtn.addEventListener('click', () => {
+      notificationHistory = [];
+      renderNotificationsDrawer();
+      resetNotifications();
+    });
 
     // increment notification
     function addNotification(inc = 1) {
@@ -919,8 +1088,9 @@
         loginContainer.classList.add('hidden');
         dashboardContainer.classList.remove('hidden');
         await loadRequestsFromSupabase();
-        subscribeToRequestUpdates();
         initDashboard(authResponse.department || dept);
+        unlockNotificationAudio();
+        subscribeToRequestUpdates();
       } catch (err) {
         alert('Invalid password or unable to authenticate.');
       }
@@ -929,8 +1099,20 @@
     loginBtn.addEventListener('click', attemptLogin);
     passwordInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') attemptLogin(); });
 
-    forgotPwBtn.addEventListener('click', () => {
-      alert('✉️ Password reset request sent to Hotel Director.');
+    forgotPwBtn.addEventListener('click', async () => {
+      const dept = deptSelect.value || '';
+      try {
+        const res = await fetch(API_BASE_URL + '/api/password_resets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dept })
+        });
+        if (!res.ok) throw new Error('Failed');
+        alert('✉️ Password reset request sent to Hotel Director.');
+      } catch (err) {
+        console.error('Password reset request failed', err);
+        alert('Failed to send password reset request.');
+      }
     });
 
     logoutBtn.addEventListener('click', () => {
@@ -940,6 +1122,11 @@
       dashboardContainer.classList.add('hidden');
       loginContainer.classList.remove('hidden');
       passwordInput.value = '';
+    });
+
+    notificationIcon.addEventListener('click', () => {
+      // toggle drawer when bell clicked
+      toggleNotificationDrawer();
     });
 
     // filter tab click
@@ -968,10 +1155,6 @@
     searchInput.addEventListener('input', (e) => {
       searchTerm = e.target.value;
       renderRequests();
-    });
-
-    notificationIcon.addEventListener('click', () => {
-      resetNotifications();
     });
 
     // report modal
