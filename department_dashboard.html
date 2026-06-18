@@ -328,6 +328,21 @@
   </div>
 </div>
 
+<!-- ===== VOICE PLAYBACK MODAL ===== -->
+<div id="voiceModal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden items-center justify-center p-4 transition-opacity">
+  <div class="bg-white rounded-3xl max-w-md w-full p-6">
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="text-xl font-semibold text-gray-800"><i class="fas fa-headphones text-[#b49450] mr-2"></i>Voice recording</h3>
+      <button id="closeVoiceModal" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+    </div>
+    <div class="space-y-4">
+      <div id="voiceInfo" class="text-sm text-gray-600"></div>
+      <audio id="voicePlayer" controls class="w-full rounded-lg" style="min-height:40px;"></audio>
+      <div class="text-xs text-gray-400">Click play to listen to the guest recording.</div>
+    </div>
+  </div>
+</div>
+
 <!-- ===== NEW: INTERNAL CHAT MODAL ===== -->
 <div id="chatModal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden items-center justify-center p-4 transition-opacity">
   <div class="bg-white rounded-3xl max-w-md w-full p-6">
@@ -413,6 +428,7 @@
         type: row.service || 'Unknown',
         description: row.request_text || '',
         voice: Boolean(row.voice_url),
+        voice_url: row.voice_url || null,
         timestamp: new Date(row.created_at).getTime(),
         status: row.status || 'pending',
         escalated: false
@@ -569,6 +585,10 @@
     const chatMessagesDiv = document.getElementById('chatMessages');
     const chatInput = document.getElementById('chatInput');
     const sendChatBtn = document.getElementById('sendChatBtn');
+    const voiceModal = document.getElementById('voiceModal');
+    const closeVoiceModal = document.getElementById('closeVoiceModal');
+    const voicePlayer = document.getElementById('voicePlayer');
+    const voiceInfo = document.getElementById('voiceInfo');
 
     let currentFilterStatus = 'all';
     let searchTerm = '';
@@ -989,8 +1009,16 @@
       document.querySelectorAll('.play-voice').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.preventDefault();
-          playNotificationSound(); // reuse same beep
-          alert('🔊 Demo: voice message would play here.');
+          const reqId = parseInt(e.currentTarget.dataset.id);
+          const req = allRequests.find(r => r.id === reqId);
+          if (req && req.voice_url) {
+            voiceInfo.innerText = `Room ${req.room} • ${req.type} • ${new Date(req.timestamp).toLocaleString()}`;
+            voicePlayer.src = req.voice_url;
+            voiceModal.classList.remove('hidden');
+            voiceModal.classList.add('flex');
+          } else {
+            alert('No voice recording available for this request.');
+          }
         });
       });
 
@@ -1271,6 +1299,20 @@
         chatMessages[currentRequestForChat].push({ staff: 'You', message: msg, timestamp: Date.now() });
         renderChatMessages(currentRequestForChat);
         chatInput.value = '';
+      }
+    });
+
+    // voice modal
+    closeVoiceModal.addEventListener('click', () => {
+      voiceModal.classList.add('hidden');
+      voicePlayer.pause();
+      voicePlayer.src = '';
+    });
+    voiceModal.addEventListener('click', (e) => { 
+      if (e.target === voiceModal) {
+        voiceModal.classList.add('hidden');
+        voicePlayer.pause();
+        voicePlayer.src = '';
       }
     });
 

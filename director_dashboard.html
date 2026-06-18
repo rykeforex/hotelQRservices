@@ -291,6 +291,9 @@
   <div class="glass-panel max-w-md w-full p-6">
     <div class="flex justify-between"><h3 class="text-xl gold">request detail</h3><button id="closeModal" class="text-2xl">&times;</button></div>
     <div id="modalDetail" class="mt-3 space-y-2"></div>
+    <div id="voicePlayerContainer" class="mt-4 hidden">
+      <audio id="directorVoicePlayer" controls class="w-full rounded-lg" style="min-height:40px;"></audio>
+    </div>
     <div class="mt-4 flex justify-end"><button id="playVoiceBtn" class="bg-gold/30 px-4 py-2 rounded-full">▶ play voice</button></div>
   </div>
 </div>
@@ -384,6 +387,7 @@
         type: row.service || 'Unknown',
         desc: row.request_text || '',
         voice: Boolean(row.voice_url),
+        voice_url: row.voice_url || null,
         timestamp: new Date(row.created_at).getTime(),
         status: row.status || 'pending'
       };
@@ -630,6 +634,8 @@
     const requestModal = document.getElementById('requestModal');
     const closeModal = document.getElementById('closeModal');
     const playVoiceBtn = document.getElementById('playVoiceBtn');
+    const voicePlayerContainer = document.getElementById('voicePlayerContainer');
+    const directorVoicePlayer = document.getElementById('directorVoicePlayer');
     const pwResetModal = document.getElementById('passwordResetModal');
     const closePwModal = document.getElementById('closePwModal');
     const cancelPwBtn = document.getElementById('cancelPwBtn');
@@ -807,7 +813,16 @@
       `;
       requestModal.classList.remove('hidden');
       requestModal.classList.add('flex');
-      playVoiceBtn.onclick = () => alert('🎤 playing voice (demo)');
+      
+      if (req.voice && req.voice_url) {
+        voicePlayerContainer.classList.remove('hidden');
+        directorVoicePlayer.src = req.voice_url;
+        playVoiceBtn.style.display = 'none';
+      } else {
+        voicePlayerContainer.classList.add('hidden');
+        playVoiceBtn.style.display = 'block';
+        playVoiceBtn.onclick = () => alert('🎤 No voice recording available for this request.');
+      }
     }
 
     closeModal.addEventListener('click', () => requestModal.classList.add('hidden'));
