@@ -357,13 +357,18 @@ app.put('/api/requests/:id/status', async (req, res) => {
   }
 
   try {
-    // Use Supabase REST API to update
+    // Use Supabase REST API to update with server-side auth when available
+    const updateKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+    if (!updateKey) {
+      throw new Error('Missing Supabase auth key for status update');
+    }
+
     const response = await fetch(`${SUPABASE_URL}/rest/v1/requests?id=eq.${id}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'apikey': updateKey,
+        'Authorization': `Bearer ${updateKey}`,
         'Prefer': 'return=representation'
       },
       body: JSON.stringify({ status, updated_at: new Date().toISOString() })

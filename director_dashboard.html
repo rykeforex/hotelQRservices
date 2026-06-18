@@ -291,6 +291,14 @@
   <div class="glass-panel max-w-md w-full p-6">
     <div class="flex justify-between"><h3 class="text-xl gold">request detail</h3><button id="closeModal" class="text-2xl">&times;</button></div>
     <div id="modalDetail" class="mt-3 space-y-2"></div>
+    <div class="mt-3">
+      <label for="detailStatusSelect" class="block text-sm font-medium text-gray-500">Update status</label>
+      <select id="detailStatusSelect" class="w-full mt-2 p-3 rounded-xl bg-black/10 border border-gray-600 text-sm text-white outline-none">
+        <option value="pending">Pending</option>
+        <option value="in-progress">In Progress</option>
+        <option value="completed">Completed</option>
+      </select>
+    </div>
     <div id="voicePlayerContainer" class="mt-4 hidden">
       <audio id="directorVoicePlayer" controls class="w-full rounded-lg" style="min-height:40px;"></audio>
     </div>
@@ -649,6 +657,7 @@
     const reportModalContent = document.getElementById('reportModalContent');
 
     let currentResetDept = null;
+    let currentDetailRequest = null;
 
     // ---------- helper functions ----------
     function getTimeGreeting() {
@@ -813,7 +822,8 @@
       `;
       requestModal.classList.remove('hidden');
       requestModal.classList.add('flex');
-      
+      currentDetailRequest = req;
+
       if (req.voice && req.voice_url) {
         voicePlayerContainer.classList.remove('hidden');
         directorVoicePlayer.src = req.voice_url;
@@ -822,6 +832,30 @@
         voicePlayerContainer.classList.add('hidden');
         playVoiceBtn.style.display = 'block';
         playVoiceBtn.onclick = () => alert('🎤 No voice recording available for this request.');
+      }
+
+      const detailStatusSelect = document.getElementById('detailStatusSelect');
+      if (detailStatusSelect) {
+        detailStatusSelect.value = req.status;
+        if (!detailStatusSelect.dataset.listenerAdded) {
+          detailStatusSelect.dataset.listenerAdded = '1';
+          detailStatusSelect.addEventListener('change', async (e) => {
+            const selectedStatus = e.target.value;
+            if (!currentDetailRequest || currentDetailRequest.status === selectedStatus) return;
+            const success = await updateDirectorRequestStatus(currentDetailRequest.id, selectedStatus);
+            if (success) {
+              currentDetailRequest.status = selectedStatus;
+              const idx = allRequests.findIndex(r => r.id === currentDetailRequest.id);
+              if (idx >= 0) allRequests[idx].status = selectedStatus;
+              refreshStats();
+              renderMonitor(searchMonitor.value);
+              refreshAlerts();
+            } else {
+              alert('Unable to update request status.');
+              e.target.value = currentDetailRequest.status;
+            }
+          });
+        }
       }
     }
 
