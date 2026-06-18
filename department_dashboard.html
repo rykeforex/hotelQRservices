@@ -363,9 +363,11 @@
 
 <script>
   const API_BASE_URL =
+    window.location.protocol === 'file:' || !window.location.hostname ||
     window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
       ? 'http://localhost:3000'
       : 'https://hotelqrservices-production.up.railway.app';
+  console.log('API_BASE_URL:', API_BASE_URL);
 
   async function apiCall(endpoint, options = {}) {
     const url = API_BASE_URL + endpoint;
@@ -421,14 +423,18 @@
     }
 
     function toLocalRequest(row) {
+      let voiceUrl = row.voice_url || null;
+      if (voiceUrl && typeof voiceUrl === 'string' && voiceUrl.startsWith('/')) {
+        voiceUrl = `${API_BASE_URL}${voiceUrl}`;
+      }
       return {
         id: row.id,
         room: row.room_number,
         department: serviceToDepartment[row.service] || row.service || 'Unknown',
         type: row.service || 'Unknown',
         description: row.request_text || '',
-        voice: Boolean(row.voice_url),
-        voice_url: row.voice_url || null,
+        voice: Boolean(voiceUrl),
+        voice_url: voiceUrl,
         timestamp: new Date(row.created_at).getTime(),
         status: row.status || 'pending',
         escalated: false
@@ -456,7 +462,11 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status })
         });
-        if (!res.ok) throw new Error('Failed to update status');
+        if (!res.ok) {
+          const text = await res.text();
+          console.error('Status update failed:', res.status, text);
+          throw new Error(text || 'Failed to update status');
+        }
         return true;
       } catch (err) {
         console.error('Supabase update error:', err);

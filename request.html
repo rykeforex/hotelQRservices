@@ -357,9 +357,11 @@
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script>
     window.API_BASE_URL =
+      window.location.protocol === 'file:' || !window.location.hostname ||
       window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
         ? 'http://localhost:3000'
         : 'https://hotelqrservices-production.up.railway.app';
+    console.log('API_BASE_URL:', window.API_BASE_URL);
 
     window.apiCall = async function(endpoint, options = {}) {
       const url = window.API_BASE_URL + endpoint;
@@ -827,6 +829,10 @@
 
           if (createdRequest?.id) {
             currentRequestId = createdRequest.id;
+          }
+
+          if (createdRequest?.status) {
+            syncStatusTracker(createdRequest.status);
           }
 
           // show success toast

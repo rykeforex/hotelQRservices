@@ -277,6 +277,9 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
     }
   } else if (req.file) {
     console.warn('Supabase storage upload skipped: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured. Using local uploads.');
+    if (voiceUrl && req.get('host')) {
+      voiceUrl = `${req.protocol}://${req.get('host')}${voiceUrl}`;
+    }
   }
 
   try {
@@ -357,37 +360,38 @@ app.put('/api/requests/:id/status', async (req, res) => {
   }
 
   try {
-    // Use Supabase REST API to update with server-side auth when available
-    const updateKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
-    if (!updateKey) {
-      throw new Error('Missing Supabase auth key for status update');
-    }
+    const supabaseAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+    const useServiceRole = !!SUPABASE_SERVICE_ROLE_KEY;
 
+    // Use Supabase REST API to update with service role privileges when available
     const response = await fetch(`${SUPABASE_URL}/rest/v1/requests?id=eq.${id}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': updateKey,
-        'Authorization': `Bearer ${updateKey}`,
+        'apikey': supabaseAuthKey,
+        'Authorization': `Bearer ${supabaseAuthKey}`,
         'Prefer': 'return=representation'
       },
       body: JSON.stringify({ status, updated_at: new Date().toISOString() })
     });
 
     if (!response.ok) {
-      throw new Error('Failed to update request');
+      const errorText = await response.text();
+      console.error('[STATUS_UPDATE] Supabase update failed:', response.status, errorText);
+      return res.status(500).json({ error: 'Failed to update request', details: errorText });
     }
 
     const updated = await response.json();
-    if (!updated.length) {
+    if (!Array.isArray(updated) || updated.length === 0) {
       return res.status(404).json({ error: 'Request not found' });
     }
 
+    console.log(`[STATUS_UPDATE] Request ${id} updated to ${status} using ${useServiceRole ? 'SERVICE_ROLE' : 'ANON'} key`);
     io.emit('statusUpdate', { id: parseInt(id), status });
     res.json({ id: parseInt(id), status });
   } catch (err) {
-    console.error('Error updating request:', err);
-    res.status(500).json({ error: 'Failed to update request' });
+    console.error('[STATUS_UPDATE] Error updating request:', err);
+    res.status(500).json({ error: 'Failed to update request', details: err.message });
   }
 });
 

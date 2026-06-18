@@ -11,9 +11,11 @@
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script>
     const API_BASE_URL =
+      window.location.protocol === 'file:' || !window.location.hostname ||
       window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
         ? 'http://localhost:3000'
         : 'https://hotelqrservices-production.up.railway.app';
+    console.log('API_BASE_URL:', API_BASE_URL);
 
     async function apiCall(endpoint, options = {}) {
       const url = API_BASE_URL + endpoint;
@@ -106,6 +108,19 @@
       background: rgba(0,0,0,0.8);
       backdrop-filter: blur(8px);
     }
+    
+    /* status badges */
+    .status-badge {
+      padding: 0.3rem 0.8rem;
+      border-radius: 1rem;
+      font-size: 0.85rem;
+      font-weight: 500;
+      display: inline-block;
+      white-space: nowrap;
+    }
+    .status-badge.pending { background: #fef3c7; color: #92400e; }
+    .status-badge.in-progress { background: #dbeafe; color: #1e40af; }
+    .status-badge.completed { background: #d1fae5; color: #065f46; }
   </style>
 </head>
 <body class="dark antialiased">
@@ -291,14 +306,6 @@
   <div class="glass-panel max-w-md w-full p-6">
     <div class="flex justify-between"><h3 class="text-xl gold">request detail</h3><button id="closeModal" class="text-2xl">&times;</button></div>
     <div id="modalDetail" class="mt-3 space-y-2"></div>
-    <div class="mt-3">
-      <label for="detailStatusSelect" class="block text-sm font-medium text-gray-500">Update status</label>
-      <select id="detailStatusSelect" class="w-full mt-2 p-3 rounded-xl bg-black/10 border border-gray-600 text-sm text-white outline-none">
-        <option value="pending">Pending</option>
-        <option value="in-progress">In Progress</option>
-        <option value="completed">Completed</option>
-      </select>
-    </div>
     <div id="voicePlayerContainer" class="mt-4 hidden">
       <audio id="directorVoicePlayer" controls class="w-full rounded-lg" style="min-height:40px;"></audio>
     </div>
@@ -388,14 +395,18 @@
     }
 
     function toDirectorRequest(row) {
+      let voiceUrl = row.voice_url || null;
+      if (voiceUrl && typeof voiceUrl === 'string' && voiceUrl.startsWith('/')) {
+        voiceUrl = `${API_BASE_URL}${voiceUrl}`;
+      }
       return {
         id: row.id,
         room: row.room_number,
         dept: serviceToDepartment[row.service] || row.service || 'Unknown',
         type: row.service || 'Unknown',
         desc: row.request_text || '',
-        voice: Boolean(row.voice_url),
-        voice_url: row.voice_url || null,
+        voice: Boolean(voiceUrl),
+        voice_url: voiceUrl,
         timestamp: new Date(row.created_at).getTime(),
         status: row.status || 'pending'
       };
@@ -482,7 +493,11 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status })
         });
-        if (!res.ok) throw new Error('Failed to update status');
+        if (!res.ok) {
+          const text = await res.text();
+          console.error('Director status update failed:', res.status, text);
+          throw new Error(text || 'Failed to update status');
+        }
         return true;
       } catch (err) {
         console.error('Update error:', err);
@@ -657,7 +672,6 @@
     const reportModalContent = document.getElementById('reportModalContent');
 
     let currentResetDept = null;
-    let currentDetailRequest = null;
 
     // ---------- helper functions ----------
     function getTimeGreeting() {
@@ -812,6 +826,7 @@
 
     function showDetailModal(req) {
       const modalDetail = document.getElementById('modalDetail');
+      const statusClass = req.status==='pending'?'pending': req.status==='in-progress'?'in-progress':'completed';
       modalDetail.innerHTML = `
         <p><span class="gold">room:</span> ${req.room}</p>
         <p><span class="gold">dept:</span> ${req.dept}</p>
@@ -819,11 +834,18 @@
         <p><span class="gold">description:</span> ${req.desc}</p>
         <p><span class="gold">time:</span> ${new Date(req.timestamp).toLocaleString()}</p>
         <p><span class="gold">voice:</span> ${req.voice ? '🎤 recorded' : '—'}</p>
+        <p><span class="gold">status:</span> <span class="status-badge ${statusClass}">${req.status}</span></p>
+        <p><span class="gold">update status:</span> 
+          <select id="directorStatusSelect" class="text-xs border border-gray-200 rounded-full px-2 py-1 bg-white transition" data-id="${req.id}">
+            <option value="pending" ${req.status==='pending'?'selected':''}>Pending</option>
+            <option value="in-progress" ${req.status==='in-progress'?'selected':''}>In Progress</option>
+            <option value="completed" ${req.status==='completed'?'selected':''}>Completed</option>
+          </select>
+        </p>
       `;
       requestModal.classList.remove('hidden');
       requestModal.classList.add('flex');
-      currentDetailRequest = req;
-
+      
       if (req.voice && req.voice_url) {
         voicePlayerContainer.classList.remove('hidden');
         directorVoicePlayer.src = req.voice_url;
@@ -834,28 +856,22 @@
         playVoiceBtn.onclick = () => alert('🎤 No voice recording available for this request.');
       }
 
-      const detailStatusSelect = document.getElementById('detailStatusSelect');
-      if (detailStatusSelect) {
-        detailStatusSelect.value = req.status;
-        if (!detailStatusSelect.dataset.listenerAdded) {
-          detailStatusSelect.dataset.listenerAdded = '1';
-          detailStatusSelect.addEventListener('change', async (e) => {
-            const selectedStatus = e.target.value;
-            if (!currentDetailRequest || currentDetailRequest.status === selectedStatus) return;
-            const success = await updateDirectorRequestStatus(currentDetailRequest.id, selectedStatus);
-            if (success) {
-              currentDetailRequest.status = selectedStatus;
-              const idx = allRequests.findIndex(r => r.id === currentDetailRequest.id);
-              if (idx >= 0) allRequests[idx].status = selectedStatus;
-              refreshStats();
-              renderMonitor(searchMonitor.value);
-              refreshAlerts();
-            } else {
-              alert('Unable to update request status.');
-              e.target.value = currentDetailRequest.status;
-            }
-          });
-        }
+      // Attach status update handler
+      const statusSelect = document.getElementById('directorStatusSelect');
+      if (statusSelect) {
+        statusSelect.addEventListener('change', async (e) => {
+          const newStatus = e.target.value;
+          const success = await updateDirectorRequestStatus(req.id, newStatus);
+          if (success) {
+            req.status = newStatus;
+            showDetailModal(req);
+            refreshStats();
+            showDetailModal(req);
+          } else {
+            alert('Unable to update status at this time');
+            e.target.value = req.status;
+          }
+        });
       }
     }
 
