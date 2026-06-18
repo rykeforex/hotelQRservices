@@ -125,7 +125,7 @@
         return;
       }
 
-      const url = `${BASE_URL}/request.html?room=${room}`;
+      const url = `${BASE_URL}request.html?room=${room}`;
       
       const result = document.getElementById('singleQRResult');
       result.classList.remove('hidden');
@@ -166,7 +166,7 @@
 
       for (let i = start; i <= end; i++) {
         const room = prefix + i;
-        const url = `${BASE_URL}/request.html?room=${room}`;
+        const url = `${BASE_URL}request.html?room=${room}`;
         
         const card = document.createElement('div');
         card.className = 'qr-card p-4 text-center animate-result';

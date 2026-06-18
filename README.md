@@ -86,7 +86,12 @@ This application combines **Supabase client-side operations** with **Socket.io r
      ```
    - With your actual Supabase project URL and anon key
 
-4. **Set Up Database Schema**
+4. **Configure Backend Storage**
+   - Add `SUPABASE_SERVICE_ROLE_KEY` to your `.env` file using the service role key from Supabase API settings.
+   - Set `SUPABASE_STORAGE_BUCKET=audio` (the bucket used for voice recordings).
+   - Ensure the bucket exists and is set to public access so recordings can be retrieved.
+
+5. **Set Up Database Schema**
    - In your Supabase dashboard, go to **SQL Editor**
    - Run the contents of `schema.sql` to create tables
    - This creates the `requests` table with proper structure

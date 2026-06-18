@@ -74,6 +74,13 @@ app.use((req, res, next) => {
   res.setHeader('Expires', '0');
   next();
 });
+app.use((req, res, next) => {
+  if (req.path.includes('//')) {
+    const normalizedUrl = req.originalUrl.replace(/\/\/+/, '/');
+    return res.redirect(301, normalizedUrl);
+  }
+  next();
+});
 app.use(express.static('public'));
 
 // Serve root-level static files needed by the UI
@@ -268,6 +275,8 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
       console.error('Supabase storage upload failed, using local upload fallback:', storageErr.message);
       voiceUrl = `/uploads/${req.file.filename}`;
     }
+  } else if (req.file) {
+    console.warn('Supabase storage upload skipped: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured. Using local uploads.');
   }
 
   try {
