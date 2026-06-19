@@ -211,6 +211,33 @@ function getSupabaseStoragePublicUrl(bucket, objectPath) {
   return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodeURIComponent(objectPath)}`;
 }
 
+async function supabaseGetSignedUrl(bucket, objectPath, expiresInSec = 60*60) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('Supabase service role key is not configured for signing URLs');
+  }
+  const base = SUPABASE_URL.replace(/\/$/, '');
+  const signUrl = `${base}/storage/v1/object/sign/${bucket}/${encodeURIComponent(objectPath)}`;
+  const resp = await fetch(signUrl, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ expiresIn: expiresInSec })
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '<no body>');
+    throw new Error(`Failed to get signed URL: ${resp.status} ${text}`);
+  }
+  const data = await resp.json();
+  // data.signedURL may be a relative path (e.g. "/object/sign/...?..."), make it absolute
+  const rel = data.signedURL || data.signed_url || data.signedUrl || data?.signedURL;
+  if (!rel) return null;
+  if (rel.startsWith('http')) return rel;
+  return `${base}/storage/v1${rel}`;
+}
+
 async function insertRequestViaDatabase(requestData) {
   if (!pool) {
     throw new Error('DATABASE_URL is not configured');
@@ -304,12 +331,37 @@ app.get('/api/requests', async (req, res) => {
   try {
     const rows = await supabaseSelect('requests', { order: 'created_at.desc' });
     // Sanitize any legacy local upload URLs so dashboards don't pull from repo
-    const sanitized = (rows || []).map(r => {
-      if (r && r.voice_url && typeof r.voice_url === 'string' && r.voice_url.startsWith('/uploads')) {
+    const sanitized = await Promise.all((rows || []).map(async (r) => {
+      if (!r || !r.voice_url) return r;
+      try {
+        if (typeof r.voice_url === 'string' && r.voice_url.startsWith('/uploads')) {
+          r.voice_url = null;
+        } else if (typeof r.voice_url === 'string' && r.voice_url.includes('/storage/v1/object/public/')) {
+          // Extract object path portion after the bucket
+          const marker = `/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/`;
+          const idx = r.voice_url.indexOf(marker);
+          if (idx !== -1) {
+            const objectPath = decodeURIComponent(r.voice_url.slice(idx + marker.length));
+            if (SUPABASE_SERVICE_ROLE_KEY) {
+              try {
+                const signed = await supabaseGetSignedUrl(SUPABASE_STORAGE_BUCKET, objectPath);
+                r.voice_url = signed || null;
+              } catch (e) {
+                console.error('Failed to sign existing object URL:', e.message);
+                r.voice_url = null;
+              }
+            } else {
+              r.voice_url = null;
+            }
+          } else {
+            r.voice_url = null;
+          }
+        }
+      } catch (e) {
         r.voice_url = null;
       }
       return r;
-    });
+    }));
     res.json(sanitized);
   } catch (err) {
     console.error('Error fetching requests:', err);
@@ -338,13 +390,37 @@ app.get('/api/requests/:department', async (req, res) => {
     // Use Supabase REST API with filter
     const allRequests = await supabaseSelect('requests', { order: 'created_at.desc' });
     const filtered = allRequests.filter(r => services.includes(r.service));
-    // Sanitize legacy local upload URLs
-    const sanitized = (filtered || []).map(r => {
-      if (r && r.voice_url && typeof r.voice_url === 'string' && r.voice_url.startsWith('/uploads')) {
+    // Sanitize legacy local upload URLs and sign storage URLs
+    const sanitized = await Promise.all((filtered || []).map(async (r) => {
+      if (!r || !r.voice_url) return r;
+      try {
+        if (typeof r.voice_url === 'string' && r.voice_url.startsWith('/uploads')) {
+          r.voice_url = null;
+        } else if (typeof r.voice_url === 'string' && r.voice_url.includes('/storage/v1/object/public/')) {
+          const marker = `/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/`;
+          const idx = r.voice_url.indexOf(marker);
+          if (idx !== -1) {
+            const objectPath = decodeURIComponent(r.voice_url.slice(idx + marker.length));
+            if (SUPABASE_SERVICE_ROLE_KEY) {
+              try {
+                const signed = await supabaseGetSignedUrl(SUPABASE_STORAGE_BUCKET, objectPath);
+                r.voice_url = signed || null;
+              } catch (e) {
+                console.error('Failed to sign existing object URL:', e.message);
+                r.voice_url = null;
+              }
+            } else {
+              r.voice_url = null;
+            }
+          } else {
+            r.voice_url = null;
+          }
+        }
+      } catch (e) {
         r.voice_url = null;
       }
       return r;
-    });
+    }));
     res.json(sanitized);
   } catch (err) {
     console.error('Error fetching department requests:', err);
