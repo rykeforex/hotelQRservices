@@ -505,6 +505,7 @@
           console.log('Socket connected for department dashboard:', socket.id);
         });
         socket.on('newRequest', (data) => {
+          if (!data || !data.id) return;
           console.log('socket newRequest', data);
           const request = toLocalRequest(data);
           if (request.department === currentDept) {
@@ -1123,6 +1124,7 @@
         }
 
         localStorage.setItem('departmentAuthToken', authResponse.token || '');
+        localStorage.setItem('departmentAuthDept', authResponse.department || dept);
         loginContainer.classList.add('hidden');
         dashboardContainer.classList.remove('hidden');
         await loadRequestsFromSupabase();
@@ -1134,7 +1136,24 @@
       }
     }
 
+    async function restoreSession() {
+      const savedDept = localStorage.getItem('departmentAuthDept');
+      const savedToken = localStorage.getItem('departmentAuthToken');
+      if (!savedDept || !savedToken) return;
+      const supabaseOk = await initSupabaseClient();
+      if (!supabaseOk) return;
+      currentDept = savedDept;
+      deptSelect.value = savedDept;
+      loginContainer.classList.add('hidden');
+      dashboardContainer.classList.remove('hidden');
+      await loadRequestsFromSupabase();
+      initDashboard(savedDept);
+      unlockNotificationAudio();
+      subscribeToRequestUpdates();
+    }
+
     loginBtn.addEventListener('click', attemptLogin);
+    restoreSession();
     passwordInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') attemptLogin(); });
 
     forgotPwBtn.addEventListener('click', async () => {

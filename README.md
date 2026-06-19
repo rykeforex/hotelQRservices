@@ -189,7 +189,7 @@ hotelQRservices/
 ├── server.js                  # Backend server
 ├── schema.sql                 # Database schema
 ├── package.json               # Dependencies
-└── uploads/                   # Voice recordings (created automatically)
+└── README.md                  # Project documentation
 ```
 
 ### Adding New Features

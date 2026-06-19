@@ -467,6 +467,7 @@
       if (typeof io !== 'undefined') {
         const socket = io(API_BASE_URL);
         socket.on('newRequest', (data) => {
+          if (!data || !data.id) return;
           const req = toDirectorRequest(data);
           allRequests.unshift(req);
           refreshStats();

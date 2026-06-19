@@ -312,12 +312,39 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
 
     try {
       newRequest = await supabaseInsert('requests', requestData);
+      if (Array.isArray(newRequest)) {
+        newRequest = newRequest[0] || null;
+      }
     } catch (supabaseErr) {
       console.error('Supabase insert failed, trying database fallback:', supabaseErr.message);
       newRequest = await insertRequestViaDatabase(requestData);
     }
 
     console.log('Insert successful:', newRequest);
+
+    // Sign voice URL if present before broadcasting/returning
+    if (newRequest && newRequest.voice_url && typeof newRequest.voice_url === 'string') {
+      try {
+        if (newRequest.voice_url.includes('/storage/v1/object/public/')) {
+          // Extract object path after bucket name
+          const marker = `/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/`;
+          const idx = newRequest.voice_url.indexOf(marker);
+          if (idx !== -1) {
+            const objectPath = decodeURIComponent(newRequest.voice_url.slice(idx + marker.length));
+            if (SUPABASE_SERVICE_ROLE_KEY) {
+              const signed = await supabaseGetSignedUrl(SUPABASE_STORAGE_BUCKET, objectPath);
+              newRequest.voice_url = signed || null;
+            } else {
+              newRequest.voice_url = null;
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Failed to sign voice URL for broadcast:', e.message);
+        newRequest.voice_url = null;
+      }
+    }
+
     io.emit('newRequest', newRequest);
     res.status(201).json(newRequest);
   } catch (err) {
@@ -567,16 +594,17 @@ server.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('Shutting down gracefully...');
-  db.close((err) => {
-    if (err) {
-      console.error('Error closing database:', err.message);
-    } else {
-      console.log('Database connection closed.');
+  try {
+    if (pool) {
+      await pool.end();
+      console.log('Database pool closed.');
     }
-    process.exit(0);
-  });
+  } catch (err) {
+    console.error('Error closing database pool:', err.message);
+  }
+  process.exit(0);
 });
 
 // Password reset requests: persist to DB when available, otherwise fallback to in-memory
