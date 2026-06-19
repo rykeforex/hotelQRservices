@@ -95,23 +95,8 @@ app.get('/director_dashboard.html', (req, res) => res.sendFile(path.join(__dirna
 app.get('/request.html', (req, res) => res.sendFile(path.join(__dirname, 'request.html')));
 app.get('/qr-generator.html', (req, res) => res.sendFile(path.join(__dirname, 'qr-generator.html')));
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
-}
-
-// Configure multer for voice uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-const upload = multer({ storage: storage });
+// Use memory storage for uploads to avoid persisting files in the repository
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Socket.io connection
 io.on('connection', (socket) => {
@@ -256,29 +241,32 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
   console.log('File:', req.file);
 
   const { roomNumber, service, requestText } = req.body;
-  let voiceUrl = req.file ? `/uploads/${req.file.filename}` : null;
+  let voiceUrl = null;
 
   if (!roomNumber || !service || !requestText) {
     console.log('Missing required fields');
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  if (req.file && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
-    const objectPath = req.file.filename;
-    try {
-      const fileBuffer = await fs.promises.readFile(req.file.path);
-      await supabaseStorageUpload(SUPABASE_STORAGE_BUCKET, objectPath, fileBuffer, req.file.mimetype || 'audio/webm');
-      voiceUrl = getSupabaseStoragePublicUrl(SUPABASE_STORAGE_BUCKET, objectPath);
-      fs.unlink(req.file.path, () => {});
-      console.log('Uploaded voice file to Supabase storage:', voiceUrl);
-    } catch (storageErr) {
-      console.error('Supabase storage upload failed, using local upload fallback:', storageErr.message);
-      voiceUrl = `/uploads/${req.file.filename}`;
-    }
-  } else if (req.file) {
-    console.warn('Supabase storage upload skipped: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured. Using local uploads.');
-    if (voiceUrl && req.get('host')) {
-      voiceUrl = `${req.protocol}://${req.get('host')}${voiceUrl}`;
+  if (req.file) {
+    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+      // create a reasonably unique object path
+      const safeName = (req.file.originalname || 'voice').replace(/[^a-zA-Z0-9._-]/g, '-');
+      const objectPath = `voice-${Date.now()}-${Math.round(Math.random() * 1e9)}-${safeName}`;
+      try {
+        const fileBuffer = req.file.buffer;
+        await supabaseStorageUpload(SUPABASE_STORAGE_BUCKET, objectPath, fileBuffer, req.file.mimetype || 'audio/webm');
+        voiceUrl = getSupabaseStoragePublicUrl(SUPABASE_STORAGE_BUCKET, objectPath);
+        console.log('Uploaded voice file to Supabase storage:', voiceUrl);
+      } catch (storageErr) {
+        console.error('Supabase storage upload failed; discarding uploaded file buffer:', storageErr.message);
+        // Do not persist to disk or return local URLs - drop the voice
+        voiceUrl = null;
+      }
+    } else {
+      console.warn('Supabase storage not configured (SUPABASE_SERVICE_ROLE_KEY missing). Discarding uploaded file buffer to avoid saving in repo.');
+      // intentionally drop the uploaded buffer and do not save locally
+      voiceUrl = null;
     }
   }
 
@@ -315,7 +303,14 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
 app.get('/api/requests', async (req, res) => {
   try {
     const rows = await supabaseSelect('requests', { order: 'created_at.desc' });
-    res.json(rows);
+    // Sanitize any legacy local upload URLs so dashboards don't pull from repo
+    const sanitized = (rows || []).map(r => {
+      if (r && r.voice_url && typeof r.voice_url === 'string' && r.voice_url.startsWith('/uploads')) {
+        r.voice_url = null;
+      }
+      return r;
+    });
+    res.json(sanitized);
   } catch (err) {
     console.error('Error fetching requests:', err);
     res.status(500).json({ error: 'Failed to fetch requests' });
@@ -343,7 +338,14 @@ app.get('/api/requests/:department', async (req, res) => {
     // Use Supabase REST API with filter
     const allRequests = await supabaseSelect('requests', { order: 'created_at.desc' });
     const filtered = allRequests.filter(r => services.includes(r.service));
-    res.json(filtered);
+    // Sanitize legacy local upload URLs
+    const sanitized = (filtered || []).map(r => {
+      if (r && r.voice_url && typeof r.voice_url === 'string' && r.voice_url.startsWith('/uploads')) {
+        r.voice_url = null;
+      }
+      return r;
+    });
+    res.json(sanitized);
   } catch (err) {
     console.error('Error fetching department requests:', err);
     res.status(500).json({ error: 'Failed to fetch requests' });
@@ -480,8 +482,7 @@ function getPlainPassword(department) {
   return passwords[department];
 }
 
-// Serve uploaded files
-app.use('/uploads', express.static(uploadsDir));
+// Note: uploads are stored directly to Supabase storage; do not serve a local uploads directory.
 
 // Start server
 server.listen(PORT, () => {
