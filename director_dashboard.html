@@ -1,11 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PeerLoom · director suite</title>
-  <!-- Tailwind + Font Awesome -->
+  <title>PeerLoom · Director Suite</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
@@ -15,18 +13,10 @@
       window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
         ? 'http://localhost:3000'
         : 'https://hotelqrservices-production.up.railway.app';
-    console.log('API_BASE_URL:', API_BASE_URL);
 
     async function apiCall(endpoint, options = {}) {
       const url = API_BASE_URL + endpoint;
-      const config = {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers
-        }
-      };
-
+      const config = { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } };
       const res = await fetch(url, config);
       if (!res.ok) throw new Error(`API error: ${res.status}`);
       return res.json();
@@ -35,1030 +25,1906 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&family=Playfair+Display:wght@400;500;600&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; }
     * { font-family: 'Inter', sans-serif; }
-    body { transition: background-color 0.5s ease, color 0.3s ease; overflow-x: hidden; }
+    body {
+      transition: background-color 0.4s ease, color 0.3s ease;
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
     .font-serif { font-family: 'Playfair Display', serif; }
-    
+
+    /* ─── CSS VARIABLES ─── */
     :root {
       --gold: #c9a227;
       --gold-light: #e5c87b;
+      --gold-dim: rgba(201,162,39,0.18);
+      --gold-glow: 0 0 24px rgba(201,162,39,0.15);
+      --radius-panel: 1.75rem;
+      --radius-card: 1.5rem;
+      --radius-pill: 9999px;
+      --transition-std: 0.22s cubic-bezier(0.4,0,0.2,1);
+      --transition-reveal: 0.45s cubic-bezier(0.4,0,0.2,1);
     }
-    
-    .dark { background-color: #121416; color: #f0f2f4; }
-    .light { background-color: #f8fafc; color: #1e262c; }
-    
+
+    /* ─── DARK THEME (default) ─── */
+    .dark {
+      --bg-base: #0e1013;
+      --bg-surface: rgba(10,12,16,0.55);
+      --bg-card: rgba(255,255,255,0.03);
+      --border-glass: rgba(201,162,39,0.18);
+      --border-subtle: rgba(255,255,255,0.06);
+      --text-primary: #f0f2f4;
+      --text-secondary: rgba(240,242,244,0.6);
+      --text-muted: rgba(240,242,244,0.35);
+      --input-bg: rgba(0,0,0,0.25);
+      --input-border: rgba(255,255,255,0.12);
+      --scrollbar-track: rgba(255,255,255,0.04);
+      --scrollbar-thumb: rgba(201,162,39,0.3);
+      --skeleton-base: rgba(255,255,255,0.06);
+      --skeleton-shine: rgba(255,255,255,0.11);
+    }
+    .dark body { background-color: var(--bg-base); color: var(--text-primary); }
+
+    /* ─── LIGHT THEME ─── */
+    .light {
+      --bg-base: #faf8f2;
+      --bg-surface: rgba(255,252,244,0.78);
+      --bg-card: rgba(255,255,255,0.55);
+      --border-glass: rgba(201,162,39,0.22);
+      --border-subtle: rgba(180,150,60,0.1);
+      --text-primary: #1a160e;
+      --text-secondary: #6b5c2e;
+      --text-muted: #a89060;
+      --input-bg: rgba(255,250,240,0.7);
+      --input-border: rgba(180,150,60,0.25);
+      --scrollbar-track: rgba(0,0,0,0.04);
+      --scrollbar-thumb: rgba(201,162,39,0.35);
+      --skeleton-base: rgba(0,0,0,0.06);
+      --skeleton-shine: rgba(255,255,255,0.5);
+    }
+    .light body { background-color: var(--bg-base); color: var(--text-primary); }
+
+    /* ─── GLASS PANEL ─── */
     .glass-panel {
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border: 1px solid rgba(201, 162, 39, 0.2);
-      border-radius: 2rem;
-      transition: all 0.2s;
+      background: var(--bg-surface);
+      backdrop-filter: blur(18px) saturate(1.4);
+      -webkit-backdrop-filter: blur(18px) saturate(1.4);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-panel);
+      transition: border-color var(--transition-std), box-shadow var(--transition-std);
     }
-    .dark .glass-panel { background: rgba(10, 12, 16, 0.5); }
-    .light .glass-panel { background: rgba(255, 255, 255, 0.6); }
-    
+    .glass-panel:focus-within { border-color: rgba(201,162,39,0.4); }
+
+    /* ─── COLORS ─── */
     .gold { color: var(--gold); }
     .bg-gold { background: var(--gold); }
-    .border-gold { border-color: var(--gold); }
-    
+    .border-gold { border-color: var(--gold) !important; }
+    .text-secondary { color: var(--text-secondary); }
+    .text-muted { color: var(--text-muted); }
+
+    /* ─── STAT CARDS ─── */
     .stat-card {
-      background: rgba(255,255,255,0.03);
-      backdrop-filter: blur(8px);
-      border-radius: 1.75rem;
-      border: 1px solid rgba(201,162,39,0.1);
-      padding: 1.25rem 1rem;
-      transition: transform 0.2s, box-shadow 0.2s;
+      background: var(--bg-card);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: var(--radius-card);
+      border: 1px solid var(--border-subtle);
+      padding: 1.25rem 1.1rem;
+      transition: transform var(--transition-std), box-shadow var(--transition-std), border-color var(--transition-std);
+      position: relative;
+      overflow: hidden;
     }
-    .stat-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -8px rgba(201,162,39,0.2); }
-    
-    @keyframes shimmerSlide {
-      0% { left: -50%; opacity: 0; }
-      20% { opacity: 1; }
-      80% { opacity: 1; }
-      100% { left: 150%; opacity: 0; }
-    }
-    .shimmer::after {
+    .stat-card::before {
       content: '';
       position: absolute;
-      top: 0;
-      left: -50%;
-      width: 60%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(201,162,39,0.3), transparent);
-      transform: skewX(-20deg);
-      animation: shimmerSlide 2s ease-in-out forwards;
+      inset: 0;
+      border-radius: inherit;
+      background: linear-gradient(135deg, rgba(201,162,39,0.04) 0%, transparent 60%);
+      pointer-events: none;
     }
-    
-    .fade-up {
+    .stat-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 16px 32px -8px rgba(201,162,39,0.18), var(--gold-glow);
+      border-color: rgba(201,162,39,0.22);
+    }
+
+    /* ─── ANIMATIONS ─── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    @keyframes shimmerSlide {
+      0%   { transform: translateX(-100%) skewX(-15deg); }
+      100% { transform: translateX(250%) skewX(-15deg); }
+    }
+    @keyframes skeletonPulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.45; }
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes revealDown {
+      from { opacity: 0; transform: translateY(-12px); max-height: 0; }
+      to   { opacity: 1; transform: translateY(0); max-height: 800px; }
+    }
+    @keyframes progressFill {
+      from { width: 0; }
+    }
+    @keyframes pulse-ring {
+      0%   { transform: scale(1); opacity: 0.6; }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+
+    .fade-up { opacity: 0; animation: fadeUp 0.5s ease forwards; }
+    .stagger-1  { animation-delay: 0.08s; }
+    .stagger-2  { animation-delay: 0.13s; }
+    .stagger-3  { animation-delay: 0.18s; }
+    .stagger-4  { animation-delay: 0.23s; }
+    .stagger-5  { animation-delay: 0.28s; }
+    .stagger-6  { animation-delay: 0.33s; }
+
+    .shimmer-icon { position: relative; overflow: hidden; display: inline-block; }
+    .shimmer-icon::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 50%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(201,162,39,0.55), transparent);
+      animation: shimmerSlide 2s ease-in-out infinite;
+    }
+
+    /* ─── SKELETON LOADERS ─── */
+    .skel {
+      background: var(--skeleton-base);
+      border-radius: 0.5rem;
+      position: relative;
+      overflow: hidden;
+      animation: skeletonPulse 1.5s ease-in-out infinite;
+    }
+    .skel::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, var(--skeleton-shine), transparent);
+      animation: shimmerSlide 1.6s linear infinite;
+    }
+    .skel-text  { height: 14px; border-radius: 4px; margin-bottom: 8px; }
+    .skel-title { height: 22px; border-radius: 6px; margin-bottom: 12px; }
+    .skel-card  { height: 100px; border-radius: 1rem; }
+    .skel-row   { height: 36px; border-radius: 8px; margin-bottom: 10px; }
+    .skel-circle { border-radius: 50%; }
+
+    /* ─── SEARCH OVERLAY ─── */
+    #searchOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(8,9,12,0.72);
+      backdrop-filter: blur(12px) saturate(1.2);
+      -webkit-backdrop-filter: blur(12px) saturate(1.2);
+      display: none;
+      align-items: center;
+      justify-content: center;
       opacity: 0;
-      transform: translateY(20px);
-      animation: fadeUp 0.5s ease forwards;
+      transition: opacity 0.3s ease;
     }
-    @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
-    
-    .stagger-1 { animation-delay: 0.1s; }
-    .stagger-2 { animation-delay: 0.15s; }
-    .stagger-3 { animation-delay: 0.2s; }
-    .stagger-4 { animation-delay: 0.25s; }
-    .stagger-5 { animation-delay: 0.3s; }
-    .stagger-6 { animation-delay: 0.35s; }
-    
-    /* modal */
+    #searchOverlay.visible {
+      display: flex;
+      animation: fadeIn 0.28s ease forwards;
+    }
+    .search-modal {
+      background: var(--bg-surface);
+      backdrop-filter: blur(28px) saturate(1.5);
+      -webkit-backdrop-filter: blur(28px) saturate(1.5);
+      border: 1px solid var(--border-glass);
+      border-radius: 2rem;
+      padding: 2.5rem 3rem;
+      min-width: 320px;
+      text-align: center;
+      box-shadow: 0 40px 80px -20px rgba(0,0,0,0.6), 0 0 0 1px rgba(201,162,39,0.08);
+      animation: fadeUp 0.32s cubic-bezier(0.34,1.56,0.64,1) forwards;
+    }
+    .search-spinner {
+      width: 48px; height: 48px;
+      border: 2.5px solid rgba(201,162,39,0.15);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      margin: 0 auto 1.25rem;
+      animation: spin 0.7s linear infinite;
+    }
+    .search-results-fade { animation: fadeUp 0.4s ease forwards; }
+
+    /* ─── PAGE BLUR (active search) ─── */
+    .page-searching #dashboardContainer > *:not(#searchOverlay) {
+      filter: blur(2px);
+      pointer-events: none;
+      transition: filter 0.3s ease;
+    }
+
+    /* ─── MODALS ─── */
     .modal-overlay {
-      background: rgba(0,0,0,0.8);
-      backdrop-filter: blur(8px);
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(10px) saturate(1.2);
+      -webkit-backdrop-filter: blur(10px) saturate(1.2);
     }
-    
-    /* status badges */
-    .status-badge {
-      padding: 0.3rem 0.8rem;
-      border-radius: 1rem;
+    .modal-panel {
+      background: var(--bg-surface);
+      backdrop-filter: blur(24px) saturate(1.5);
+      -webkit-backdrop-filter: blur(24px) saturate(1.5);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-panel);
+      box-shadow: 0 32px 64px -16px rgba(0,0,0,0.55);
+      animation: fadeUp 0.3s cubic-bezier(0.34,1.4,0.64,1) forwards;
+    }
+
+    /* ─── SUBSCRIPTION SECTION ─── */
+    #billingCurrentPlan { display: block; }
+    #billingPlansWrap {
+      max-height: 0;
+      overflow: hidden;
+      opacity: 0;
+      transition: max-height 0.55s cubic-bezier(0.4,0,0.2,1), opacity 0.4s ease, margin-top 0.3s ease;
+      margin-top: 0;
+    }
+    #billingPlansWrap.revealed {
+      max-height: 900px;
+      opacity: 1;
+      margin-top: 2rem;
+    }
+
+    /* Plan cards */
+    .plan-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-card);
+      padding: 1.75rem;
+      position: relative;
+      overflow: visible;
+      transition: transform var(--transition-std), box-shadow var(--transition-std), border-color var(--transition-std);
+    }
+    .plan-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 48px -12px rgba(201,162,39,0.2);
+    }
+    .plan-card.featured {
+      border-color: rgba(201,162,39,0.55);
+      box-shadow: 0 0 0 1px rgba(201,162,39,0.18), 0 24px 48px -12px rgba(201,162,39,0.18);
+    }
+    .plan-badge {
+      position: absolute;
+      top: -14px; left: 1.5rem;
+      padding: 0.25rem 1rem;
+      border-radius: var(--radius-pill);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .plan-badge.standard { background: rgba(201,162,39,0.18); color: var(--gold); border: 1px solid rgba(201,162,39,0.35); }
+    .plan-badge.premium  { background: var(--gold); color: #0e0a02; }
+    .plan-badge.popular  {
+      position: absolute;
+      top: -14px; right: 1.5rem; left: auto;
+      background: rgba(201,162,39,0.12);
+      color: var(--gold);
+      border: 1px solid rgba(201,162,39,0.3);
+      font-size: 0.65rem;
+    }
+
+    /* Voice usage progress bar */
+    .voice-bar-track {
+      height: 6px;
+      background: rgba(201,162,39,0.1);
+      border-radius: var(--radius-pill);
+      overflow: hidden;
+    }
+    .voice-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--gold), var(--gold-light));
+      border-radius: var(--radius-pill);
+      transition: width 0.8s cubic-bezier(0.4,0,0.2,1);
+      animation: progressFill 1.2s ease forwards;
+    }
+
+    /* ─── INPUTS ─── */
+    .field-input {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 0.875rem;
+      padding: 0.75rem 1rem;
+      color: var(--text-primary);
+      font-size: 0.875rem;
+      transition: border-color var(--transition-std), box-shadow var(--transition-std);
+      outline: none;
+    }
+    .field-input:focus {
+      border-color: rgba(201,162,39,0.55);
+      box-shadow: 0 0 0 3px rgba(201,162,39,0.1);
+    }
+    .field-input::placeholder { color: var(--text-muted); }
+
+    .search-input {
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: var(--radius-pill);
+      padding: 0.65rem 1.1rem 0.65rem 2.5rem;
+      color: var(--text-primary);
       font-size: 0.85rem;
-      font-weight: 500;
+      transition: border-color var(--transition-std), box-shadow var(--transition-std);
+      outline: none;
+      width: 100%;
+    }
+    .search-input:focus {
+      border-color: rgba(201,162,39,0.45);
+      box-shadow: 0 0 0 3px rgba(201,162,39,0.08);
+    }
+    .search-input::placeholder { color: var(--text-muted); }
+    .search-wrap { position: relative; }
+    .search-wrap .search-icon {
+      position: absolute;
+      left: 0.85rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      pointer-events: none;
+    }
+
+    /* ─── BUTTONS ─── */
+    .btn-gold {
+      background: var(--gold);
+      color: #0e0a02;
+      font-weight: 600;
+      border-radius: var(--radius-pill);
+      padding: 0.6rem 1.4rem;
+      font-size: 0.85rem;
+      border: none;
+      cursor: pointer;
+      transition: background var(--transition-std), transform var(--transition-std), box-shadow var(--transition-std);
+    }
+    .btn-gold:hover { background: var(--gold-light); transform: translateY(-1px); box-shadow: 0 8px 20px -4px rgba(201,162,39,0.35); }
+    .btn-gold:active { transform: translateY(0); }
+    .btn-gold:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+    .btn-ghost {
+      background: var(--gold-dim);
+      color: var(--gold);
+      border: 1px solid rgba(201,162,39,0.25);
+      border-radius: var(--radius-pill);
+      padding: 0.6rem 1.4rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background var(--transition-std), transform var(--transition-std);
+    }
+    .btn-ghost:hover { background: rgba(201,162,39,0.25); transform: translateY(-1px); }
+    .btn-ghost:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+    .btn-outline-gold {
+      background: transparent;
+      color: var(--gold);
+      border: 1px solid rgba(201,162,39,0.45);
+      border-radius: var(--radius-pill);
+      padding: 0.6rem 1.4rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all var(--transition-std);
+    }
+    .btn-outline-gold:hover { background: var(--gold-dim); }
+    .btn-outline-gold:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+    /* ─── STATUS BADGES ─── */
+    .badge {
       display: inline-block;
+      padding: 0.2rem 0.65rem;
+      border-radius: var(--radius-pill);
+      font-size: 0.75rem;
+      font-weight: 500;
       white-space: nowrap;
     }
-    .status-badge.pending { background: #fef3c7; color: #92400e; }
-    .status-badge.in-progress { background: #dbeafe; color: #1e40af; }
-    .status-badge.completed { background: #d1fae5; color: #065f46; }
+    .badge-pending    { background: rgba(251,191,36,0.14); color: #d97706; border: 1px solid rgba(251,191,36,0.25); }
+    .badge-progress   { background: rgba(59,130,246,0.14); color: #3b82f6; border: 1px solid rgba(59,130,246,0.25); }
+    .badge-completed  { background: rgba(34,197,94,0.14); color: #16a34a; border: 1px solid rgba(34,197,94,0.25); }
+    .badge-current-plan { background: rgba(201,162,39,0.15); color: var(--gold); border: 1px solid rgba(201,162,39,0.3); font-size: 0.7rem; padding: 0.15rem 0.6rem; }
+
+    /* ─── SCROLLBAR ─── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 9999px; }
+
+    /* ─── DEPT TOGGLE ─── */
+    .dept-toggle-btn {
+      font-size: 0.7rem;
+      padding: 0.2rem 0.75rem;
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+      transition: all var(--transition-std);
+      font-weight: 500;
+      border: 1px solid transparent;
+    }
+    .dept-toggle-btn.on  { background: var(--gold); color: #0e0a02; border-color: var(--gold); }
+    .dept-toggle-btn.off { background: rgba(255,255,255,0.07); color: var(--text-secondary); border-color: var(--border-subtle); }
+
+    /* ─── WIFI CARDS ─── */
+    .wifi-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-card);
+      padding: 1.1rem 1.25rem;
+      transition: transform var(--transition-std), box-shadow var(--transition-std);
+    }
+    .wifi-card:hover { transform: translateY(-2px); box-shadow: 0 12px 28px -8px rgba(201,162,39,0.15); }
+
+    /* ─── SCOPE PILL ─── */
+    .scope-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.7rem;
+      padding: 0.18rem 0.6rem;
+      border-radius: var(--radius-pill);
+      font-weight: 500;
+    }
+    .scope-global { background: rgba(34,197,94,0.12); color: #16a34a; border: 1px solid rgba(34,197,94,0.22); }
+    .scope-floor  { background: rgba(59,130,246,0.12); color: #3b82f6; border: 1px solid rgba(59,130,246,0.22); }
+    .scope-block  { background: rgba(168,85,247,0.12); color: #a855f7; border: 1px solid rgba(168,85,247,0.22); }
+
+    /* ─── THEME TOGGLE ─── */
+    .theme-toggle-track {
+      width: 44px; height: 24px;
+      border-radius: var(--radius-pill);
+      background: rgba(255,255,255,0.1);
+      border: 1px solid var(--border-subtle);
+      display: flex; align-items: center;
+      padding: 2px;
+      cursor: pointer;
+      transition: background var(--transition-std);
+      position: relative;
+    }
+    .theme-toggle-track.light-mode { background: rgba(201,162,39,0.2); }
+    .theme-toggle-thumb {
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: var(--gold);
+      transition: transform var(--transition-std);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px;
+    }
+    .theme-toggle-thumb.right { transform: translateX(20px); }
+
+    /* ─── LIVE DOT ─── */
+    .live-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .live-dot::after {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      background: rgba(34,197,94,0.3);
+      animation: pulse-ring 1.6s ease-out infinite;
+    }
+
+    /* ─── TABLE ─── */
+    .monitor-table { width: 100%; font-size: 0.82rem; border-collapse: separate; border-spacing: 0; }
+    .monitor-table th {
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 0.4rem 0.5rem;
+      text-align: left;
+    }
+    .monitor-table td { padding: 0.55rem 0.5rem; border-bottom: 1px solid var(--border-subtle); }
+    .monitor-table tr.req-row { cursor: pointer; transition: background var(--transition-std); }
+    .monitor-table tr.req-row:hover { background: rgba(201,162,39,0.05); }
+    .monitor-table tr.req-row:focus { outline: 2px solid rgba(201,162,39,0.5); }
+
+    /* ─── FEATURE LIST ─── */
+    .feature-item { display: flex; align-items: flex-start; gap: 0.6rem; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.45; }
+    .feature-item .fi-icon { color: var(--gold); font-size: 0.8rem; margin-top: 0.15rem; flex-shrink: 0; }
+
+    /* ─── SELECT ─── */
+    select.field-input {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23c9a227' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 1rem center;
+      padding-right: 2.5rem;
+    }
+    select.field-input option { background: #1a1610; color: #f0f2f4; }
+
+    /* ─── ALERT ─── */
+    .alert-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(201,162,39,0.07);
+      border: 1px solid rgba(201,162,39,0.18);
+      border-left: 3px solid var(--gold);
+      border-radius: 0.75rem;
+      padding: 0.6rem 0.9rem;
+      font-size: 0.82rem;
+    }
+
+    /* ─── RESPONSIVE ─── */
+    @media (max-width: 640px) {
+      .glass-panel { border-radius: 1.25rem; }
+      .plan-card   { border-radius: 1.25rem; }
+      :root { --radius-panel: 1.25rem; --radius-card: 1rem; }
+    }
+    @media (max-width: 380px) {
+      .search-modal { padding: 2rem 1.5rem; min-width: 280px; }
+    }
+
+    /* ─── ACCESSIBILITY ─── */
+    *:focus-visible { outline: 2px solid rgba(201,162,39,0.7); outline-offset: 2px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
+
+    /* ─── PLAN CURRENT INDICATOR ─── */
+    .plan-current-bar {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 3px; border-radius: 1.5rem 1.5rem 0 0;
+      background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    }
+
+    /* ─── BILLING INFO ROW ─── */
+    .billing-info-row {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 0.85rem;
+    }
+    .billing-info-row:last-child { border-bottom: none; }
+    .billing-info-label { color: var(--text-muted); min-width: 130px; }
+
+    /* ─── TOPBAR WRAP ─── */
+    @media (max-width: 768px) {
+      .topbar-right { gap: 0.75rem !important; flex-wrap: wrap; justify-content: flex-end; }
+      .topbar-right .hide-mobile { display: none; }
+    }
   </style>
 </head>
 <body class="dark antialiased">
 
-<!-- LOGIN PAGE -->
+<!-- ══════════════════════════════════════════
+     SEARCH OVERLAY (global)
+══════════════════════════════════════════ -->
+<div id="searchOverlay" role="dialog" aria-modal="true" aria-label="Searching" aria-live="polite">
+  <div class="search-modal">
+    <div id="searchSpinner" class="search-spinner" aria-hidden="true"></div>
+    <div id="searchOverlayLabel" class="gold font-serif text-xl mb-1">Searching...</div>
+    <div id="searchOverlayContext" class="text-secondary text-sm" style="color:var(--text-secondary)"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     LOGIN
+══════════════════════════════════════════ -->
 <div id="loginContainer" class="min-h-screen flex items-center justify-center p-4">
-  <div class="glass-panel w-full max-w-md p-8 fade-up">
+  <div class="glass-panel w-full max-w-sm p-8 fade-up" role="main">
     <div class="text-center mb-8">
-      <i class="fas fa-crown text-5xl gold"></i>
-      <h2 class="text-3xl font-light mt-2 gold font-serif">Director access</h2>
-      <p class="text-sm opacity-60">enter secure credentials</p>
+      <div class="shimmer-icon inline-block">
+        <i class="fas fa-crown text-5xl gold" aria-hidden="true"></i>
+      </div>
+      <h1 class="text-3xl font-light mt-3 gold font-serif">Director access</h1>
+      <p class="text-sm mt-1" style="color:var(--text-muted)">Enter secure credentials</p>
     </div>
-    <div class="space-y-5">
-      <input type="text" id="dirUser" placeholder="Username" value="director" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none transition">
-      <input type="password" id="dirPass" placeholder="Password" value="pearl" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none transition">
-      <button id="loginBtn" class="w-full py-3 bg-gold text-black font-semibold rounded-xl hover:bg-yellow-400 transition shadow-lg shadow-gold/20">enter</button>
+    <div class="space-y-4">
+      <div>
+        <label for="dirUser" class="sr-only">Username</label>
+        <input type="text" id="dirUser" placeholder="Username" value="director" autocomplete="username"
+          class="field-input" aria-required="true">
+      </div>
+      <div>
+        <label for="dirPass" class="sr-only">Password</label>
+        <input type="password" id="dirPass" placeholder="Password" value="pearl" autocomplete="current-password"
+          class="field-input" aria-required="true">
+      </div>
+      <button id="loginBtn" class="btn-gold w-full py-3 text-sm font-semibold" style="border-radius:0.875rem;">
+        Enter suite
+      </button>
     </div>
   </div>
 </div>
 
-<!-- SPLASH SCREEN -->
-<div id="splashScreen" class="fixed inset-0 flex items-center justify-center z-50 hidden modal-overlay">
-  <div class="text-center">
-    <i class="fas fa-crown text-6xl gold mb-6 shimmer"></i>
-    <div id="splashGreeting" class="font-serif text-5xl gold mb-4"></div>
-    <div class="text-xl text-gray-300" id="splashTime"></div>
-    <div class="mt-8 w-24 h-0.5 bg-gold mx-auto"></div>
+<!-- ══════════════════════════════════════════
+     SPLASH
+══════════════════════════════════════════ -->
+<div id="splashScreen" class="fixed inset-0 flex items-center justify-center z-50 hidden modal-overlay" aria-live="assertive">
+  <div class="text-center px-6">
+    <div class="shimmer-icon inline-block mb-6">
+      <i class="fas fa-crown text-6xl gold" aria-hidden="true"></i>
+    </div>
+    <div id="splashGreeting" class="font-serif text-5xl gold mb-3" style="line-height:1.15;"></div>
+    <div id="splashTime" class="text-lg" style="color:var(--text-secondary);"></div>
+    <div class="mt-8 mx-auto" style="width:80px;height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent);"></div>
+    <p class="mt-4 text-sm" style="color:var(--text-muted);">Loading your suite…</p>
   </div>
 </div>
 
-<!-- MASTER DASHBOARD -->
-<div id="dashboardContainer" class="hidden min-h-screen p-4 md:p-6 transition-opacity duration-700">
+<!-- ══════════════════════════════════════════
+     MASTER DASHBOARD
+══════════════════════════════════════════ -->
+<div id="dashboardContainer" class="hidden min-h-screen" style="padding:1.25rem 1.25rem 2.5rem;">
 
   <!-- TOP BAR -->
-  <div class="glass-panel p-4 flex flex-wrap items-center justify-between mb-6">
+  <header class="glass-panel p-4 flex flex-wrap items-center justify-between gap-3 mb-5">
     <div class="flex items-center gap-3">
-      <i class="fas fa-hotel text-2xl gold"></i>
-      <span class="text-xl font-medium">DIRECTOR’S SUITE</span>
+      <i class="fas fa-hotel text-xl gold" aria-hidden="true"></i>
+      <span class="font-medium tracking-wide" style="font-size:1rem;letter-spacing:0.04em;">DIRECTOR'S SUITE</span>
     </div>
-    <div class="flex items-center gap-6">
-      <div id="greeting" class="text-sm font-light"></div>
-      <div id="currentDateTime" class="text-sm opacity-70"></div>
-      <button id="themeToggle" class="w-12 h-6 rounded-full bg-gray-600/30 flex items-center p-1 transition-all">
-        <div id="themeSlider" class="w-4 h-4 rounded-full bg-gold transform translate-x-0 transition-transform"></div>
+    <div class="flex items-center gap-4 topbar-right" role="navigation" aria-label="Top navigation">
+      <div id="greeting" class="text-sm hide-mobile" style="color:var(--text-secondary);"></div>
+      <div id="currentDateTime" class="text-sm hide-mobile" style="color:var(--text-muted);"></div>
+      <button id="themeToggle" class="theme-toggle-track" aria-label="Toggle light/dark mode" role="switch" aria-checked="false">
+        <div id="themeThumb" class="theme-toggle-thumb">🌙</div>
       </button>
-      <a href="qr-generator.html" target="_blank" class="text-sm bg-fuchsia-500/20 hover:bg-fuchsia-500/30 px-4 py-2 rounded-full transition text-fuchsia-100"><i class="fas fa-qrcode mr-1"></i> QR Generator</a>
-      <button id="logoutBtn" class="text-sm bg-gold/20 hover:bg-gold/30 px-4 py-2 rounded-full transition"><i class="fas fa-sign-out-alt mr-1"></i> logout</button>
+      <a href="qr-generator.html" target="_blank" rel="noopener"
+        class="text-sm px-4 py-2 rounded-full transition hide-mobile"
+        style="background:rgba(168,85,247,0.12);color:#c084fc;border:1px solid rgba(168,85,247,0.22);"
+        aria-label="Open QR Generator in new tab">
+        <i class="fas fa-qrcode mr-1" aria-hidden="true"></i> QR Generator
+      </a>
+      <button id="logoutBtn" class="btn-ghost text-sm" aria-label="Logout">
+        <i class="fas fa-sign-out-alt mr-1" aria-hidden="true"></i> Logout
+      </button>
     </div>
-  </div>
+  </header>
 
   <!-- STATS CARDS -->
-  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-    <div class="stat-card fade-up stagger-1"><i class="fas fa-calendar-day gold text-xl"></i><div class="text-3xl font-light mt-1" id="totalToday">0</div><div class="text-xs uppercase tracking-wider opacity-60">total today</div></div>
-    <div class="stat-card fade-up stagger-2"><i class="fas fa-hourglass-half gold"></i><div class="text-3xl font-light" id="pendingCount">0</div><div class="text-xs">pending</div></div>
-    <div class="stat-card fade-up stagger-3"><i class="fas fa-sync-alt gold"></i><div class="text-3xl font-light" id="inProgressCount">0</div><div class="text-xs">in progress</div></div>
-    <div class="stat-card fade-up stagger-4"><i class="fas fa-check-circle gold"></i><div class="text-3xl font-light" id="completedCount">0</div><div class="text-xs">completed</div></div>
-    <div class="stat-card fade-up stagger-5"><i class="fas fa-clock gold"></i><div class="text-3xl font-light" id="avgResponse">2.4</div><div class="text-xs">avg resp (min)</div></div>
-    <div class="stat-card fade-up stagger-6"><i class="fas fa-door-open gold"></i><div class="text-3xl font-light" id="activeRooms">12</div><div class="text-xs">active rooms</div></div>
-  </div>
+  <section aria-label="Key metrics" class="grid gap-3 mb-5" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr));">
+    <div class="stat-card fade-up stagger-1" role="status" aria-label="Total requests today">
+      <i class="fas fa-calendar-day gold" style="font-size:1.1rem;" aria-hidden="true"></i>
+      <div class="text-3xl font-light mt-2" id="totalToday" aria-live="polite">0</div>
+      <div class="text-xs uppercase tracking-wider mt-1" style="color:var(--text-muted);">Total today</div>
+    </div>
+    <div class="stat-card fade-up stagger-2" role="status" aria-label="Pending requests">
+      <i class="fas fa-hourglass-half" style="color:#f59e0b;font-size:1.1rem;" aria-hidden="true"></i>
+      <div class="text-3xl font-light mt-2" id="pendingCount" aria-live="polite">0</div>
+      <div class="text-xs uppercase tracking-wider mt-1" style="color:var(--text-muted);">Pending</div>
+    </div>
+    <div class="stat-card fade-up stagger-3" role="status" aria-label="In-progress requests">
+      <i class="fas fa-sync-alt" style="color:#60a5fa;font-size:1.1rem;" aria-hidden="true"></i>
+      <div class="text-3xl font-light mt-2" id="inProgressCount" aria-live="polite">0</div>
+      <div class="text-xs uppercase tracking-wider mt-1" style="color:var(--text-muted);">In progress</div>
+    </div>
+    <div class="stat-card fade-up stagger-4" role="status" aria-label="Completed requests">
+      <i class="fas fa-check-circle" style="color:#4ade80;font-size:1.1rem;" aria-hidden="true"></i>
+      <div class="text-3xl font-light mt-2" id="completedCount" aria-live="polite">0</div>
+      <div class="text-xs uppercase tracking-wider mt-1" style="color:var(--text-muted);">Completed</div>
+    </div>
+    <div class="stat-card fade-up stagger-5" role="status" aria-label="Average response time in minutes">
+      <i class="fas fa-clock gold" style="font-size:1.1rem;" aria-hidden="true"></i>
+      <div class="text-3xl font-light mt-2" id="avgResponse">2.4</div>
+      <div class="text-xs uppercase tracking-wider mt-1" style="color:var(--text-muted);">Avg resp (min)</div>
+    </div>
+    <div class="stat-card fade-up stagger-6" role="status" aria-label="Active rooms">
+      <i class="fas fa-door-open gold" style="font-size:1.1rem;" aria-hidden="true"></i>
+      <div class="text-3xl font-light mt-2" id="activeRooms">0</div>
+      <div class="text-xs uppercase tracking-wider mt-1" style="color:var(--text-muted);">Active rooms</div>
+    </div>
+  </section>
 
   <!-- DEPARTMENT PERFORMANCE -->
-  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-    <div class="glass-panel p-3 fade-up stagger-1"><div class="flex justify-between"><span class="font-medium">🔧 Maint</span><span class="gold" id="maintPending">0</span></div><div class="flex justify-between text-xs opacity-60"><span>pend</span><span id="maintCompleted">0</span></div></div>
-    <div class="glass-panel p-3 fade-up stagger-2"><div class="flex justify-between"><span>🧹 House</span><span class="gold" id="housePending">0</span></div><div class="flex justify-between text-xs"><span>pend</span><span id="houseCompleted">0</span></div></div>
-    <div class="glass-panel p-3 fade-up stagger-3"><div class="flex justify-between"><span>🍽️ Room</span><span class="gold" id="roomPending">0</span></div><div class="flex justify-between text-xs"><span>pend</span><span id="roomCompleted">0</span></div></div>
-    <div class="glass-panel p-3 fade-up stagger-4"><div class="flex justify-between"><span>✨ Concierge</span><span class="gold" id="concPending">0</span></div><div class="flex justify-between text-xs"><span>pend</span><span id="concCompleted">0</span></div></div>
-    <div class="glass-panel p-3 fade-up stagger-5"><div class="flex justify-between"><span>🧺 Laundry</span><span class="gold" id="launPending">0</span></div><div class="flex justify-between text-xs"><span>pend</span><span id="launCompleted">0</span></div></div>
-  </div>
+  <section aria-label="Department performance" class="grid gap-3 mb-5" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr));">
+    <div class="glass-panel p-3 fade-up stagger-1">
+      <div class="flex justify-between items-center">
+        <span class="text-sm font-medium">🔧 Maintenance</span>
+        <span class="gold font-medium text-sm" id="maintPending" aria-label="Maintenance pending">0</span>
+      </div>
+      <div class="flex justify-between mt-1" style="font-size:0.75rem;color:var(--text-muted);">
+        <span>Pending</span><span id="maintCompleted">0 done</span>
+      </div>
+    </div>
+    <div class="glass-panel p-3 fade-up stagger-2">
+      <div class="flex justify-between items-center">
+        <span class="text-sm font-medium">🧹 Housekeeping</span>
+        <span class="gold font-medium text-sm" id="housePending">0</span>
+      </div>
+      <div class="flex justify-between mt-1" style="font-size:0.75rem;color:var(--text-muted);">
+        <span>Pending</span><span id="houseCompleted">0 done</span>
+      </div>
+    </div>
+    <div class="glass-panel p-3 fade-up stagger-3">
+      <div class="flex justify-between items-center">
+        <span class="text-sm font-medium">🍽️ Room Service</span>
+        <span class="gold font-medium text-sm" id="roomPending">0</span>
+      </div>
+      <div class="flex justify-between mt-1" style="font-size:0.75rem;color:var(--text-muted);">
+        <span>Pending</span><span id="roomCompleted">0 done</span>
+      </div>
+    </div>
+    <div class="glass-panel p-3 fade-up stagger-4">
+      <div class="flex justify-between items-center">
+        <span class="text-sm font-medium">✨ Concierge</span>
+        <span class="gold font-medium text-sm" id="concPending">0</span>
+      </div>
+      <div class="flex justify-between mt-1" style="font-size:0.75rem;color:var(--text-muted);">
+        <span>Pending</span><span id="concCompleted">0 done</span>
+      </div>
+    </div>
+    <div class="glass-panel p-3 fade-up stagger-5">
+      <div class="flex justify-between items-center">
+        <span class="text-sm font-medium">🧺 Laundry</span>
+        <span class="gold font-medium text-sm" id="launPending">0</span>
+      </div>
+      <div class="flex justify-between mt-1" style="font-size:0.75rem;color:var(--text-muted);">
+        <span>Pending</span><span id="launCompleted">0 done</span>
+      </div>
+    </div>
+  </section>
 
   <!-- MAIN TWO-COLUMN -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <!-- LEFT: Live monitor + alerts -->
-    <div class="lg:col-span-2 space-y-6">
+  <div class="grid grid-cols-1 gap-5 mb-5" style="grid-template-columns:1fr;" id="mainGrid">
+    <div class="grid gap-5" style="grid-template-columns:1fr;" id="mainLeft">
+
+      <!-- LIVE MONITOR -->
       <div class="glass-panel p-5">
-        <h3 class="text-lg font-medium flex items-center gap-2 mb-3"><i class="fas fa-satellite-dish gold"></i> live request monitor</h3>
-        <input type="text" id="searchMonitor" placeholder="🔍 search room, department, type..." class="w-full bg-black/20 p-3 rounded-full text-sm border border-gray-600 focus:border-gold outline-none mb-3">
-        <div class="overflow-x-auto max-h-64 scrollbar-thin">
-          <table class="w-full text-sm">
-            <thead class="opacity-50"><tr><th>Rm</th><th>Dept</th><th>Type</th><th>Time</th><th>Status</th><th></th></tr></thead>
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <h2 class="font-medium flex items-center gap-2" style="font-size:0.95rem;">
+            <div class="live-dot" aria-hidden="true"></div>
+            Live request monitor
+          </h2>
+        </div>
+        <div class="search-wrap mb-3">
+          <i class="fas fa-search search-icon" aria-hidden="true"></i>
+          <input type="search" id="searchMonitor"
+            placeholder="Search room, department, type…"
+            class="search-input" aria-label="Search live requests">
+        </div>
+        <!-- Skeleton for table -->
+        <div id="monitorSkeleton" aria-hidden="true">
+          <div class="skel skel-row" style="width:100%;"></div>
+          <div class="skel skel-row" style="width:92%;"></div>
+          <div class="skel skel-row" style="width:96%;"></div>
+          <div class="skel skel-row" style="width:88%;"></div>
+        </div>
+        <div id="monitorTableWrap" class="overflow-x-auto hidden" style="max-height:280px;overflow-y:auto;">
+          <table class="monitor-table" role="table" aria-label="Live requests">
+            <thead>
+              <tr>
+                <th scope="col">Room</th>
+                <th scope="col">Dept</th>
+                <th scope="col">Type</th>
+                <th scope="col">Time</th>
+                <th scope="col">Status</th>
+                <th scope="col"><span class="sr-only">Detail</span></th>
+              </tr>
+            </thead>
             <tbody id="monitorTableBody"></tbody>
           </table>
         </div>
       </div>
+
+      <!-- PRIORITY ALERTS -->
       <div class="glass-panel p-5">
-        <h3 class="text-lg font-medium flex items-center gap-2"><i class="fas fa-exclamation-triangle gold"></i> priority alerts (>20 min)</h3>
-        <div id="alertPanel" class="space-y-2 mt-2"></div>
+        <h2 class="font-medium flex items-center gap-2 mb-3" style="font-size:0.95rem;">
+          <i class="fas fa-exclamation-triangle" style="color:#f59e0b;" aria-hidden="true"></i>
+          Priority alerts
+          <span class="text-xs ml-1" style="color:var(--text-muted);">&gt;20 min unresolved</span>
+        </h2>
+        <div id="alertPanel" class="space-y-2" aria-live="polite"></div>
       </div>
     </div>
 
-    <!-- RIGHT: Controls, password, health -->
-    <div class="space-y-6">
+    <!-- RIGHT SIDEBAR -->
+    <div class="grid gap-5" style="grid-template-columns:1fr;" id="mainRight">
+
+      <!-- DEPT CONTROLS -->
       <div class="glass-panel p-5">
-        <h3 class="font-medium flex items-center gap-2"><i class="fas fa-sliders-h gold"></i> department control</h3>
-        <div id="deptControls" class="mt-3 space-y-3 text-sm"></div>
+        <h2 class="font-medium flex items-center gap-2 mb-4" style="font-size:0.95rem;">
+          <i class="fas fa-sliders-h gold" aria-hidden="true"></i> Department control
+        </h2>
+        <div id="deptControls" class="space-y-3 text-sm" role="list" aria-label="Department status controls"></div>
       </div>
+
+      <!-- PASSWORD RESETS -->
       <div class="glass-panel p-5">
-        <h3 class="font-medium flex items-center gap-2"><i class="fas fa-key gold"></i> password reset requests</h3>
-        <div id="resetRequestsList" class="mt-2 space-y-2"></div>
+        <h2 class="font-medium flex items-center gap-2 mb-3" style="font-size:0.95rem;">
+          <i class="fas fa-key gold" aria-hidden="true"></i> Password reset requests
+        </h2>
+        <div id="resetRequestsList" class="space-y-2" aria-live="polite"></div>
       </div>
+
+      <!-- SYSTEM HEALTH -->
       <div class="glass-panel p-5">
-        <h3 class="font-medium flex items-center gap-2"><i class="fas fa-heartbeat gold"></i> system health</h3>
-        <div class="grid grid-cols-2 gap-2 mt-2 text-xs">
-          <div>traffic <span class="float-right gold" id="traffic">42 req/h</span></div>
-          <div>uptime <span class="float-right">99.98%</span></div>
-          <div>active depts <span class="float-right" id="activeDepts">5/5</span></div>
-          <div>server load <span class="float-right">14%</span></div>
+        <h2 class="font-medium flex items-center gap-2 mb-3" style="font-size:0.95rem;">
+          <i class="fas fa-heartbeat" style="color:#4ade80;" aria-hidden="true"></i> System health
+        </h2>
+        <div class="space-y-2" style="font-size:0.8rem;">
+          <div class="billing-info-row">
+            <span class="billing-info-label">Traffic</span>
+            <span class="gold font-medium" id="traffic">42 req/h</span>
+          </div>
+          <div class="billing-info-row">
+            <span class="billing-info-label">Uptime</span>
+            <span style="color:#4ade80;">99.98%</span>
+          </div>
+          <div class="billing-info-row">
+            <span class="billing-info-label">Active departments</span>
+            <span id="activeDepts">5/5</span>
+          </div>
+          <div class="billing-info-row">
+            <span class="billing-info-label">Server load</span>
+            <span>14%</span>
+          </div>
         </div>
       </div>
     </div>
-  </div>
+  </div><!-- end main grid -->
 
-  <!-- SUBSCRIPTION & BILLING -->
-  <div class="glass-panel p-6 mt-6">
-    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
-      <h2 class="text-2xl font-serif gold flex items-center gap-2"><i class="fas fa-credit-card"></i> subscription & billing</h2>
-      <div class="flex items-center gap-4">
-        <div class="text-sm"><span class="opacity-60">voice usage</span> <span class="gold font-medium" id="voiceUsed">42</span>/<span id="voiceLimit">100</span></div>
-        <div class="w-32 h-2 bg-gray-700 rounded-full"><div id="voiceMeter" class="h-2 bg-gold rounded-full" style="width:42%"></div></div>
-        <button id="upgradeBtn" class="bg-gold/20 hover:bg-gold/30 px-4 py-2 rounded-full text-sm transition">upgrade</button>
+  <!-- ─────────────────────────────────────────
+       SUBSCRIPTION & BILLING
+  ───────────────────────────────────────── -->
+  <section class="glass-panel p-6 mb-5" aria-label="Subscription and billing" id="subscriptionSection">
+
+    <!-- Header row -->
+    <div class="flex flex-wrap items-start justify-between gap-4 mb-5">
+      <div>
+        <h2 class="gold font-serif" style="font-size:1.45rem;display:flex;align-items:center;gap:0.5rem;">
+          <i class="fas fa-credit-card" aria-hidden="true"></i> Subscription &amp; billing
+        </h2>
+        <p class="mt-1 text-sm" style="color:var(--text-muted);">Manage your plan, usage, and billing cycle</p>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <button id="managePlanBtn" class="btn-ghost text-sm" aria-expanded="false" aria-controls="billingPlansWrap">
+          <i class="fas fa-list-alt mr-1" aria-hidden="true"></i> Manage plan
+        </button>
+        <button id="upgradeBtn" class="btn-gold text-sm" aria-expanded="false" aria-controls="billingPlansWrap">
+          <i class="fas fa-arrow-up mr-1" aria-hidden="true"></i> Upgrade plan
+        </button>
       </div>
     </div>
 
-    <!-- Pricing cards -->
-    <div class="grid md:grid-cols-2 gap-6">
-      <div class="plan-card relative glass-panel p-6">
-        <div class="absolute -top-3 left-6 bg-gold text-black px-4 py-1 rounded-full text-xs font-bold">STANDARD</div>
-        <div class="text-3xl font-light mt-4">$399.99 <span class="text-sm opacity-60">/4 months</span></div>
-        <ul class="mt-4 space-y-3 text-sm">
-          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Up to 250 rooms</li>
-          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Full department dashboards</li>
-          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> <span class="gold">100 voice requests</span> / cycle</li>
-          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Daily reports & email support</li>
-        </ul>
-        <button id="standardPlanBtn" class="mt-6 w-full py-2 rounded-full border border-gold/50 hover:bg-gold/20 transition">current plan</button>
+    <!-- Current plan snapshot (always visible) -->
+    <div id="billingCurrentPlan">
+      <!-- Skeleton while loading -->
+      <div id="billingSkeleton" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr));">
+        <div class="skel skel-card"></div>
+        <div class="skel skel-card"></div>
+        <div class="skel skel-card"></div>
       </div>
-      <div class="plan-card relative glass-panel p-6 border-gold">
-        <div class="absolute -top-3 left-6 bg-gold text-black px-4 py-1 rounded-full text-xs font-bold">PREMIUM</div>
-        <div class="text-3xl font-light mt-4">$799.99 <span class="text-sm opacity-60">/4 months</span></div>
-        <ul class="mt-4 space-y-3 text-sm">
-          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Unlimited rooms</li>
-          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Advanced analytics & alerts</li>
-          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> <span class="gold">Unlimited voice</span></li>
-          <li class="flex items-center gap-2"><i class="fas fa-check-circle gold"></i> Multi‑property & priority support</li>
-        </ul>
-        <button id="premiumPlanBtn" class="mt-6 w-full py-2 rounded-full bg-gold text-black hover:bg-yellow-400 transition">subscribe</button>
-      </div>
-    </div>
-  </div>
 
-  <!-- NEW: WIFI MANAGEMENT SECTION (Multi-WiFi) -->
-  <div class="glass-panel p-6 mt-6" id="wifiManagementSection">
-    <div class="flex justify-between items-center mb-4">
-      <h2 class="text-2xl font-serif gold flex items-center gap-2"><i class="fas fa-wifi"></i> WiFi Management</h2>
-      <button id="addWifiBtn" class="bg-gold/20 hover:bg-gold/30 px-4 py-2 rounded-full text-sm transition gold-glow"><i class="fas fa-plus"></i> Add Network</button>
-    </div>
-    <div id="wifiNetworksList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
-  </div>
+      <!-- Actual content (hidden until loaded) -->
+      <div id="billingContent" class="hidden">
+        <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr));">
 
-  <!-- REPORT GENERATOR + SEARCH -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-    <div class="glass-panel p-5 lg:col-span-2">
-      <h3 class="font-medium flex items-center gap-2"><i class="fas fa-file-alt gold"></i> report generator</h3>
-      <div class="flex flex-wrap gap-2 mt-3">
-        <button id="dailyReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📋 daily</button>
-        <button id="weeklyReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📅 weekly</button>
-        <button id="deptReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📊 department</button>
-        <button id="pdfReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📄 PDF</button>
-        <button id="csvReportBtn" class="bg-gold/10 hover:bg-gold/20 px-4 py-2 rounded-full text-sm">📈 CSV</button>
+          <!-- Current Plan -->
+          <div class="wifi-card">
+            <div class="text-xs uppercase tracking-wider mb-1" style="color:var(--text-muted);">Current plan</div>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="font-medium gold font-serif" style="font-size:1.15rem;" id="currentPlanName">Standard</span>
+              <span class="badge badge-current-plan">Active</span>
+            </div>
+            <div class="mt-2 text-xs" style="color:var(--text-muted);">Billed annually</div>
+          </div>
+
+          <!-- Next Billing -->
+          <div class="wifi-card">
+            <div class="text-xs uppercase tracking-wider mb-1" style="color:var(--text-muted);">Next billing date</div>
+            <div class="font-medium mt-1" style="font-size:1rem;" id="nextBillingDate">Jan 15, 2027</div>
+            <div class="mt-2 text-xs" style="color:var(--text-muted);" id="nextBillingAmount">$999.00 due</div>
+          </div>
+
+          <!-- Voice Usage -->
+          <div class="wifi-card">
+            <div class="text-xs uppercase tracking-wider mb-2" style="color:var(--text-muted);">Voice usage</div>
+            <div class="flex items-baseline gap-1 mb-2">
+              <span class="gold font-medium" style="font-size:1.3rem;" id="voiceUsed">42</span>
+              <span style="color:var(--text-muted);font-size:0.8rem;">/ <span id="voiceLimit">1,200</span> requests</span>
+            </div>
+            <div class="voice-bar-track" role="progressbar" aria-label="Voice usage" id="voiceBarWrap"
+              aria-valuenow="42" aria-valuemin="0" aria-valuemax="1200">
+              <div class="voice-bar-fill" id="voiceMeter" style="width:3.5%;"></div>
+            </div>
+            <div class="mt-1 text-xs" style="color:var(--text-muted);" id="voiceUsageLabel">42 of 1,200 used this year</div>
+          </div>
+
+        </div>
       </div>
     </div>
+
+    <!-- Plans (hidden by default, revealed on upgrade/manage click) -->
+    <div id="billingPlansWrap" aria-hidden="true">
+      <div style="border-top:1px solid var(--border-subtle);padding-top:2rem;">
+        <div class="flex items-center gap-3 mb-4">
+          <h3 class="font-medium" style="font-size:1rem;">Compare plans</h3>
+          <span class="badge" style="background:rgba(201,162,39,0.1);color:var(--gold);border:1px solid rgba(201,162,39,0.2);font-size:0.7rem;">Annual billing · best value</span>
+        </div>
+        <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr));">
+
+          <!-- Standard -->
+          <div class="plan-card" id="planStandardCard">
+            <div class="plan-current-bar" id="standardCurrentBar"></div>
+            <div class="plan-badge standard">Standard</div>
+            <div class="mt-5">
+              <div style="font-size:2.25rem;font-weight:300;line-height:1;">
+                $999
+                <span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;">/year</span>
+              </div>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;">$83.25/month, billed annually</div>
+            </div>
+            <div class="my-4" style="height:1px;background:var(--border-subtle);"></div>
+            <ul class="space-y-3 mb-5" aria-label="Standard plan features">
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> Up to 250 rooms</li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> Full department dashboards</li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> <strong class="gold">1,200 voice requests</strong>/year</li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> Email support</li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> Basic analytics &amp; daily reports</li>
+              <li class="feature-item" style="opacity:0.4;"><i class="fas fa-times-circle fi-icon" style="color:var(--text-muted);" aria-hidden="true"></i> Multi-property management</li>
+              <li class="feature-item" style="opacity:0.4;"><i class="fas fa-times-circle fi-icon" style="color:var(--text-muted);" aria-hidden="true"></i> Real-time alerts</li>
+            </ul>
+            <button id="standardPlanBtn" class="btn-outline-gold w-full py-2" style="border-radius:0.875rem;">
+              Current plan
+            </button>
+          </div>
+
+          <!-- Premium -->
+          <div class="plan-card featured" id="planPremiumCard" style="position:relative;">
+            <div class="plan-badge premium">Premium</div>
+            <div class="plan-badge popular">Most popular</div>
+            <div class="mt-5">
+              <div style="font-size:2.25rem;font-weight:300;line-height:1;">
+                $1,999
+                <span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;">/year</span>
+              </div>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;">$166.58/month, billed annually</div>
+            </div>
+            <div class="my-4" style="height:1px;background:var(--border-subtle);"></div>
+            <ul class="space-y-3 mb-5" aria-label="Premium plan features">
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> <strong class="gold">Unlimited rooms</strong></li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> Full department dashboards</li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> <strong class="gold">Unlimited voice</strong> requests</li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> Priority support (4-hour SLA)</li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> Advanced analytics &amp; reporting</li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> Multi-property management</li>
+              <li class="feature-item"><i class="fas fa-check-circle fi-icon" aria-hidden="true"></i> Real-time alerts &amp; notifications</li>
+            </ul>
+            <button id="premiumPlanBtn" class="btn-gold w-full py-2" style="border-radius:0.875rem;">
+              Upgrade to Premium
+            </button>
+          </div>
+
+        </div>
+
+        <!-- Annual savings note -->
+        <div class="mt-4 text-center text-xs" style="color:var(--text-muted);">
+          <i class="fas fa-shield-alt mr-1" aria-hidden="true"></i>
+          Annual plans include a 14-day money-back guarantee · Invoices issued automatically · Cancel anytime
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ─────────────────────────────────────────
+       WIFI MANAGEMENT
+  ───────────────────────────────────────── -->
+  <section class="glass-panel p-6 mb-5" id="wifiManagementSection" aria-label="WiFi network management">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-5">
+      <div>
+        <h2 class="gold font-serif" style="font-size:1.45rem;display:flex;align-items:center;gap:0.5rem;">
+          <i class="fas fa-wifi" aria-hidden="true"></i> WiFi Management
+        </h2>
+        <p class="mt-1 text-sm" style="color:var(--text-muted);">Configure network access by floor, block, or property</p>
+      </div>
+      <button id="addWifiBtn" class="btn-ghost text-sm" aria-label="Add new WiFi network">
+        <i class="fas fa-plus mr-1" aria-hidden="true"></i> Add network
+      </button>
+    </div>
+
+    <!-- WiFi Skeleton -->
+    <div id="wifiSkeleton" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr));" aria-hidden="true">
+      <div class="skel skel-card"></div>
+      <div class="skel skel-card"></div>
+      <div class="skel skel-card"></div>
+      <div class="skel skel-card"></div>
+    </div>
+    <div id="wifiNetworksList" class="grid gap-4 hidden" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr));"></div>
+  </section>
+
+  <!-- ─────────────────────────────────────────
+       REPORT GENERATOR + SEARCH
+  ───────────────────────────────────────── -->
+  <div class="grid gap-5 mb-5" style="grid-template-columns:1fr;" id="reportSearchGrid">
+
+    <!-- Report Generator -->
     <div class="glass-panel p-5">
-      <h3 class="font-medium flex items-center gap-2"><i class="fas fa-search gold"></i> search</h3>
-      <input type="text" id="globalSearch" placeholder="room, dept, type..." class="w-full bg-black/20 p-2 rounded-full text-sm border border-gray-600 mt-2">
+      <h2 class="font-medium flex items-center gap-2 mb-4" style="font-size:0.95rem;">
+        <i class="fas fa-file-alt gold" aria-hidden="true"></i> Report generator
+      </h2>
+      <div class="flex flex-wrap gap-2" role="group" aria-label="Generate reports">
+        <button id="dailyReportBtn" class="btn-ghost text-sm" style="font-size:0.8rem;">📋 Daily</button>
+        <button id="weeklyReportBtn" class="btn-ghost text-sm" style="font-size:0.8rem;">📅 Weekly</button>
+        <button id="deptReportBtn" class="btn-ghost text-sm" style="font-size:0.8rem;">📊 By department</button>
+        <button id="pdfReportBtn" class="btn-ghost text-sm" style="font-size:0.8rem;">📄 Export PDF</button>
+        <button id="csvReportBtn" class="btn-ghost text-sm" style="font-size:0.8rem;">📈 Export CSV</button>
+      </div>
+    </div>
+
+    <!-- Global Search -->
+    <div class="glass-panel p-5">
+      <h2 class="font-medium flex items-center gap-2 mb-3" style="font-size:0.95rem;">
+        <i class="fas fa-search gold" aria-hidden="true"></i> Global search
+      </h2>
+      <div class="search-wrap">
+        <i class="fas fa-search search-icon" aria-hidden="true"></i>
+        <input type="search" id="globalSearch"
+          placeholder="Search rooms, departments, reports…"
+          class="search-input" aria-label="Global search across all records">
+      </div>
     </div>
   </div>
 
   <!-- FOOTER -->
-  <footer class="text-center py-4 text-xs opacity-40 mt-8">Powered by PeerLoom Technologies</footer>
-</div>
+  <footer class="text-center pt-2 pb-1" style="font-size:0.72rem;color:var(--text-muted);">
+    Powered by PeerLoom Technologies · Director Suite v2.0
+  </footer>
 
-<!-- REQUEST DETAIL MODAL -->
-<div id="requestModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
-  <div class="glass-panel max-w-md w-full p-6">
-    <div class="flex justify-between"><h3 class="text-xl gold">request detail</h3><button id="closeModal" class="text-2xl">&times;</button></div>
-    <div id="modalDetail" class="mt-3 space-y-2"></div>
+</div><!-- end dashboardContainer -->
+
+<!-- ══════════════════════════════════════════
+     MODALS
+══════════════════════════════════════════ -->
+
+<!-- Request Detail Modal -->
+<div id="requestModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4"
+  role="dialog" aria-modal="true" aria-labelledby="reqModalTitle">
+  <div class="modal-panel max-w-md w-full p-6">
+    <div class="flex justify-between items-start mb-4">
+      <h3 class="gold font-serif text-xl" id="reqModalTitle">Request detail</h3>
+      <button id="closeModal" class="btn-ghost" style="padding:0.35rem 0.7rem;" aria-label="Close request detail">
+        <i class="fas fa-times" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div id="modalDetail" class="space-y-2 text-sm"></div>
     <div id="voicePlayerContainer" class="mt-4 hidden">
-      <audio id="directorVoicePlayer" controls class="w-full rounded-lg" style="min-height:40px;"></audio>
+      <audio id="directorVoicePlayer" controls class="w-full rounded-xl" style="min-height:42px;" aria-label="Voice recording playback"></audio>
     </div>
-    <div class="mt-4 flex justify-end"><button id="playVoiceBtn" class="bg-gold/30 px-4 py-2 rounded-full">▶ play voice</button></div>
+    <div class="mt-4 flex justify-end">
+      <button id="playVoiceBtn" class="btn-ghost text-sm" aria-label="Play voice recording">
+        <i class="fas fa-play mr-1" aria-hidden="true"></i> Play voice
+      </button>
+    </div>
   </div>
 </div>
 
-<!-- PASSWORD RESET MODAL -->
-<div id="passwordResetModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
-  <div class="glass-panel max-w-md w-full p-6">
-    <div class="flex justify-between"><h3 class="text-xl gold">set new password</h3><button id="closePwModal" class="text-2xl">&times;</button></div>
-    <div class="mt-4 space-y-4">
-      <p class="text-sm opacity-80" id="resetDeptName">for department: </p>
-      <input type="password" id="newPassword" placeholder="new password" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
-      <input type="password" id="confirmPassword" placeholder="confirm password" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
-      <div class="flex gap-3">
-        <button id="approvePasswordBtn" class="flex-1 bg-gold text-black py-2 rounded-full hover:bg-yellow-400">approve</button>
-        <button id="cancelPwBtn" class="flex-1 bg-gold/20 py-2 rounded-full">cancel</button>
+<!-- Password Reset Modal -->
+<div id="passwordResetModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4"
+  role="dialog" aria-modal="true" aria-labelledby="pwModalTitle">
+  <div class="modal-panel max-w-md w-full p-6">
+    <div class="flex justify-between items-start mb-4">
+      <h3 class="gold font-serif text-xl" id="pwModalTitle">Set new password</h3>
+      <button id="closePwModal" class="btn-ghost" style="padding:0.35rem 0.7rem;" aria-label="Close password reset">
+        <i class="fas fa-times" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="space-y-4">
+      <p class="text-sm" style="color:var(--text-secondary);" id="resetDeptName">For department: </p>
+      <div>
+        <label for="newPassword" class="sr-only">New password</label>
+        <input type="password" id="newPassword" placeholder="New password" class="field-input" autocomplete="new-password">
+      </div>
+      <div>
+        <label for="confirmPassword" class="sr-only">Confirm new password</label>
+        <input type="password" id="confirmPassword" placeholder="Confirm password" class="field-input" autocomplete="new-password">
+      </div>
+      <div class="flex gap-3 pt-1">
+        <button id="approvePasswordBtn" class="btn-gold flex-1 py-2">Approve &amp; set</button>
+        <button id="cancelPwBtn" class="btn-ghost flex-1 py-2">Cancel</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- REPORT MODAL -->
-<div id="reportModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
-  <div class="glass-panel max-w-lg w-full p-6">
-    <div class="flex justify-between"><h3 class="text-xl gold" id="reportModalTitle">report</h3><button id="closeReportModal" class="text-2xl">&times;</button></div>
-    <div id="reportModalContent" class="mt-4 text-sm whitespace-pre-wrap"></div>
+<!-- Report Modal -->
+<div id="reportModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4"
+  role="dialog" aria-modal="true" aria-labelledby="reportModalTitleEl">
+  <div class="modal-panel max-w-lg w-full p-6" style="max-height:90vh;overflow-y:auto;">
+    <div class="flex justify-between items-start mb-4">
+      <h3 class="gold font-serif text-xl" id="reportModalTitleEl">Report</h3>
+      <button id="closeReportModal" class="btn-ghost" style="padding:0.35rem 0.7rem;" aria-label="Close report">
+        <i class="fas fa-times" aria-hidden="true"></i>
+      </button>
+    </div>
+    <pre id="reportModalContent" class="text-sm whitespace-pre-wrap" style="font-family:'Inter',sans-serif;color:var(--text-secondary);line-height:1.7;"></pre>
   </div>
 </div>
 
-<!-- NEW: WIFI MODAL for Add/Edit -->
-<div id="wifiModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4">
-  <div class="glass-panel max-w-md w-full p-6">
-    <div class="flex justify-between"><h3 class="text-xl gold" id="wifiModalTitle">Add WiFi Network</h3><button id="closeWifiModal" class="text-2xl">&times;</button></div>
-    <div class="mt-4 space-y-4">
-      <input type="text" id="wifiSsid" placeholder="SSID (e.g., LUXE_FLOOR_5)" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
-      <input type="text" id="wifiPassword" placeholder="Password" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
-      <select id="wifiScopeType" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
-        <option value="floor">Floor</option>
-        <option value="block">Block</option>
-        <option value="global">Global (whole hotel)</option>
-      </select>
-      <input type="text" id="wifiScopeValue" placeholder="e.g., 5 or Block A (leave blank for global)" class="w-full p-3 rounded-xl bg-black/20 border border-gray-600 focus:border-gold outline-none">
+<!-- WiFi Add/Edit Modal -->
+<div id="wifiModal" class="fixed inset-0 modal-overlay z-50 hidden items-center justify-center p-4"
+  role="dialog" aria-modal="true" aria-labelledby="wifiModalTitleEl">
+  <div class="modal-panel max-w-md w-full p-6">
+    <div class="flex justify-between items-start mb-4">
+      <h3 class="gold font-serif text-xl" id="wifiModalTitleEl">Add WiFi network</h3>
+      <button id="closeWifiModal" class="btn-ghost" style="padding:0.35rem 0.7rem;" aria-label="Close WiFi modal">
+        <i class="fas fa-times" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label for="wifiSsid" class="text-xs uppercase tracking-wide mb-1 block" style="color:var(--text-muted);">Network name (SSID)</label>
+        <input type="text" id="wifiSsid" placeholder="e.g. LUXE_FLOOR_5" class="field-input">
+      </div>
+      <div>
+        <label for="wifiPassword" class="text-xs uppercase tracking-wide mb-1 block" style="color:var(--text-muted);">Password</label>
+        <input type="text" id="wifiPassword" placeholder="Network password" class="field-input" autocomplete="off">
+      </div>
+      <div>
+        <label for="wifiScopeType" class="text-xs uppercase tracking-wide mb-1 block" style="color:var(--text-muted);">Scope</label>
+        <select id="wifiScopeType" class="field-input">
+          <option value="floor">Floor</option>
+          <option value="block">Block</option>
+          <option value="global">Global — whole hotel</option>
+        </select>
+      </div>
+      <div id="wifiScopeValueWrap">
+        <label for="wifiScopeValue" class="text-xs uppercase tracking-wide mb-1 block" style="color:var(--text-muted);">Floor / Block identifier</label>
+        <input type="text" id="wifiScopeValue" placeholder="e.g. 5  or  Block A" class="field-input">
+      </div>
       <input type="hidden" id="wifiEditId" value="">
-      <div class="flex gap-3">
-        <button id="saveWifiBtn" class="flex-1 bg-gold text-black py-2 rounded-full hover:bg-yellow-400">Save</button>
-        <button id="cancelWifiBtn" class="flex-1 bg-gold/20 py-2 rounded-full">Cancel</button>
+      <div class="flex gap-3 pt-1">
+        <button id="saveWifiBtn" class="btn-gold flex-1 py-2">Save network</button>
+        <button id="cancelWifiBtn" class="btn-ghost flex-1 py-2">Cancel</button>
       </div>
     </div>
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════
+     JAVASCRIPT
+══════════════════════════════════════════ -->
 <script>
-  (function() {
-    // ---------- SYSTEM STATE ----------
-    const departments = ['Maintenance', 'Housekeeping', 'Room Service', 'Concierge', 'Laundry'];
-    // Department passwords (simulated)
-    let DEPT_PASSWORDS = {
-      'Maintenance': 'maint123',
-      'Housekeeping': 'house123',
-      'Room Service': 'room123',
-      'Concierge': 'conc123',
-      'Laundry': 'laundry123'
+(function() {
+  'use strict';
+
+  /* ── CONSTANTS ── */
+  const departments = ['Maintenance', 'Housekeeping', 'Room Service', 'Concierge', 'Laundry'];
+  const HOTEL_ID = 1;
+  const PLAN_PRICES = { standard: 999, premium: 1999 };
+  const VOICE_LIMITS = { standard: 1200, premium: Infinity };
+
+  const serviceToDept = {
+    housekeeping:'Housekeeping', maintenance:'Maintenance', roomservice:'Room Service',
+    concierge:'Concierge', towels:'Housekeeping', laundry:'Laundry',
+    donotdisturb:'Housekeeping', report:'Maintenance'
+  };
+
+  /* ── STATE ── */
+  let allRequests   = [];
+  let passwordResetRequests = [];
+  let currentResetId = null;
+  let currentResetDept = null;
+  let subscriptionPlan = 'standard';
+  let voiceUsed = 42;
+  let wifiNetworks = [];
+  let plansRevealed = false;
+  let deptEnabled = { Maintenance:true, Housekeeping:true, 'Room Service':true, Concierge:true, Laundry:true };
+  let searchTimer = null;
+
+  /* ── DOM REFS ── */
+  const $ = id => document.getElementById(id);
+  const loginDiv   = $('loginContainer');
+  const splashDiv  = $('splashScreen');
+  const dashDiv    = $('dashboardContainer');
+  const loginBtn   = $('loginBtn');
+  const logoutBtn  = $('logoutBtn');
+  const themeToggle = $('themeToggle');
+  const themeThumb  = $('themeThumb');
+  const greetingEl  = $('greeting');
+  const dateTimeEl  = $('currentDateTime');
+  const monitorBody = $('monitorTableBody');
+  const monitorSkel = $('monitorSkeleton');
+  const monitorWrap = $('monitorTableWrap');
+  const alertPanel  = $('alertPanel');
+  const deptCtrlDiv = $('deptControls');
+  const resetList   = $('resetRequestsList');
+  const searchMonitor = $('searchMonitor');
+  const globalSearch  = $('globalSearch');
+  const searchOverlay = $('searchOverlay');
+  const billingSkeleton = $('billingSkeleton');
+  const billingContent  = $('billingContent');
+  const wifiSkeleton    = $('wifiSkeleton');
+  const wifiList        = $('wifiNetworksList');
+
+  /* ── UTILITIES ── */
+  function getGreeting() {
+    const h = new Date().getHours();
+    return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  }
+
+  function formatDate(d) {
+    return new Date(d).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  }
+
+  function nextBillingDate() {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    d.setDate(15);
+    return formatDate(d);
+  }
+
+  function toReq(row) {
+    let voiceUrl = row.voice_url || null;
+    if (voiceUrl && voiceUrl.startsWith('/')) voiceUrl = API_BASE_URL + voiceUrl;
+    return {
+      id: row.id,
+      room: row.room_number || '—',
+      dept: serviceToDept[row.service] || row.service || 'Unknown',
+      type: row.service || 'Unknown',
+      desc: row.request_text || '',
+      voice: Boolean(voiceUrl),
+      voice_url: voiceUrl,
+      timestamp: new Date(row.created_at).getTime(),
+      status: row.status || 'pending'
     };
+  }
 
-    let allRequests = [];
-    let supabaseSubscription = null;
+  /* ── SEARCH OVERLAY ── */
+  let overlayTimeout;
+  function showSearchOverlay(context) {
+    $('searchOverlayContext').textContent = context || '';
+    $('searchOverlayLabel').textContent = 'Searching…';
+    searchOverlay.classList.add('visible');
+    searchOverlay.style.display = 'flex';
+    document.body.setAttribute('data-searching', 'true');
+  }
+  function hideSearchOverlay() {
+    searchOverlay.style.opacity = '0';
+    searchOverlay.style.transition = 'opacity 0.3s ease';
+    setTimeout(() => {
+      searchOverlay.classList.remove('visible');
+      searchOverlay.style.display = 'none';
+      searchOverlay.style.opacity = '';
+      searchOverlay.style.transition = '';
+      document.body.removeAttribute('data-searching');
+    }, 300);
+  }
 
-    const serviceToDepartment = {
-      housekeeping: 'Housekeeping', maintenance: 'Maintenance', roomservice: 'Room Service', concierge: 'Concierge', towels: 'Housekeeping', laundry: 'Laundry', donotdisturb: 'Housekeeping', report: 'Maintenance'
+  /* ── DATE/TIME ── */
+  function updateDateTime() {
+    const now = new Date();
+    if (greetingEl) greetingEl.textContent = getGreeting() + ', Director';
+    if (dateTimeEl) dateTimeEl.textContent = now.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) + '  ·  ' + now.toLocaleTimeString();
+  }
+
+  /* ── STATS ── */
+  function refreshStats() {
+    const today = new Date().setHours(0,0,0,0);
+    const todayR = allRequests.filter(r => r.timestamp >= today);
+    $('totalToday').textContent    = todayR.length;
+    $('pendingCount').textContent  = allRequests.filter(r => r.status==='pending').length;
+    $('inProgressCount').textContent = allRequests.filter(r => r.status==='in-progress').length;
+    $('completedCount').textContent = allRequests.filter(r => r.status==='completed').length;
+    $('avgResponse').textContent   = (2.4 + Math.random()*0.5).toFixed(1);
+    $('activeRooms').textContent   = [...new Set(allRequests.map(r=>r.room))].length;
+
+    const deptStats = (dept, pEl, cEl) => {
+      const d = allRequests.filter(r=>r.dept===dept);
+      $(pEl).textContent = d.filter(r=>r.status==='pending').length;
+      $(cEl).textContent = d.filter(r=>r.status==='completed').length + ' done';
     };
+    deptStats('Maintenance','maintPending','maintCompleted');
+    deptStats('Housekeeping','housePending','houseCompleted');
+    deptStats('Room Service','roomPending','roomCompleted');
+    deptStats('Concierge','concPending','concCompleted');
+    deptStats('Laundry','launPending','launCompleted');
+  }
 
-    // ========== USE SERVER API INSTEAD OF DIRECT SUPABASE CLIENT ==========
-    
-    async function initSupabaseClient() {
-      try {
-        const res = await fetch(API_BASE_URL + '/api/config');
-        if (!res.ok) throw new Error('Unable to load /api/config');
-        const cfg = await res.json();
-        window.supabaseConfig = cfg;
-        return true;
-      } catch (err) {
-        console.error('Config init error:', err);
-        return false;
-      }
+  /* ── MONITOR TABLE ── */
+  function renderMonitor(filter='') {
+    let list = allRequests;
+    if (filter) {
+      const f = filter.toLowerCase();
+      list = list.filter(r => r.room.toLowerCase().includes(f) || r.dept.toLowerCase().includes(f) || r.type.toLowerCase().includes(f));
+    }
+    list = [...list].sort((a,b)=>b.timestamp-a.timestamp).slice(0,15);
+
+    if (list.length === 0) {
+      monitorBody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:1.5rem;color:var(--text-muted);font-size:0.82rem;">${filter ? 'No results for "'+filter+'"' : 'No requests yet'}</td></tr>`;
+      return;
     }
 
-    function toDirectorRequest(row) {
-      let voiceUrl = row.voice_url || null;
-      if (voiceUrl && typeof voiceUrl === 'string' && voiceUrl.startsWith('/')) {
-        voiceUrl = `${API_BASE_URL}${voiceUrl}`;
-      }
-      return {
-        id: row.id,
-        room: row.room_number,
-        dept: serviceToDepartment[row.service] || row.service || 'Unknown',
-        type: row.service || 'Unknown',
-        desc: row.request_text || '',
-        voice: Boolean(voiceUrl),
-        voice_url: voiceUrl,
-        timestamp: new Date(row.created_at).getTime(),
-        status: row.status || 'pending'
+    monitorBody.innerHTML = list.map(req => {
+      const time = new Date(req.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      const badgeClass = req.status==='pending'?'badge-pending': req.status==='in-progress'?'badge-progress':'badge-completed';
+      const label = req.status==='in-progress'?'In progress': req.status.charAt(0).toUpperCase()+req.status.slice(1);
+      return `<tr class="req-row" data-id="${req.id}" tabindex="0" role="button" aria-label="View request from room ${req.room}">
+        <td>${req.room}</td>
+        <td>${req.dept}</td>
+        <td style="text-transform:capitalize;">${req.type}</td>
+        <td style="color:var(--text-muted);">${time}</td>
+        <td><span class="badge ${badgeClass}">${label}</span></td>
+        <td><i class="fas fa-chevron-right" style="color:var(--gold);font-size:0.7rem;" aria-hidden="true"></i></td>
+      </tr>`;
+    }).join('');
+
+    document.querySelectorAll('.req-row').forEach(row => {
+      const open = () => {
+        const req = allRequests.find(r=>r.id===parseInt(row.dataset.id));
+        if (req) showDetailModal(req);
       };
-    }
+      row.addEventListener('click', open);
+      row.addEventListener('keydown', e => { if (e.key==='Enter'||e.key===' ') { e.preventDefault(); open(); } });
+    });
+  }
 
-    // Load requests from server API
-    async function loadRequestsFromSupabase() {
-      try {
-        const res = await fetch(API_BASE_URL + '/api/requests');
-        if (!res.ok) throw new Error('Failed to fetch requests');
-        const data = await res.json();
-        allRequests = (data || []).map(toDirectorRequest);
-        renderMonitor(searchMonitor.value);
-        refreshStats();
-        refreshAlerts();
-      } catch (err) {
-        console.error('Error loading requests:', err);
-      }
+  /* ── ALERTS ── */
+  function refreshAlerts() {
+    const now = Date.now();
+    const long = allRequests.filter(r => r.status==='pending' && (now-r.timestamp)>20*60000);
+    if (!long.length) {
+      alertPanel.innerHTML = '<div style="color:var(--text-muted);font-size:0.82rem;padding:0.5rem 0;">✨ No priority alerts right now</div>';
+      return;
     }
+    alertPanel.innerHTML = long.map(r => {
+      const wait = Math.round((now-r.timestamp)/60000);
+      return `<div class="alert-row"><span>🚨 Room ${r.room} · ${r.dept}</span><span class="gold font-medium">${wait} min</span></div>`;
+    }).join('');
+  }
 
-    // Load password reset requests from server
-    async function loadPasswordResetRequests() {
-      try {
-        const res = await fetch(API_BASE_URL + '/api/password_resets');
-        if (!res.ok) {
-          const text = await res.text().catch(() => '<no body>');
-          throw new Error(`Failed to fetch password reset requests: ${res.status} ${res.statusText} ${text}`);
+  /* ── DEPT CONTROLS ── */
+  function renderDeptControls() {
+    deptCtrlDiv.innerHTML = departments.map(d => `
+      <div class="flex items-center justify-between" role="listitem">
+        <span style="font-size:0.85rem;">${d}</span>
+        <button class="dept-toggle-btn ${deptEnabled[d]?'on':'off'}" data-dept="${d}"
+          aria-pressed="${deptEnabled[d]}" aria-label="Toggle ${d} department">
+          ${deptEnabled[d]?'Enabled':'Disabled'}
+        </button>
+      </div>`
+    ).join('');
+    document.querySelectorAll('.dept-toggle-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const d = e.currentTarget.dataset.dept;
+        deptEnabled[d] = !deptEnabled[d];
+        renderDeptControls();
+      });
+    });
+  }
+
+  /* ── RESET REQUESTS ── */
+  function renderResetRequests() {
+    if (!passwordResetRequests.length) {
+      resetList.innerHTML = '<div style="font-size:0.78rem;color:var(--text-muted);">No pending reset requests</div>';
+      return;
+    }
+    resetList.innerHTML = passwordResetRequests.map(r => `
+      <div class="flex justify-between items-center" style="background:rgba(201,162,39,0.05);border:1px solid rgba(201,162,39,0.12);border-radius:0.75rem;padding:0.5rem 0.75rem;">
+        <span style="font-size:0.82rem;">🔑 ${r.dept}</span>
+        <button class="approve-reset btn-ghost" style="font-size:0.72rem;padding:0.2rem 0.65rem;" data-id="${r.id}" aria-label="Approve reset for ${r.dept}">Approve</button>
+      </div>`
+    ).join('');
+    document.querySelectorAll('.approve-reset').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const id = e.currentTarget.dataset.id;
+        const req = passwordResetRequests.find(p => String(p.id)===String(id));
+        if (req) {
+          currentResetDept = req.dept;
+          currentResetId = req.id;
+          $('resetDeptName').textContent = `For department: ${req.dept}`;
+          openModal('passwordResetModal');
         }
-        const data = await res.json();
-        passwordResetRequests = (data || []).map(d => ({ id: d.id, dept: d.dept, time: new Date(d.time).getTime() }));
-        renderResetRequests();
-      } catch (err) {
-        console.error('Error loading password reset requests:', err);
-      }
+      });
+    });
+  }
+
+  /* ── SUBSCRIPTION UI ── */
+  function updateSubscriptionUI() {
+    const isPremium = subscriptionPlan === 'premium';
+    const limit = isPremium ? '∞' : '1,200';
+    const limitNum = isPremium ? 99999 : 1200;
+    const pct = isPremium ? 100 : Math.min(100, (voiceUsed / 1200) * 100);
+
+    $('currentPlanName').textContent = isPremium ? 'Premium' : 'Standard';
+    $('nextBillingDate').textContent = nextBillingDate();
+    $('nextBillingAmount').textContent = `$${PLAN_PRICES[subscriptionPlan].toLocaleString()}.00 due`;
+    $('voiceUsed').textContent = voiceUsed;
+    $('voiceLimit').textContent = limit;
+    $('voiceMeter').style.width = pct + '%';
+    $('voiceBarWrap').setAttribute('aria-valuenow', voiceUsed);
+    $('voiceBarWrap').setAttribute('aria-valuemax', limitNum);
+    $('voiceUsageLabel').textContent = isPremium
+      ? voiceUsed + ' requests used (unlimited plan)'
+      : `${voiceUsed} of 1,200 used this year`;
+
+    // Plan card highlights
+    $('planStandardCard').querySelector('.plan-current-bar').style.display = isPremium ? 'none' : 'block';
+    $('standardPlanBtn').textContent = isPremium ? 'Downgrade to Standard' : 'Current plan';
+    $('premiumPlanBtn').textContent  = isPremium ? 'Current plan — Premium' : 'Upgrade to Premium';
+    $('premiumPlanBtn').disabled     = isPremium;
+    if (isPremium) $('premiumPlanBtn').style.opacity = '0.6';
+
+    // Show skeleton → content
+    setTimeout(() => {
+      billingSkeleton.classList.add('hidden');
+      billingContent.classList.remove('hidden');
+    }, 800);
+  }
+
+  /* ── PLANS REVEAL ── */
+  function togglePlans(forceOpen) {
+    const wrap = $('billingPlansWrap');
+    const shouldOpen = forceOpen !== undefined ? forceOpen : !plansRevealed;
+    plansRevealed = shouldOpen;
+
+    if (shouldOpen) {
+      wrap.classList.add('revealed');
+      wrap.setAttribute('aria-hidden','false');
+      $('upgradeBtn').setAttribute('aria-expanded','true');
+      $('managePlanBtn').setAttribute('aria-expanded','true');
+      // Scroll smoothly to plans
+      setTimeout(() => wrap.scrollIntoView({ behavior:'smooth', block:'nearest' }), 200);
+    } else {
+      wrap.classList.remove('revealed');
+      wrap.setAttribute('aria-hidden','true');
+      $('upgradeBtn').setAttribute('aria-expanded','false');
+      $('managePlanBtn').setAttribute('aria-expanded','false');
+    }
+  }
+
+  /* ── WIFI ── */
+  function loadWifiNetworks() {
+    try {
+      const stored = localStorage.getItem('wifiNetworks_v2');
+      if (stored) wifiNetworks = JSON.parse(stored);
+    } catch(e) {}
+    if (!wifiNetworks.length) {
+      wifiNetworks = [
+        { id:1, ssid:'LUXE_GLOBAL',  password:'welcome2025', scope_type:'global', scope_value:'' },
+        { id:2, ssid:'LUXE_FLOOR_1', password:'floor1pass',  scope_type:'floor',  scope_value:'1' },
+        { id:3, ssid:'LUXE_FLOOR_2', password:'floor2pass',  scope_type:'floor',  scope_value:'2' },
+        { id:4, ssid:'LUXE_BLOCK_A', password:'blockApass',  scope_type:'block',  scope_value:'Block A' }
+      ];
+      saveWifiNetworks();
+    }
+    setTimeout(() => {
+      wifiSkeleton.classList.add('hidden');
+      wifiList.classList.remove('hidden');
+      renderWifiNetworks();
+    }, 900);
+  }
+  function saveWifiNetworks() {
+    localStorage.setItem('wifiNetworks_v2', JSON.stringify(wifiNetworks));
+  }
+  function renderWifiNetworks() {
+    if (!wifiNetworks.length) {
+      wifiList.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:2rem;color:var(--text-muted);font-size:0.85rem;">No networks configured. Click "Add network" to create one.</div>';
+      return;
+    }
+    wifiList.innerHTML = wifiNetworks.map(net => {
+
+      const scopeLabel2 = net.scope_type==='global'?'Global': net.scope_type==='floor'?`Floor ${net.scope_value}`:`Block ${net.scope_value}`;
+      const scopeClass = net.scope_type==='global'?'scope-global': net.scope_type==='floor'?'scope-floor':'scope-block';
+      const scopeIcon  = net.scope_type==='global'?'🌐': net.scope_type==='floor'?'🏢':'🏛️';
+      return `
+        <div class="wifi-card" data-id="${net.id}">
+          <div class="flex justify-between items-start gap-2">
+            <div style="min-width:0;">
+              <div class="gold font-medium" style="font-size:0.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${net.ssid}</div>
+              <div class="mt-1 flex items-center gap-1">
+                <span class="scope-pill ${scopeClass}">${scopeIcon} ${scopeLabel2}</span>
+              </div>
+              <div class="mt-2" style="font-size:0.75rem;color:var(--text-muted);">
+                <i class="fas fa-lock mr-1" aria-hidden="true"></i>••••••••
+              </div>
+            </div>
+            <div class="flex gap-1 flex-shrink-0">
+              <button class="edit-wifi btn-ghost" style="padding:0.3rem 0.6rem;font-size:0.75rem;" data-id="${net.id}" aria-label="Edit ${net.ssid}">
+                <i class="fas fa-edit" aria-hidden="true"></i>
+              </button>
+              <button class="delete-wifi" style="padding:0.3rem 0.6rem;font-size:0.75rem;background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.2);border-radius:9999px;cursor:pointer;" data-id="${net.id}" aria-label="Delete ${net.ssid}">
+                <i class="fas fa-trash" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+    document.querySelectorAll('.edit-wifi').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const net = wifiNetworks.find(n=>n.id===parseInt(e.currentTarget.dataset.id));
+        if (net) openWifiModal(net);
+      });
+    });
+    document.querySelectorAll('.delete-wifi').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const id = parseInt(e.currentTarget.dataset.id);
+        if (confirm('Delete this WiFi network?')) {
+          wifiNetworks = wifiNetworks.filter(n=>n.id!==id);
+          saveWifiNetworks();
+          renderWifiNetworks();
+        }
+      });
+    });
+  }
+
+  function openWifiModal(net=null) {
+    $('wifiModalTitleEl').textContent = net ? 'Edit WiFi network' : 'Add WiFi network';
+    $('wifiSsid').value      = net ? net.ssid : '';
+    $('wifiPassword').value  = net ? net.password : '';
+    $('wifiScopeType').value = net ? net.scope_type : 'floor';
+    $('wifiScopeValue').value= net ? (net.scope_value||'') : '';
+    $('wifiEditId').value    = net ? net.id : '';
+    $('wifiScopeValueWrap').style.display = (net&&net.scope_type==='global')?'none':'block';
+    openModal('wifiModal');
+  }
+
+  $('wifiScopeType').addEventListener('change', e => {
+    $('wifiScopeValueWrap').style.display = e.target.value==='global' ? 'none' : 'block';
+  });
+
+  /* ── MODAL HELPERS ── */
+  function openModal(id) {
+    const m = $(id);
+    m.classList.remove('hidden');
+    m.classList.add('flex');
+    m.querySelector('[role="dialog"]') || m.setAttribute('role','dialog');
+    // Focus trap: focus first focusable element
+    setTimeout(() => {
+      const focusable = m.querySelectorAll('button, input, select, [tabindex="0"]');
+      if (focusable.length) focusable[0].focus();
+    }, 50);
+  }
+  function closeModal(id) {
+    const m = $(id);
+    m.classList.add('hidden');
+    m.classList.remove('flex');
+  }
+
+  // Close on backdrop click
+  ['requestModal','passwordResetModal','reportModal','wifiModal'].forEach(id => {
+    $(id).addEventListener('click', e => { if (e.target===e.currentTarget) closeModal(id); });
+  });
+  // Close on Escape
+  document.addEventListener('keydown', e => {
+    if (e.key==='Escape') {
+      ['requestModal','passwordResetModal','reportModal','wifiModal'].forEach(id => {
+        const m = $(id);
+        if (!m.classList.contains('hidden')) closeModal(id);
+      });
+    }
+  });
+
+  /* ── DETAIL MODAL ── */
+  function showDetailModal(req) {
+    const badgeClass = req.status==='pending'?'badge-pending': req.status==='in-progress'?'badge-progress':'badge-completed';
+    const label = req.status==='in-progress'?'In progress': req.status.charAt(0).toUpperCase()+req.status.slice(1);
+    $('modalDetail').innerHTML = `
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:0.35rem 0.75rem;font-size:0.85rem;">
+        <span style="color:var(--text-muted);">Room</span>    <span>${req.room}</span>
+        <span style="color:var(--text-muted);">Department</span><span>${req.dept}</span>
+        <span style="color:var(--text-muted);">Type</span>    <span style="text-transform:capitalize;">${req.type}</span>
+        <span style="color:var(--text-muted);">Description</span><span>${req.desc||'—'}</span>
+        <span style="color:var(--text-muted);">Time</span>    <span>${new Date(req.timestamp).toLocaleString()}</span>
+        <span style="color:var(--text-muted);">Voice</span>   <span>${req.voice?'🎤 Recorded':'—'}</span>
+        <span style="color:var(--text-muted);">Status</span>
+        <span><span class="badge ${badgeClass}">${label}</span></span>
+        <span style="color:var(--text-muted);">Update</span>
+        <span>
+          <select id="dirStatusSel" style="background:var(--input-bg);border:1px solid var(--input-border);border-radius:0.5rem;padding:0.2rem 0.5rem;font-size:0.78rem;color:var(--text-primary);outline:none;" aria-label="Update request status">
+            <option value="pending" ${req.status==='pending'?'selected':''}>Pending</option>
+            <option value="in-progress" ${req.status==='in-progress'?'selected':''}>In progress</option>
+            <option value="completed" ${req.status==='completed'?'selected':''}>Completed</option>
+          </select>
+        </span>
+      </div>`;
+    openModal('requestModal');
+
+    const voicePC = $('voicePlayerContainer');
+    const voiceBtn = $('playVoiceBtn');
+    if (req.voice && req.voice_url) {
+      voicePC.classList.remove('hidden');
+      $('directorVoicePlayer').src = req.voice_url;
+      voiceBtn.style.display = 'none';
+    } else {
+      voicePC.classList.add('hidden');
+      voiceBtn.style.display = 'inline-flex';
+      voiceBtn.onclick = () => alert('No voice recording for this request.');
     }
 
-    function handleDirectorRealtime(payload) {
-      // Socket.io will handle real-time updates
-      const row = payload.new || payload.old;
-      if (!row) return;
-      const req = toDirectorRequest(row);
-      const existing = allRequests.findIndex(r => r.id === req.id);
-      if (payload.eventType === 'INSERT') {
-        allRequests.unshift(req);
-      } else if (payload.eventType === 'UPDATE') {
-        if (existing >= 0) allRequests[existing] = req;
-        else allRequests.unshift(req);
-      } else if (payload.eventType === 'DELETE') {
-        if (existing >= 0) allRequests.splice(existing, 1);
+    $('dirStatusSel').addEventListener('change', async e => {
+      const newStatus = e.target.value;
+      try {
+        await fetch(`${API_BASE_URL}/api/requests/${req.id}/status`, {
+          method:'PUT', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ status: newStatus })
+        });
+        req.status = newStatus;
+        refreshStats();
+        showDetailModal(req);
+      } catch(err) {
+        alert('Unable to update status at this time.');
+        e.target.value = req.status;
       }
+    });
+  }
+
+  /* ── REPORT MODAL ── */
+  function showReport(title, content) {
+    $('reportModalTitleEl').textContent = title;
+    $('reportModalContent').textContent = content;
+    openModal('reportModal');
+  }
+
+  /* ── API ── */
+  async function initSupabase() {
+    try {
+      const res = await fetch(API_BASE_URL + '/api/config');
+      if (!res.ok) throw new Error();
+      window.supabaseConfig = await res.json();
+      return true;
+    } catch { return false; }
+  }
+
+  async function loadRequests() {
+    try {
+      const res  = await fetch(API_BASE_URL + '/api/requests');
+      const data = await res.json();
+      allRequests = (data||[]).map(toReq);
+      monitorSkel.classList.add('hidden');
+      monitorWrap.classList.remove('hidden');
       renderMonitor(searchMonitor.value);
       refreshStats();
       refreshAlerts();
+    } catch(e) {
+      monitorSkel.classList.add('hidden');
+      monitorWrap.classList.remove('hidden');
+      monitorBody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:1.5rem;color:var(--text-muted);font-size:0.82rem;">Unable to connect to server</td></tr>`;
     }
+  }
 
-    function subscribeDirectorRealtime() {
-      // Connect to Socket.io for real-time updates
-      if (typeof io !== 'undefined') {
-        const socket = io(API_BASE_URL);
-        socket.on('newRequest', (data) => {
-          if (!data || !data.id) return;
-          const req = toDirectorRequest(data);
-          allRequests.unshift(req);
-          refreshStats();
-          refreshAlerts();
-        });
-        socket.on('statusUpdate', (update) => {
-          const idx = allRequests.findIndex(r => r.id === update.id);
-          if (idx >= 0) {
-            allRequests[idx].status = update.status;
-            refreshStats();
-          }
-        });
-        socket.on('passwordReset', (data) => {
-          passwordResetRequests.unshift({ id: data.id, dept: data.dept, time: new Date(data.time).getTime() });
-          renderResetRequests();
-        });
-      }
-    }
-
-    async function updateDirectorRequestStatus(id, status) {
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/requests/${id}/status`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status })
-        });
-        if (!res.ok) {
-          const text = await res.text();
-          console.error('Director status update failed:', res.status, text);
-          throw new Error(text || 'Failed to update status');
-        }
-        return true;
-      } catch (err) {
-        console.error('Update error:', err);
-        return false;
-      }
-    }
-
-    let voiceUsed = 42;
-    const voiceLimitStandard = 100;
-    let subscriptionPlan = 'standard'; // 'standard' or 'premium'
-
-    // Password reset requests (from departments)
-    let passwordResetRequests = [];
-    let currentResetId = null;
-
-    let deptEnabled = { Maintenance:true, Housekeeping:true, 'Room Service':true, Concierge:true, Laundry:true };
-
-    // ---------- NEW: WiFi Management Data ----------
-    let wifiNetworks = [];
-    const HOTEL_ID = 1;
-
-    function loadWifiNetworks() {
-      const stored = localStorage.getItem('wifiNetworks');
-      if (stored) {
-        wifiNetworks = JSON.parse(stored);
-      } else {
-        // seed default networks
-        wifiNetworks = [
-          { id: 1, hotel_id: HOTEL_ID, ssid: 'LUXE_GLOBAL', password: 'welcome2025', scope_type: 'global', scope_value: '' },
-          { id: 2, hotel_id: HOTEL_ID, ssid: 'LUXE_FLOOR_1', password: 'floor1pass', scope_type: 'floor', scope_value: '1' },
-          { id: 3, hotel_id: HOTEL_ID, ssid: 'LUXE_FLOOR_2', password: 'floor2pass', scope_type: 'floor', scope_value: '2' },
-          { id: 4, hotel_id: HOTEL_ID, ssid: 'LUXE_BLOCK_A', password: 'blockApass', scope_type: 'block', scope_value: 'Block A' }
-        ];
-        saveWifiNetworks();
-      }
-      renderWifiNetworks();
-    }
-
-    function saveWifiNetworks() {
-      localStorage.setItem('wifiNetworks', JSON.stringify(wifiNetworks));
-    }
-
-    function renderWifiNetworks() {
-      const container = document.getElementById('wifiNetworksList');
-      if (!container) return;
-      if (wifiNetworks.length === 0) {
-        container.innerHTML = '<div class="col-span-2 text-center opacity-60 py-8">No WiFi networks configured. Click "Add Network" to create one.</div>';
-        return;
-      }
-      let html = '';
-      wifiNetworks.forEach(net => {
-        const scopeDisplay = net.scope_type === 'global' ? '🌍 Global' : (net.scope_type === 'floor' ? `Floor ${net.scope_value}` : `Block ${net.scope_value}`);
-        html += `
-          <div class="glass-panel p-4 relative" data-id="${net.id}">
-            <div class="flex justify-between items-start">
-              <div>
-                <div class="font-medium text-lg gold">${net.ssid}</div>
-                <div class="text-sm opacity-70 mt-1">Password: ********</div>
-                <div class="text-xs mt-1"><span class="gold">Scope:</span> ${scopeDisplay}</div>
-              </div>
-              <div class="flex gap-2">
-                <button class="edit-wifi text-gold hover:text-yellow-300 transition" data-id="${net.id}"><i class="fas fa-edit"></i></button>
-                <button class="delete-wifi text-gold hover:text-red-400 transition" data-id="${net.id}"><i class="fas fa-trash"></i></button>
-              </div>
-            </div>
-          </div>
-        `;
-      });
-      container.innerHTML = html;
-
-      // attach event listeners
-      document.querySelectorAll('.edit-wifi').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const id = parseInt(e.currentTarget.dataset.id);
-          const net = wifiNetworks.find(n => n.id === id);
-          if (net) openWifiModal(net);
-        });
-      });
-      document.querySelectorAll('.delete-wifi').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const id = parseInt(e.currentTarget.dataset.id);
-          if (confirm('Delete this WiFi network?')) {
-            wifiNetworks = wifiNetworks.filter(n => n.id !== id);
-            saveWifiNetworks();
-            renderWifiNetworks();
-          }
-        });
-      });
-    }
-
-    function openWifiModal(net = null) {
-      const modal = document.getElementById('wifiModal');
-      const title = document.getElementById('wifiModalTitle');
-      const ssidInput = document.getElementById('wifiSsid');
-      const passInput = document.getElementById('wifiPassword');
-      const scopeType = document.getElementById('wifiScopeType');
-      const scopeValue = document.getElementById('wifiScopeValue');
-      const editId = document.getElementById('wifiEditId');
-      if (net) {
-        title.innerText = 'Edit WiFi Network';
-        ssidInput.value = net.ssid;
-        passInput.value = net.password;
-        scopeType.value = net.scope_type;
-        scopeValue.value = net.scope_value || '';
-        editId.value = net.id;
-      } else {
-        title.innerText = 'Add WiFi Network';
-        ssidInput.value = '';
-        passInput.value = '';
-        scopeType.value = 'floor';
-        scopeValue.value = '';
-        editId.value = '';
-      }
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-    }
-
-    // ---------- DOM elements ----------
-    const loginDiv = document.getElementById('loginContainer');
-    const splashDiv = document.getElementById('splashScreen');
-    const dashDiv = document.getElementById('dashboardContainer');
-    const loginBtn = document.getElementById('loginBtn');
-    const logoutBtn = document.getElementById('logoutBtn');
-    const themeToggle = document.getElementById('themeToggle');
-    const themeSlider = document.getElementById('themeSlider');
-    const greetingEl = document.getElementById('greeting');
-    const dateTimeEl = document.getElementById('currentDateTime');
-    const monitorBody = document.getElementById('monitorTableBody');
-    const alertPanel = document.getElementById('alertPanel');
-    const deptControlsDiv = document.getElementById('deptControls');
-    const resetRequestsDiv = document.getElementById('resetRequestsList');
-    const totalToday = document.getElementById('totalToday');
-    const pendingCount = document.getElementById('pendingCount');
-    const inProgressCount = document.getElementById('inProgressCount');
-    const completedCount = document.getElementById('completedCount');
-    const avgResponse = document.getElementById('avgResponse');
-    const activeRooms = document.getElementById('activeRooms');
-    const maintPending = document.getElementById('maintPending');
-    const housePending = document.getElementById('housePending');
-    const roomPending = document.getElementById('roomPending');
-    const concPending = document.getElementById('concPending');
-    const launPending = document.getElementById('launPending');
-    const maintCompleted = document.getElementById('maintCompleted');
-    const houseCompleted = document.getElementById('houseCompleted');
-    const roomCompleted = document.getElementById('roomCompleted');
-    const concCompleted = document.getElementById('concCompleted');
-    const launCompleted = document.getElementById('launCompleted');
-    const searchMonitor = document.getElementById('searchMonitor');
-    const globalSearch = document.getElementById('globalSearch');
-    const voiceUsedSpan = document.getElementById('voiceUsed');
-    const voiceLimitSpan = document.getElementById('voiceLimit');
-    const voiceMeter = document.getElementById('voiceMeter');
-    const splashGreeting = document.getElementById('splashGreeting');
-    const splashTime = document.getElementById('splashTime');
-
-    // Modals
-    const requestModal = document.getElementById('requestModal');
-    const closeModal = document.getElementById('closeModal');
-    const playVoiceBtn = document.getElementById('playVoiceBtn');
-    const voicePlayerContainer = document.getElementById('voicePlayerContainer');
-    const directorVoicePlayer = document.getElementById('directorVoicePlayer');
-    const pwResetModal = document.getElementById('passwordResetModal');
-    const closePwModal = document.getElementById('closePwModal');
-    const cancelPwBtn = document.getElementById('cancelPwBtn');
-    const approvePasswordBtn = document.getElementById('approvePasswordBtn');
-    const resetDeptName = document.getElementById('resetDeptName');
-    const newPasswordInput = document.getElementById('newPassword');
-    const confirmPasswordInput = document.getElementById('confirmPassword');
-    const reportModal = document.getElementById('reportModal');
-    const closeReportModal = document.getElementById('closeReportModal');
-    const reportModalTitle = document.getElementById('reportModalTitle');
-    const reportModalContent = document.getElementById('reportModalContent');
-
-    let currentResetDept = null;
-
-    // ---------- helper functions ----------
-    function getTimeGreeting() {
-      const h = new Date().getHours();
-      if (h<12) return 'Good Morning';
-      if (h<18) return 'Good Afternoon';
-      return 'Good Evening';
-    }
-
-    function updateDateTime() {
-      const now = new Date();
-      greetingEl.innerText = `${getTimeGreeting()}, Director`;
-      dateTimeEl.innerText = now.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) + ' ' + now.toLocaleTimeString();
-    }
-
-    function refreshStats() {
-      const today = new Date().setHours(0,0,0,0);
-      const todayReqs = allRequests.filter(r => r.timestamp >= today);
-      totalToday.innerText = todayReqs.length;
-      pendingCount.innerText = allRequests.filter(r => r.status==='pending').length;
-      inProgressCount.innerText = allRequests.filter(r => r.status==='in-progress').length;
-      completedCount.innerText = allRequests.filter(r => r.status==='completed').length;
-      avgResponse.innerText = (2.4 + Math.random()*0.5).toFixed(1);
-      activeRooms.innerText = [...new Set(allRequests.map(r=>r.room))].length;
-
-      const maint = allRequests.filter(r => r.dept==='Maintenance');
-      maintPending.innerText = maint.filter(r => r.status==='pending').length;
-      maintCompleted.innerText = maint.filter(r => r.status==='completed').length;
-      const house = allRequests.filter(r => r.dept==='Housekeeping');
-      housePending.innerText = house.filter(r => r.status==='pending').length;
-      houseCompleted.innerText = house.filter(r => r.status==='completed').length;
-      const room = allRequests.filter(r => r.dept==='Room Service');
-      roomPending.innerText = room.filter(r => r.status==='pending').length;
-      roomCompleted.innerText = room.filter(r => r.status==='completed').length;
-      const conc = allRequests.filter(r => r.dept==='Concierge');
-      concPending.innerText = conc.filter(r => r.status==='pending').length;
-      concCompleted.innerText = conc.filter(r => r.status==='completed').length;
-      const laun = allRequests.filter(r => r.dept==='Laundry');
-      launPending.innerText = laun.filter(r => r.status==='pending').length;
-      launCompleted.innerText = laun.filter(r => r.status==='completed').length;
-    }
-
-    function renderMonitor(filter='') {
-      let filtered = allRequests;
-      if (filter) {
-        const f = filter.toLowerCase();
-        filtered = allRequests.filter(r => r.room.toLowerCase().includes(f) || r.dept.toLowerCase().includes(f) || r.type.toLowerCase().includes(f));
-      }
-      filtered.sort((a,b)=> b.timestamp - a.timestamp);
-      let html = '';
-      filtered.slice(0,15).forEach(req => {
-        const time = new Date(req.timestamp).toLocaleTimeString();
-        const statusClass = req.status==='pending'?'text-yellow-400': req.status==='in-progress'?'text-blue-400':'text-green-400';
-        html += `<tr class="border-b border-gray-700/30 hover:bg-gold/5 cursor-pointer request-row" data-id="${req.id}">
-          <td class="py-2">${req.room}</td><td>${req.dept}</td><td>${req.type}</td><td>${time}</td>
-          <td><span class="text-xs ${statusClass}">${req.status}</span></td>
-          <td><i class="fas fa-chevron-right gold"></i></td>
-        </tr>`;
-      });
-      monitorBody.innerHTML = html;
-      document.querySelectorAll('.request-row').forEach(row => {
-        row.addEventListener('click', () => {
-          const id = parseInt(row.dataset.id);
-          const req = allRequests.find(r=>r.id===id);
-          if (req) showDetailModal(req);
-        });
-      });
-    }
-
-    function refreshAlerts() {
-      const now = Date.now();
-      const longPending = allRequests.filter(r => r.status==='pending' && (now - r.timestamp) > 20*60000);
-      if (longPending.length===0) { alertPanel.innerHTML = '<div class="opacity-40 text-sm">✨ no priority alerts</div>'; return; }
-      let html = '';
-      longPending.forEach(r => {
-        const wait = Math.round((now - r.timestamp)/60000);
-        html += `<div class="bg-gold/10 p-2 rounded-lg flex justify-between text-sm border-l-4 border-gold"><span>🚨 ${r.room} · ${r.dept}</span> <span class="gold">${wait} min</span></div>`;
-      });
-      alertPanel.innerHTML = html;
-    }
-
-    function renderDeptControls() {
-      let html = '';
-      departments.forEach(d => {
-        const enabled = deptEnabled[d];
-        html += `<div class="flex items-center justify-between"><span>${d}</span>
-          <button class="toggle-dept text-xs px-3 py-1 rounded-full ${enabled ? 'bg-gold text-black' : 'bg-gray-700'}" data-dept="${d}">${enabled ? 'enabled' : 'disabled'}</button>
-        </div>`;
-      });
-      deptControlsDiv.innerHTML = html;
-      document.querySelectorAll('.toggle-dept').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const d = e.target.dataset.dept;
-          deptEnabled[d] = !deptEnabled[d];
-          renderDeptControls();
-        });
-      });
-    }
-
-    function renderResetRequests() {
-      if (passwordResetRequests.length===0) { resetRequestsDiv.innerHTML = '<div class="text-xs opacity-40">no pending resets</div>'; return; }
-      let html = '';
-      passwordResetRequests.forEach((r) => {
-        html += `<div class="flex justify-between items-center bg-gold/5 p-2 rounded-lg"><span>🔑 ${r.dept}</span><button class="approve-reset text-xs bg-gold/30 px-2 py-1 rounded-full" data-id="${r.id}">approve</button></div>`;
-      });
-      resetRequestsDiv.innerHTML = html;
-      document.querySelectorAll('.approve-reset').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const id = e.currentTarget.dataset.id;
-          const req = passwordResetRequests.find(p => String(p.id) === String(id));
-          if (req) {
-            currentResetDept = req.dept;
-            currentResetId = req.id;
-            resetDeptName.innerText = `for department: ${req.dept}`;
-            pwResetModal.classList.remove('hidden');
-            pwResetModal.classList.add('flex');
-          }
-        });
-      });
-    }
-
-    // Approve password reset
-    approvePasswordBtn.addEventListener('click', async () => {
-      const newPw = newPasswordInput.value;
-      const confirmPw = confirmPasswordInput.value;
-      if (!newPw || newPw !== confirmPw) {
-        alert('Passwords do not match or empty');
-        return;
-      }
-      // Update password locally (demo)
-      DEPT_PASSWORDS[currentResetDept] = newPw;
-      // Notify server to remove the request
-      try {
-        if (currentResetId) {
-          await fetch(`${API_BASE_URL}/api/password_resets/${currentResetId}/approve`, { method: 'PUT' });
-        }
-      } catch (err) {
-        console.error('Failed to notify server about approved reset', err);
-      }
-      // Remove from requests list locally
-      passwordResetRequests = passwordResetRequests.filter(r => r.dept !== currentResetDept && r.id !== currentResetId);
+  async function loadResets() {
+    try {
+      const res  = await fetch(API_BASE_URL + '/api/password_resets');
+      const data = await res.json();
+      passwordResetRequests = (data||[]).map(d => ({ id:d.id, dept:d.dept, time:new Date(d.time).getTime() }));
       renderResetRequests();
-      pwResetModal.classList.add('hidden');
-      newPasswordInput.value = '';
-      confirmPasswordInput.value = '';
-      alert(`✅ Password for ${currentResetDept} updated`);
-      currentResetId = null;
+    } catch(e) { renderResetRequests(); }
+  }
+
+  function subscribeRealtime() {
+    if (typeof io === 'undefined') return;
+    const socket = io(API_BASE_URL);
+    socket.on('newRequest', data => {
+      if (!data?.id) return;
+      allRequests.unshift(toReq(data));
+      renderMonitor(searchMonitor.value);
+      refreshStats(); refreshAlerts();
     });
-
-    closePwModal.addEventListener('click', () => pwResetModal.classList.add('hidden'));
-    cancelPwBtn.addEventListener('click', () => pwResetModal.classList.add('hidden'));
-
-    function showDetailModal(req) {
-      const modalDetail = document.getElementById('modalDetail');
-      const statusClass = req.status==='pending'?'pending': req.status==='in-progress'?'in-progress':'completed';
-      modalDetail.innerHTML = `
-        <p><span class="gold">room:</span> ${req.room}</p>
-        <p><span class="gold">dept:</span> ${req.dept}</p>
-        <p><span class="gold">type:</span> ${req.type}</p>
-        <p><span class="gold">description:</span> ${req.desc}</p>
-        <p><span class="gold">time:</span> ${new Date(req.timestamp).toLocaleString()}</p>
-        <p><span class="gold">voice:</span> ${req.voice ? '🎤 recorded' : '—'}</p>
-        <p><span class="gold">status:</span> <span class="status-badge ${statusClass}">${req.status}</span></p>
-        <p><span class="gold">update status:</span> 
-          <select id="directorStatusSelect" class="text-xs border border-gray-200 rounded-full px-2 py-1 bg-white transition" data-id="${req.id}">
-            <option value="pending" ${req.status==='pending'?'selected':''}>Pending</option>
-            <option value="in-progress" ${req.status==='in-progress'?'selected':''}>In Progress</option>
-            <option value="completed" ${req.status==='completed'?'selected':''}>Completed</option>
-          </select>
-        </p>
-      `;
-      requestModal.classList.remove('hidden');
-      requestModal.classList.add('flex');
-      
-      if (req.voice && req.voice_url) {
-        voicePlayerContainer.classList.remove('hidden');
-        directorVoicePlayer.src = req.voice_url;
-        playVoiceBtn.style.display = 'none';
-      } else {
-        voicePlayerContainer.classList.add('hidden');
-        playVoiceBtn.style.display = 'block';
-        playVoiceBtn.onclick = () => alert('🎤 No voice recording available for this request.');
-      }
-
-      // Attach status update handler
-      const statusSelect = document.getElementById('directorStatusSelect');
-      if (statusSelect) {
-        statusSelect.addEventListener('change', async (e) => {
-          const newStatus = e.target.value;
-          const success = await updateDirectorRequestStatus(req.id, newStatus);
-          if (success) {
-            req.status = newStatus;
-            showDetailModal(req);
-            refreshStats();
-            showDetailModal(req);
-          } else {
-            alert('Unable to update status at this time');
-            e.target.value = req.status;
-          }
-        });
-      }
-    }
-
-    closeModal.addEventListener('click', () => requestModal.classList.add('hidden'));
-
-    // Report functions
-    function showReport(title, content) {
-      reportModalTitle.innerText = title;
-      reportModalContent.innerText = content;
-      reportModal.classList.remove('hidden');
-      reportModal.classList.add('flex');
-    }
-    closeReportModal.addEventListener('click', () => reportModal.classList.add('hidden'));
-
-    document.getElementById('dailyReportBtn').addEventListener('click', () => {
-      const today = new Date().toLocaleDateString();
-      const total = allRequests.length;
-      const completed = allRequests.filter(r => r.status==='completed').length;
-      showReport('Daily Report', `Date: ${today}\nTotal requests: ${total}\nCompleted: ${completed}\nPending: ${allRequests.filter(r => r.status==='pending').length}\nIn progress: ${allRequests.filter(r => r.status==='in-progress').length}`);
+    socket.on('statusUpdate', update => {
+      const idx = allRequests.findIndex(r=>r.id===update.id);
+      if (idx>=0) { allRequests[idx].status=update.status; refreshStats(); renderMonitor(searchMonitor.value); }
     });
-    document.getElementById('weeklyReportBtn').addEventListener('click', () => {
-      showReport('Weekly Report', 'Week 12, 2025\nTotal: 187\nCompleted: 152\nAvg response: 2.3 min');
+    socket.on('passwordReset', data => {
+      passwordResetRequests.unshift({ id:data.id, dept:data.dept, time:new Date(data.time).getTime() });
+      renderResetRequests();
     });
-    document.getElementById('deptReportBtn').addEventListener('click', () => {
-      let deptStats = '';
-      departments.forEach(d => {
-        const deptReqs = allRequests.filter(r => r.dept === d);
-        deptStats += `${d}: ${deptReqs.length} total, ${deptReqs.filter(r => r.status==='completed').length} completed\n`;
-      });
-      showReport('Department Performance', deptStats);
-    });
-    document.getElementById('pdfReportBtn').addEventListener('click', () => alert('📄 PDF generated (demo)'));
-    document.getElementById('csvReportBtn').addEventListener('click', () => alert('📈 CSV downloaded (demo)'));
+  }
 
-    // Subscription buttons
-    document.getElementById('upgradeBtn').addEventListener('click', () => alert('✨ Upgrade to Premium for unlimited voice and analytics'));
-    document.getElementById('standardPlanBtn').addEventListener('click', () => alert('You are on Standard plan'));
-    document.getElementById('premiumPlanBtn').addEventListener('click', () => {
-      if (confirm('Switch to Premium? (demo)')) {
-        subscriptionPlan = 'premium';
-        voiceLimitSpan.innerText = '∞';
-        voiceMeter.style.width = '100%';
-        alert('Now on Premium plan');
-      }
-    });
+  /* ── SEARCH WITH OVERLAY ── */
+  function doSearch(query, context) {
+    if (!query.trim()) { renderMonitor(''); return; }
+    clearTimeout(searchTimer);
+    showSearchOverlay(context);
+    searchTimer = setTimeout(() => {
+      renderMonitor(query);
+      hideSearchOverlay();
+    }, 650);
+  }
 
-    // Update subscription UI
-    function updateSubscriptionUI() {
-      voiceUsedSpan.innerText = voiceUsed;
-      voiceLimitSpan.innerText = subscriptionPlan === 'premium' ? '∞' : voiceLimitStandard;
-      let percent = (voiceUsed / voiceLimitStandard) * 100;
-      if (percent > 100) percent = 100;
-      voiceMeter.style.width = percent + '%';
-    }
-
-    // Live request monitor only displays Supabase-sourced requests.
-    // No local request simulation is used here.
-
-    // ---------- LOGIN & SPLASH ----------
-    loginBtn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      const supabaseOk = await initSupabaseClient();
-      if (!supabaseOk) {
-        alert('Unable to initialize Supabase configuration (check /api/config).');
-        return;
-      }
-
-      loginDiv.classList.add('hidden');
-      splashGreeting.innerText = `${getTimeGreeting()}, Director`;
-      splashTime.innerText = new Date().toLocaleString();
-      splashDiv.classList.remove('hidden');
-
-      setTimeout(async () => {
-        splashDiv.classList.add('hidden');
-        dashDiv.classList.remove('hidden');
-        updateDateTime();
-        setInterval(updateDateTime, 1000);
-
-        await loadRequestsFromSupabase();
-        subscribeDirectorRealtime();
-
-        renderMonitor();
-        refreshStats();
-        refreshAlerts();
-        renderDeptControls();
-        await loadPasswordResetRequests();
-        updateSubscriptionUI();
-        // Load WiFi networks
-        loadWifiNetworks();
-      }, 2500);
-    });
-
-    logoutBtn.addEventListener('click', () => {
-      dashDiv.classList.add('hidden');
-      loginDiv.classList.remove('hidden');
-    });
-
-    // Theme toggle
-    themeToggle.addEventListener('click', () => {
-      const body = document.body;
-      if (body.classList.contains('dark')) {
-        body.classList.remove('dark');
-        body.classList.add('light');
-        themeSlider.style.transform = 'translateX(1.5rem)';
-      } else {
-        body.classList.remove('light');
-        body.classList.add('dark');
-        themeSlider.style.transform = 'translateX(0)';
-      }
-    });
-
-    // Search
-    searchMonitor.addEventListener('input', (e) => renderMonitor(e.target.value));
-    globalSearch.addEventListener('input', (e) => {
+  searchMonitor.addEventListener('input', e => {
+    doSearch(e.target.value, 'Searching requests…');
+  });
+  searchMonitor.addEventListener('keydown', e => {
+    if (e.key==='Enter') doSearch(e.target.value, 'Searching requests…');
+  });
+  globalSearch.addEventListener('input', e => {
+    searchMonitor.value = e.target.value;
+    doSearch(e.target.value, 'Searching across all records…');
+  });
+  globalSearch.addEventListener('keydown', e => {
+    if (e.key==='Enter') {
       searchMonitor.value = e.target.value;
-      renderMonitor(e.target.value);
-    });
+      doSearch(e.target.value, 'Searching across all records…');
+    }
+  });
 
-    // Close modals on background click
-    [requestModal, pwResetModal, reportModal, document.getElementById('wifiModal')].forEach(modal => {
-      if (modal) {
-        modal.addEventListener('click', (e) => {
-          if (e.target === modal) modal.classList.add('hidden');
-        });
+  /* ── LOGIN / SPLASH ── */
+  loginBtn.addEventListener('click', async e => {
+    e.preventDefault();
+    loginBtn.textContent = 'Connecting…';
+    loginBtn.disabled = true;
+    const ok = await initSupabase();
+    if (!ok) {
+      loginBtn.textContent = 'Enter suite';
+      loginBtn.disabled = false;
+      alert('Unable to connect to the server. Please check your connection.');
+      return;
+    }
+    loginDiv.classList.add('hidden');
+    splashDiv.classList.remove('hidden');
+    $('splashGreeting').textContent = getGreeting() + ', Director';
+    $('splashTime').textContent = new Date().toLocaleString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' });
+
+    setTimeout(async () => {
+      splashDiv.classList.add('hidden');
+      dashDiv.classList.remove('hidden');
+      dashDiv.style.opacity = '0';
+      dashDiv.style.transition = 'opacity 0.5s ease';
+      requestAnimationFrame(() => { dashDiv.style.opacity = '1'; });
+
+      updateDateTime();
+      setInterval(updateDateTime, 1000);
+      setInterval(refreshAlerts, 60000);
+
+      await loadRequests();
+      subscribeRealtime();
+      renderDeptControls();
+      await loadResets();
+      updateSubscriptionUI();
+      loadWifiNetworks();
+
+      // Responsive main grid on load
+      applyResponsiveLayout();
+    }, 2600);
+  });
+
+  logoutBtn.addEventListener('click', () => {
+    dashDiv.classList.add('hidden');
+    loginDiv.classList.remove('hidden');
+    loginBtn.textContent = 'Enter suite';
+    loginBtn.disabled = false;
+  });
+
+  /* ── THEME TOGGLE ── */
+  let isDark = true;
+  themeToggle.addEventListener('click', () => {
+    isDark = !isDark;
+    document.body.className = isDark ? 'dark antialiased' : 'light antialiased';
+    themeThumb.textContent = isDark ? '🌙' : '☀️';
+    themeToggle.setAttribute('aria-checked', String(!isDark));
+    if (isDark) themeToggle.classList.remove('light-mode');
+    else themeToggle.classList.add('light-mode');
+    themeThumb.classList.toggle('right', !isDark);
+  });
+
+  /* ── SUBSCRIPTION BUTTONS ── */
+  $('upgradeBtn').addEventListener('click',  () => togglePlans(true));
+  $('managePlanBtn').addEventListener('click', () => togglePlans());
+  $('standardPlanBtn').addEventListener('click', () => {
+    if (subscriptionPlan==='premium') {
+      if (confirm('Downgrade to Standard plan?')) {
+        subscriptionPlan='standard';
+        updateSubscriptionUI();
+        togglePlans(false);
       }
-    });
-
-    // ---------- WiFi Modal Event Listeners ----------
-    document.getElementById('addWifiBtn').addEventListener('click', () => openWifiModal());
-
-    document.getElementById('saveWifiBtn').addEventListener('click', () => {
-      const ssid = document.getElementById('wifiSsid').value.trim();
-      const password = document.getElementById('wifiPassword').value.trim();
-      const scopeType = document.getElementById('wifiScopeType').value;
-      let scopeValue = document.getElementById('wifiScopeValue').value.trim();
-      const editId = document.getElementById('wifiEditId').value;
-
-      if (!ssid || !password) {
-        alert('SSID and password are required.');
-        return;
+    }
+  });
+  $('premiumPlanBtn').addEventListener('click', () => {
+    if (subscriptionPlan==='standard') {
+      if (confirm('Upgrade to Premium — $1,999/year? This is a demo action.')) {
+        subscriptionPlan='premium';
+        updateSubscriptionUI();
+        togglePlans(false);
       }
-      if (scopeType !== 'global' && !scopeValue) {
-        alert('Please enter a scope value (floor number or block name) for non-global networks.');
-        return;
+    }
+  });
+
+  /* ── PASSWORD RESET ── */
+  $('approvePasswordBtn').addEventListener('click', async () => {
+    const pw1 = $('newPassword').value;
+    const pw2 = $('confirmPassword').value;
+    if (!pw1||pw1!==pw2) { alert('Passwords do not match or are empty.'); return; }
+    try {
+      if (currentResetId) {
+        await fetch(`${API_BASE_URL}/api/password_resets/${currentResetId}/approve`, { method:'PUT' });
       }
-      if (scopeType === 'global') scopeValue = '';
+    } catch(e) {}
+    passwordResetRequests = passwordResetRequests.filter(r=>r.dept!==currentResetDept&&r.id!==currentResetId);
+    renderResetRequests();
+    closeModal('passwordResetModal');
+    $('newPassword').value=''; $('confirmPassword').value='';
+    alert(`✅ Password for ${currentResetDept} updated successfully.`);
+    currentResetId=null; currentResetDept=null;
+  });
+  $('closePwModal').addEventListener('click', () => closeModal('passwordResetModal'));
+  $('cancelPwBtn').addEventListener('click',  () => closeModal('passwordResetModal'));
 
-      // Check for duplicate scope
-      const existing = wifiNetworks.find(n => n.scope_type === scopeType && n.scope_value === scopeValue && (editId ? n.id != editId : true));
-      if (existing) {
-        alert('A WiFi network for this scope already exists. Please choose a different scope.');
-        return;
-      }
-
-      if (editId) {
-        // update
-        const index = wifiNetworks.findIndex(n => n.id == editId);
-        if (index !== -1) {
-          wifiNetworks[index] = { ...wifiNetworks[index], ssid, password, scope_type: scopeType, scope_value: scopeValue };
-        }
-      } else {
-        // add new
-        const newId = wifiNetworks.length > 0 ? Math.max(...wifiNetworks.map(n => n.id)) + 1 : 1;
-        wifiNetworks.push({
-          id: newId,
-          hotel_id: HOTEL_ID,
-          ssid,
-          password,
-          scope_type: scopeType,
-          scope_value: scopeValue
-        });
-      }
-      saveWifiNetworks();
-      renderWifiNetworks();
-      document.getElementById('wifiModal').classList.add('hidden');
+  /* ── REPORT BUTTONS ── */
+  $('closeModal').addEventListener('click', () => closeModal('requestModal'));
+  $('closeReportModal').addEventListener('click', () => closeModal('reportModal'));
+  $('dailyReportBtn').addEventListener('click', () => {
+    const total = allRequests.length;
+    showReport('Daily report — ' + new Date().toLocaleDateString(), [
+      `Date:            ${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}`,
+      `Total requests:  ${total}`,
+      `Completed:       ${allRequests.filter(r=>r.status==='completed').length}`,
+      `In progress:     ${allRequests.filter(r=>r.status==='in-progress').length}`,
+      `Pending:         ${allRequests.filter(r=>r.status==='pending').length}`,
+      `Active rooms:    ${[...new Set(allRequests.map(r=>r.room))].length}`
+    ].join('\n'));
+  });
+  $('weeklyReportBtn').addEventListener('click', () => {
+    showReport('Weekly report', 'Week ending ' + new Date().toLocaleDateString() + '\n\nTotal: 187\nCompleted: 152 (81%)\nAvg response: 2.3 min\nTop department: Housekeeping');
+  });
+  $('deptReportBtn').addEventListener('click', () => {
+    const lines = departments.map(d => {
+      const r = allRequests.filter(x=>x.dept===d);
+      return `${d.padEnd(18)} ${r.length} total   ${r.filter(x=>x.status==='completed').length} completed`;
     });
+    showReport('Department performance', lines.join('\n'));
+  });
+  $('pdfReportBtn').addEventListener('click', () => alert('📄 PDF export (demo — would trigger server-side generation)'));
+  $('csvReportBtn').addEventListener('click', () => alert('📈 CSV export (demo — would download a file)'));
 
-    document.getElementById('closeWifiModal').addEventListener('click', () => {
-      document.getElementById('wifiModal').classList.add('hidden');
-    });
-    document.getElementById('cancelWifiBtn').addEventListener('click', () => {
-      document.getElementById('wifiModal').classList.add('hidden');
-    });
+  /* ── WIFI MODAL ACTIONS ── */
+  $('addWifiBtn').addEventListener('click', () => openWifiModal());
+  $('closeWifiModal').addEventListener('click', () => closeModal('wifiModal'));
+  $('cancelWifiBtn').addEventListener('click', () => closeModal('wifiModal'));
+  $('saveWifiBtn').addEventListener('click', () => {
+    const ssid      = $('wifiSsid').value.trim();
+    const password  = $('wifiPassword').value.trim();
+    const scopeType = $('wifiScopeType').value;
+    let   scopeVal  = $('wifiScopeValue').value.trim();
+    const editId    = $('wifiEditId').value;
 
-    updateDateTime();
-  })();
+    if (!ssid||!password) { alert('SSID and password are required.'); return; }
+    if (scopeType!=='global'&&!scopeVal) { alert('Please enter a floor number or block name.'); return; }
+    if (scopeType==='global') scopeVal='';
+
+    const dup = wifiNetworks.find(n=>n.scope_type===scopeType&&n.scope_value===scopeVal&&(editId?n.id!=editId:true));
+    if (dup) { alert('A network for this scope already exists.'); return; }
+
+    if (editId) {
+      const idx = wifiNetworks.findIndex(n=>n.id==editId);
+      if (idx>=0) wifiNetworks[idx] = {...wifiNetworks[idx], ssid, password, scope_type:scopeType, scope_value:scopeVal};
+    } else {
+      const newId = wifiNetworks.length ? Math.max(...wifiNetworks.map(n=>n.id))+1 : 1;
+      wifiNetworks.push({ id:newId, hotel_id:HOTEL_ID, ssid, password, scope_type:scopeType, scope_value:scopeVal });
+    }
+    saveWifiNetworks();
+    renderWifiNetworks();
+    closeModal('wifiModal');
+  });
+
+  /* ── RESPONSIVE LAYOUT ── */
+  function applyResponsiveLayout() {
+    const mainGrid = $('mainGrid');
+    const mainLeft = $('mainLeft');
+    const mainRight = $('mainRight');
+    const reportSearch = $('reportSearchGrid');
+    if (!mainGrid) return;
+    const w = window.innerWidth;
+    if (w >= 1024) {
+      mainGrid.style.gridTemplateColumns = '1fr 320px';
+      reportSearch.style.gridTemplateColumns = '1fr 340px';
+    } else {
+      mainGrid.style.gridTemplateColumns = '1fr';
+      reportSearch.style.gridTemplateColumns = '1fr';
+    }
+  }
+  window.addEventListener('resize', applyResponsiveLayout);
+  applyResponsiveLayout();
+
+  /* ── INIT ── */
+  updateDateTime();
+
+})();
 </script>
 </body>
 </html>
