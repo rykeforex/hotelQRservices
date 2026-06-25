@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -50,41 +50,130 @@
 
     /* ─── DARK THEME (default) ─── */
     .dark {
-      --bg-base: #080a0d;
-      --bg-surface: rgba(8,10,14,0.75);
-      --bg-card: rgba(255,255,255,0.04);
+      --bg-base: #07090c;
+      --bg-surface: rgba(11,13,18,0.9);
+      --bg-card: rgba(255,255,255,0.05);
       --border-glass: rgba(201,162,39,0.2);
-      --border-subtle: rgba(255,255,255,0.07);
+      --border-subtle: rgba(255,255,255,0.08);
       --text-primary: #ffffff;
       --text-secondary: rgba(255,255,255,0.72);
       --text-muted: rgba(255,255,255,0.42);
-      --input-bg: rgba(0,0,0,0.4);
+      --input-bg: rgba(0,0,0,0.5);
       --input-border: rgba(255,255,255,0.14);
       --scrollbar-track: rgba(255,255,255,0.04);
       --scrollbar-thumb: rgba(201,162,39,0.35);
       --skeleton-base: rgba(255,255,255,0.07);
       --skeleton-shine: rgba(255,255,255,0.13);
     }
-    .dark body { background-color: var(--bg-base); color: #ffffff; }
+
+    /* ══ DARK MODE: entire page background + every text element = white ══ */
+    html.dark,
+    html.dark body { background-color: #07090c !important; color: #ffffff !important; }
+
+    /* All structural containers get the dark bg */
+    html.dark #loginContainer,
+    html.dark #dashboardContainer,
+    html.dark #splashScreen { background-color: #07090c !important; }
+
+    /* Every text element is white — gold/badge colours override via their own classes */
+    html.dark h1, html.dark h2, html.dark h3, html.dark h4, html.dark h5, html.dark h6,
+    html.dark p, html.dark span, html.dark div, html.dark td, html.dark th,
+    html.dark li, html.dark label, html.dark a, html.dark button, html.dark footer,
+    html.dark input, html.dark select, html.dark pre, html.dark small {
+      color: #ffffff;
+    }
+
+    /* Muted / secondary tiers — still white-based, just dimmed */
+    html.dark [style*="color:var(--text-muted)"]    { color: rgba(255,255,255,0.42) !important; }
+    html.dark [style*="color:var(--text-secondary)"] { color: rgba(255,255,255,0.72) !important; }
+    html.dark .text-muted                            { color: rgba(255,255,255,0.42) !important; }
+    html.dark .text-secondary                        { color: rgba(255,255,255,0.72) !important; }
+
+    /* Preserve gold accents exactly */
+    html.dark .gold,
+    html.dark [style*="color:var(--gold)"],
+    html.dark [style*="color:#c9a227"]  { color: #c9a227 !important; }
+
+    /* Preserve coloured status badges */
+    html.dark .badge-pending   { color: #d97706 !important; }
+    html.dark .badge-progress  { color: #3b82f6 !important; }
+    html.dark .badge-completed { color: #16a34a !important; }
+    html.dark .badge-current-plan { color: #c9a227 !important; }
+
+    /* Preserve scope pills */
+    html.dark .scope-global { color: #16a34a !important; }
+    html.dark .scope-floor  { color: #3b82f6 !important; }
+    html.dark .scope-block  { color: #a855f7 !important; }
+
+    /* Preserve inline coloured elements (green uptime, amber pending etc.) */
+    html.dark [style*="color:#4ade80"] { color: #4ade80 !important; }
+    html.dark [style*="color:#f59e0b"] { color: #f59e0b !important; }
+    html.dark [style*="color:#f87171"] { color: #f87171 !important; }
+    html.dark [style*="color:#60a5fa"] { color: #60a5fa !important; }
+    html.dark [style*="color:#c084fc"] { color: #c084fc !important; }
+    html.dark [style*="color:#a855f7"] { color: #a855f7 !important; }
+    html.dark [style*="color:#3b82f6"] { color: #3b82f6 !important; }
+    html.dark [style*="color:#16a34a"] { color: #16a34a !important; }
+
+    /* dept-toggle on/off */
+    html.dark .dept-toggle-btn.on  { color: #0e0a02 !important; }
+    html.dark .dept-toggle-btn.off { color: rgba(255,255,255,0.7) !important; }
+
+    /* btn-gold text is always dark (gold bg) */
+    html.dark .btn-gold { color: #0e0a02 !important; }
+
+    /* plan-badge premium — dark text on gold bg */
+    html.dark .plan-badge.premium { color: #0e0a02 !important; }
+
+    /* Glass panels: deep dark */
+    html.dark .glass-panel  { background: rgba(11,13,19,0.92) !important; }
+    html.dark .stat-card    { background: rgba(255,255,255,0.04) !important; }
+    html.dark .plan-card    { background: rgba(255,255,255,0.04) !important; }
+    html.dark .wifi-card    { background: rgba(255,255,255,0.04) !important; }
+    html.dark .modal-panel  { background: rgba(8,10,16,0.97) !important; }
+    html.dark .search-modal { background: rgba(8,10,16,0.97) !important; }
+
+    /* Inputs */
+    html.dark .field-input,
+    html.dark .search-input {
+      background: rgba(0,0,0,0.55) !important;
+      color: #ffffff !important;
+      border-color: rgba(255,255,255,0.14) !important;
+    }
+    html.dark .field-input::placeholder,
+    html.dark .search-input::placeholder { color: rgba(255,255,255,0.32) !important; }
+    html.dark select.field-input option  { background: #0d0f14; color: #ffffff; }
 
     /* ─── LIGHT THEME ─── */
     .light {
       --bg-base: #f5f6f8;
-      --bg-surface: rgba(255,255,255,0.85);
-      --bg-card: rgba(255,255,255,0.9);
+      --bg-surface: rgba(255,255,255,0.88);
+      --bg-card: rgba(255,255,255,0.92);
       --border-glass: rgba(201,162,39,0.25);
       --border-subtle: rgba(0,0,0,0.07);
       --text-primary: #0d0d0d;
       --text-secondary: #3a3a3a;
       --text-muted: #767676;
-      --input-bg: rgba(255,255,255,0.95);
+      --input-bg: rgba(255,255,255,0.97);
       --input-border: rgba(0,0,0,0.15);
       --scrollbar-track: rgba(0,0,0,0.05);
       --scrollbar-thumb: rgba(201,162,39,0.4);
       --skeleton-base: rgba(0,0,0,0.07);
       --skeleton-shine: rgba(255,255,255,0.6);
     }
-    .light body { background-color: var(--bg-base); color: #0d0d0d; }
+    html.light,
+    html.light body { background-color: #f5f6f8 !important; color: #0d0d0d !important; }
+    html.light #loginContainer,
+    html.light #dashboardContainer { background-color: #f5f6f8 !important; }
+    html.light [style*="color:var(--text-muted)"]    { color: #767676 !important; }
+    html.light [style*="color:var(--text-secondary)"] { color: #3a3a3a !important; }
+    html.light .text-muted     { color: #767676 !important; }
+    html.light .text-secondary { color: #3a3a3a !important; }
+    html.light .field-input,
+    html.light .search-input   { background: #ffffff !important; color: #0d0d0d !important; border-color: rgba(0,0,0,0.15) !important; }
+    html.light .field-input::placeholder,
+    html.light .search-input::placeholder { color: #a0a0a0 !important; }
+    html.light select.field-input option  { background: #ffffff; color: #0d0d0d; }
 
     /* ─── GLASS PANEL ─── */
     .glass-panel {
@@ -598,7 +687,7 @@
     }
   </style>
 </head>
-<body class="dark antialiased">
+<body class="antialiased">
 
 <!-- ══════════════════════════════════════════
      SEARCH OVERLAY (global)
@@ -826,10 +915,34 @@
 
       <!-- DEPT CONTROLS -->
       <div class="glass-panel p-5">
-        <h2 class="font-medium flex items-center gap-2 mb-4" style="font-size:0.95rem;">
-          <i class="fas fa-sliders-h gold" aria-hidden="true"></i> Department control
-        </h2>
-        <div id="deptControls" class="space-y-3 text-sm" role="list" aria-label="Department status controls"></div>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-medium flex items-center gap-2" style="font-size:0.95rem;">
+            <i class="fas fa-sliders-h gold" aria-hidden="true"></i> Department control
+          </h2>
+          <button id="addDeptToggle" class="btn-ghost" style="font-size:0.72rem;padding:0.25rem 0.7rem;" aria-label="Add a new department" title="Add department">
+            <i class="fas fa-plus mr-1" aria-hidden="true"></i> Add
+          </button>
+        </div>
+        <!-- Add dept inline form (hidden by default) -->
+        <div id="addDeptForm" class="hidden mb-3" style="display:none;">
+          <div style="background:var(--bg-card);border:1px solid var(--border-glass);border-radius:1rem;padding:0.85rem;">
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.6rem;text-transform:uppercase;letter-spacing:0.06em;">New department</p>
+            <div class="flex gap-2 mb-2">
+              <input type="text" id="newDeptName" placeholder="e.g. Valet, Spa, Security…"
+                class="field-input" style="border-radius:0.6rem;padding:0.5rem 0.75rem;font-size:0.8rem;flex:1;">
+              <button id="newDeptSaveBtn" class="btn-gold" style="padding:0.5rem 0.9rem;font-size:0.78rem;flex-shrink:0;">
+                <i class="fas fa-check" aria-hidden="true"></i>
+              </button>
+              <button id="newDeptCancelBtn" class="btn-ghost" style="padding:0.5rem 0.75rem;font-size:0.78rem;flex-shrink:0;">
+                <i class="fas fa-times" aria-hidden="true"></i>
+              </button>
+            </div>
+            <!-- Quick-pick common hotel departments -->
+            <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:0.4rem;">Quick add:</div>
+            <div id="deptSuggestions" class="flex flex-wrap gap-1"></div>
+          </div>
+        </div>
+        <div id="deptControls" class="space-y-2 text-sm" role="list" aria-label="Department status controls"></div>
       </div>
 
       <!-- PASSWORD RESETS -->
@@ -1193,7 +1306,14 @@
   'use strict';
 
   /* ── CONSTANTS ── */
-  const departments = ['Maintenance', 'Housekeeping', 'Room Service', 'Concierge', 'Laundry'];
+  // Core departments — loaded from localStorage so additions persist
+  const DEFAULT_DEPARTMENTS = ['Maintenance', 'Housekeeping', 'Room Service', 'Concierge', 'Laundry'];
+  // Common hotel departments that can be quick-added
+  const SUGGESTED_DEPARTMENTS = [
+    'Valet', 'Spa & Wellness', 'Security', 'Front Desk', 'Bell Service',
+    'Engineering', 'Food & Beverage', 'Events', 'IT Support', 'Pool & Recreation',
+    'Business Centre', 'Shuttle', 'Gym', 'Parking', 'Lost & Found'
+  ];
   const HOTEL_ID = 1;
   const PLAN_PRICES = { standard: 999, premium: 1599 };
   const VOICE_LIMITS = { standard: 1200, premium: Infinity };
@@ -1213,7 +1333,19 @@
   let voiceUsed = 42;
   let wifiNetworks = [];
   let plansRevealed = false;
-  let deptEnabled = { Maintenance:true, Housekeeping:true, 'Room Service':true, Concierge:true, Laundry:true };
+
+  // Load persisted departments or fall back to defaults
+  function loadDepartments() {
+    try {
+      const stored = localStorage.getItem('hotelDepartments_v1');
+      if (stored) return JSON.parse(stored);
+    } catch(e) {}
+    return DEFAULT_DEPARTMENTS.map(name => ({ name, enabled: true }));
+  }
+  function saveDepartments() {
+    localStorage.setItem('hotelDepartments_v1', JSON.stringify(departments));
+  }
+  let departments = loadDepartments(); // [{ name, enabled }]
 
   /* ── DOM REFS ── */
   const $ = id => document.getElementById(id);
@@ -1378,21 +1510,125 @@
 
   /* ── DEPT CONTROLS ── */
   function renderDeptControls() {
-    deptCtrlDiv.innerHTML = departments.map(d => `
-      <div class="flex items-center justify-between" role="listitem">
-        <span style="font-size:0.85rem;">${d}</span>
-        <button class="dept-toggle-btn ${deptEnabled[d]?'on':'off'}" data-dept="${d}"
-          aria-pressed="${deptEnabled[d]}" aria-label="Toggle ${d} department">
-          ${deptEnabled[d]?'Enabled':'Disabled'}
-        </button>
+    const enabledCount = departments.filter(d => d.enabled).length;
+    deptCtrlDiv.innerHTML = departments.map((d, i) => `
+      <div class="flex items-center justify-between gap-2" role="listitem" style="padding:0.35rem 0;border-bottom:1px solid var(--border-subtle);">
+        <span style="font-size:0.84rem;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${d.name}</span>
+        <div class="flex items-center gap-1">
+          <button class="dept-toggle-btn ${d.enabled?'on':'off'}" data-idx="${i}"
+            aria-pressed="${d.enabled}" aria-label="Toggle ${d.name}">
+            ${d.enabled?'On':'Off'}
+          </button>
+          <button class="dept-remove-btn" data-idx="${i}"
+            aria-label="Remove ${d.name} department"
+            style="width:22px;height:22px;border-radius:50%;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#f87171;font-size:0.65rem;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.2s;"
+            title="Remove department">
+            <i class="fas fa-times" aria-hidden="true"></i>
+          </button>
+        </div>
       </div>`
-    ).join('');
+    ).join('') + (departments.length === 0 ? '<div style="color:var(--text-muted);font-size:0.8rem;padding:0.5rem 0;">No departments configured.</div>' : '');
+
+    // Update activeDepts health stat
+    const activeDepts = $('activeDepts');
+    if (activeDepts) activeDepts.textContent = `${enabledCount}/${departments.length}`;
+
+    // Toggle
     document.querySelectorAll('.dept-toggle-btn').forEach(btn => {
       btn.addEventListener('click', e => {
-        const d = e.currentTarget.dataset.dept;
-        deptEnabled[d] = !deptEnabled[d];
+        const idx = parseInt(e.currentTarget.dataset.idx);
+        departments[idx].enabled = !departments[idx].enabled;
+        saveDepartments();
         renderDeptControls();
       });
+    });
+    // Remove
+    document.querySelectorAll('.dept-remove-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const idx = parseInt(e.currentTarget.dataset.idx);
+        const name = departments[idx].name;
+        if (confirm(`Remove "${name}" from departments?`)) {
+          departments.splice(idx, 1);
+          saveDepartments();
+          renderDeptControls();
+        }
+      });
+    });
+  }
+
+  /* ── ADD DEPT FORM ── */
+  function initAddDeptUI() {
+    const toggleBtn  = $('addDeptToggle');
+    const form       = $('addDeptForm');
+    const nameInput  = $('newDeptName');
+    const saveBtn    = $('newDeptSaveBtn');
+    const cancelBtn  = $('newDeptCancelBtn');
+    const suggestBox = $('deptSuggestions');
+
+    // Render suggestion chips (only ones not already added)
+    function renderSuggestions() {
+      const existing = departments.map(d => d.name.toLowerCase());
+      const available = SUGGESTED_DEPARTMENTS.filter(s => !existing.includes(s.toLowerCase()));
+      suggestBox.innerHTML = available.map(s => `
+        <button class="dept-suggest-chip" data-name="${s}"
+          style="font-size:0.7rem;padding:0.2rem 0.55rem;border-radius:9999px;border:1px solid var(--border-glass);background:var(--bg-card);cursor:pointer;white-space:nowrap;transition:all 0.18s;">
+          + ${s}
+        </button>`
+      ).join('');
+      suggestBox.querySelectorAll('.dept-suggest-chip').forEach(chip => {
+        chip.addEventListener('mouseenter', () => { chip.style.borderColor='var(--gold)'; chip.style.color='var(--gold)'; });
+        chip.addEventListener('mouseleave', () => { chip.style.borderColor='var(--border-glass)'; chip.style.color=''; });
+        chip.addEventListener('click', () => {
+          const name = chip.dataset.name;
+          addDepartment(name);
+        });
+      });
+    }
+
+    function openForm() {
+      form.style.display = 'block';
+      form.classList.remove('hidden');
+      renderSuggestions();
+      nameInput.value = '';
+      nameInput.focus();
+      toggleBtn.innerHTML = '<i class="fas fa-minus mr-1"></i> Close';
+    }
+    function closeForm() {
+      form.style.display = 'none';
+      form.classList.add('hidden');
+      toggleBtn.innerHTML = '<i class="fas fa-plus mr-1"></i> Add';
+    }
+
+    function addDepartment(name) {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const exists = departments.some(d => d.name.toLowerCase() === trimmed.toLowerCase());
+      if (exists) {
+        nameInput.style.borderColor = '#f87171';
+        setTimeout(() => { nameInput.style.borderColor = ''; }, 1500);
+        nameInput.placeholder = 'Already exists!';
+        setTimeout(() => { nameInput.placeholder = 'e.g. Valet, Spa, Security…'; }, 1800);
+        return;
+      }
+      departments.push({ name: trimmed, enabled: true });
+      saveDepartments();
+      renderDeptControls();
+      nameInput.value = '';
+      renderSuggestions();
+      // Brief success flash
+      nameInput.placeholder = `✓ "${trimmed}" added`;
+      setTimeout(() => { nameInput.placeholder = 'e.g. Valet, Spa, Security…'; }, 1800);
+    }
+
+    toggleBtn.addEventListener('click', () => {
+      const isOpen = form.style.display !== 'none' && !form.classList.contains('hidden');
+      isOpen ? closeForm() : openForm();
+    });
+    saveBtn.addEventListener('click', () => addDepartment(nameInput.value));
+    cancelBtn.addEventListener('click', closeForm);
+    nameInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); addDepartment(nameInput.value); }
+      if (e.key === 'Escape') closeForm();
     });
   }
 
@@ -1805,6 +2041,7 @@
       await loadRequests();
       subscribeRealtime();
       renderDeptControls();
+      initAddDeptUI();
       await loadResets();
       updateSubscriptionUI();
       loadWifiNetworks();
@@ -1820,12 +2057,11 @@
     loginBtn.textContent = 'Enter suite';
     loginBtn.disabled = false;
   });
-
-  /* ── THEME TOGGLE ── */
   let isDark = true;
   themeToggle.addEventListener('click', () => {
     isDark = !isDark;
-    document.body.className = isDark ? 'dark antialiased' : 'light antialiased';
+    const html = document.documentElement;
+    html.className = isDark ? 'dark' : 'light';
     themeThumb.textContent = isDark ? '🌙' : '☀️';
     themeToggle.setAttribute('aria-checked', String(!isDark));
     if (isDark) themeToggle.classList.remove('light-mode');
@@ -1894,8 +2130,9 @@
   });
   $('deptReportBtn').addEventListener('click', () => {
     const lines = departments.map(d => {
-      const r = allRequests.filter(x=>x.dept===d);
-      return `${d.padEnd(18)} ${r.length} total   ${r.filter(x=>x.status==='completed').length} completed`;
+      const name = d.name;
+      const r = allRequests.filter(x=>x.dept===name);
+      return `${name.padEnd(20)} ${r.length} total   ${r.filter(x=>x.status==='completed').length} completed`;
     });
     showReport('Department performance', lines.join('\n'));
   });
