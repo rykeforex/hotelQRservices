@@ -50,41 +50,41 @@
 
     /* ─── DARK THEME (default) ─── */
     .dark {
-      --bg-base: #0e1013;
-      --bg-surface: rgba(10,12,16,0.55);
-      --bg-card: rgba(255,255,255,0.03);
-      --border-glass: rgba(201,162,39,0.18);
-      --border-subtle: rgba(255,255,255,0.06);
-      --text-primary: #f0f2f4;
-      --text-secondary: rgba(240,242,244,0.6);
-      --text-muted: rgba(240,242,244,0.35);
-      --input-bg: rgba(0,0,0,0.25);
-      --input-border: rgba(255,255,255,0.12);
+      --bg-base: #080a0d;
+      --bg-surface: rgba(8,10,14,0.75);
+      --bg-card: rgba(255,255,255,0.04);
+      --border-glass: rgba(201,162,39,0.2);
+      --border-subtle: rgba(255,255,255,0.07);
+      --text-primary: #ffffff;
+      --text-secondary: rgba(255,255,255,0.72);
+      --text-muted: rgba(255,255,255,0.42);
+      --input-bg: rgba(0,0,0,0.4);
+      --input-border: rgba(255,255,255,0.14);
       --scrollbar-track: rgba(255,255,255,0.04);
-      --scrollbar-thumb: rgba(201,162,39,0.3);
-      --skeleton-base: rgba(255,255,255,0.06);
-      --skeleton-shine: rgba(255,255,255,0.11);
+      --scrollbar-thumb: rgba(201,162,39,0.35);
+      --skeleton-base: rgba(255,255,255,0.07);
+      --skeleton-shine: rgba(255,255,255,0.13);
     }
-    .dark body { background-color: var(--bg-base); color: var(--text-primary); }
+    .dark body { background-color: var(--bg-base); color: #ffffff; }
 
     /* ─── LIGHT THEME ─── */
     .light {
-      --bg-base: #faf8f2;
-      --bg-surface: rgba(255,252,244,0.78);
-      --bg-card: rgba(255,255,255,0.55);
-      --border-glass: rgba(201,162,39,0.22);
-      --border-subtle: rgba(180,150,60,0.1);
-      --text-primary: #1a160e;
-      --text-secondary: #6b5c2e;
-      --text-muted: #a89060;
-      --input-bg: rgba(255,250,240,0.7);
-      --input-border: rgba(180,150,60,0.25);
-      --scrollbar-track: rgba(0,0,0,0.04);
-      --scrollbar-thumb: rgba(201,162,39,0.35);
-      --skeleton-base: rgba(0,0,0,0.06);
-      --skeleton-shine: rgba(255,255,255,0.5);
+      --bg-base: #f5f6f8;
+      --bg-surface: rgba(255,255,255,0.85);
+      --bg-card: rgba(255,255,255,0.9);
+      --border-glass: rgba(201,162,39,0.25);
+      --border-subtle: rgba(0,0,0,0.07);
+      --text-primary: #0d0d0d;
+      --text-secondary: #3a3a3a;
+      --text-muted: #767676;
+      --input-bg: rgba(255,255,255,0.95);
+      --input-border: rgba(0,0,0,0.15);
+      --scrollbar-track: rgba(0,0,0,0.05);
+      --scrollbar-thumb: rgba(201,162,39,0.4);
+      --skeleton-base: rgba(0,0,0,0.07);
+      --skeleton-shine: rgba(255,255,255,0.6);
     }
-    .light body { background-color: var(--bg-base); color: var(--text-primary); }
+    .light body { background-color: var(--bg-base); color: #0d0d0d; }
 
     /* ─── GLASS PANEL ─── */
     .glass-panel {
@@ -979,10 +979,10 @@
             <div class="plan-badge popular">Most popular</div>
             <div class="mt-5">
               <div style="font-size:2.25rem;font-weight:300;line-height:1;">
-                $1,999
+                $1,599
                 <span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;">/year</span>
               </div>
-              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;">$166.58/month, billed annually</div>
+              <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;">$133.25/month, billed annually</div>
             </div>
             <div class="my-4" style="height:1px;background:var(--border-subtle);"></div>
             <ul class="space-y-3 mb-5" aria-label="Premium plan features">
@@ -1195,7 +1195,7 @@
   /* ── CONSTANTS ── */
   const departments = ['Maintenance', 'Housekeeping', 'Room Service', 'Concierge', 'Laundry'];
   const HOTEL_ID = 1;
-  const PLAN_PRICES = { standard: 999, premium: 1999 };
+  const PLAN_PRICES = { standard: 999, premium: 1599 };
   const VOICE_LIMITS = { standard: 1200, premium: Infinity };
 
   const serviceToDept = {
@@ -1214,7 +1214,6 @@
   let wifiNetworks = [];
   let plansRevealed = false;
   let deptEnabled = { Maintenance:true, Housekeeping:true, 'Room Service':true, Concierge:true, Laundry:true };
-  let searchTimer = null;
 
   /* ── DOM REFS ── */
   const $ = id => document.getElementById(id);
@@ -1716,31 +1715,62 @@
     });
   }
 
-  /* ── SEARCH WITH OVERLAY ── */
+  /* ── SEARCH WITH OVERLAY — fires only after user stops typing ── */
+  let typingDebounce = null;
+  const TYPING_DELAY = 600; // ms after last keystroke before searching
+
   function doSearch(query, context) {
-    if (!query.trim()) { renderMonitor(''); return; }
-    clearTimeout(searchTimer);
-    showSearchOverlay(context);
-    searchTimer = setTimeout(() => {
-      renderMonitor(query);
+    // Always clear any pending search
+    clearTimeout(typingDebounce);
+    // If empty, just render immediately with no overlay
+    if (!query.trim()) {
       hideSearchOverlay();
-    }, 650);
+      renderMonitor('');
+      return;
+    }
+    // Wait until user stops typing before showing overlay + searching
+    typingDebounce = setTimeout(() => {
+      showSearchOverlay(context);
+      // Give the overlay a frame to render, then do the work
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          renderMonitor(query);
+          hideSearchOverlay();
+        }, 500);
+      });
+    }, TYPING_DELAY);
   }
 
   searchMonitor.addEventListener('input', e => {
     doSearch(e.target.value, 'Searching requests…');
   });
   searchMonitor.addEventListener('keydown', e => {
-    if (e.key==='Enter') doSearch(e.target.value, 'Searching requests…');
+    if (e.key === 'Enter') {
+      clearTimeout(typingDebounce);
+      const q = e.target.value;
+      if (q.trim()) {
+        showSearchOverlay('Searching requests…');
+        setTimeout(() => { renderMonitor(q); hideSearchOverlay(); }, 500);
+      } else {
+        renderMonitor('');
+      }
+    }
   });
   globalSearch.addEventListener('input', e => {
     searchMonitor.value = e.target.value;
     doSearch(e.target.value, 'Searching across all records…');
   });
   globalSearch.addEventListener('keydown', e => {
-    if (e.key==='Enter') {
-      searchMonitor.value = e.target.value;
-      doSearch(e.target.value, 'Searching across all records…');
+    if (e.key === 'Enter') {
+      clearTimeout(typingDebounce);
+      const q = e.target.value;
+      searchMonitor.value = q;
+      if (q.trim()) {
+        showSearchOverlay('Searching across all records…');
+        setTimeout(() => { renderMonitor(q); hideSearchOverlay(); }, 500);
+      } else {
+        renderMonitor('');
+      }
     }
   });
 
@@ -1817,7 +1847,7 @@
   });
   $('premiumPlanBtn').addEventListener('click', () => {
     if (subscriptionPlan==='standard') {
-      if (confirm('Upgrade to Premium — $1,999/year? This is a demo action.')) {
+      if (confirm('Upgrade to Premium — $1,599/year? This is a demo action.')) {
         subscriptionPlan='premium';
         updateSubscriptionUI();
         togglePlans(false);
