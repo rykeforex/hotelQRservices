@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-  <title>LUXE · digital concierge</title>
+  <title>Quorva · digital concierge</title>
   <!-- Tailwind + Font Awesome -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@300;400;500;600&display=swap');
-    
+
     * { font-family: 'Montserrat', sans-serif; }
     .font-serif { font-family: 'Cormorant Garamond', serif; }
-    
+
     /* luxury dark base */
     body {
       background: #0b0b0b;
@@ -233,12 +233,116 @@
       color: transparent;
       margin-top: -0.3rem;
     }
+
+    /* ========== SPLASH SCREEN ========== */
+    #splashScreen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: #0b0b0b;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.8s ease, visibility 0.8s ease;
+    }
+    #splashScreen.hidden-splash {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .splash-logo {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 3.5rem;
+      font-weight: 700;
+      letter-spacing: 6px;
+      background: linear-gradient(145deg, #d4af37, #f5e29c, #d4af37);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: shimmer 2.5s linear infinite, fadeInUp 1s ease-out forwards;
+    }
+    .splash-sub {
+      font-family: 'Montserrat', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 300;
+      letter-spacing: 4px;
+      color: rgba(212, 175, 55, 0.6);
+      margin-top: 0.8rem;
+      text-transform: uppercase;
+      animation: fadeInUp 1s ease-out 0.4s both;
+    }
+    .splash-powered {
+      font-family: 'Montserrat', sans-serif;
+      font-size: 0.7rem;
+      font-weight: 400;
+      letter-spacing: 3px;
+      color: rgba(255, 255, 255, 0.3);
+      margin-top: 2.5rem;
+      animation: fadeInUp 1s ease-out 0.8s both;
+    }
+    .splash-powered span {
+      color: rgba(212, 175, 55, 0.5);
+      font-weight: 500;
+    }
+    .splash-line {
+      width: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, #d4af37, transparent);
+      margin-top: 1.5rem;
+      animation: expandLine 1.2s ease-out 0.2s forwards;
+    }
+    .splash-particles {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .splash-particles::before,
+    .splash-particles::after {
+      content: '';
+      position: absolute;
+      width: 300px;
+      height: 300px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(212,175,55,0.08) 0%, transparent 70%);
+      animation: floatParticle 6s ease-in-out infinite;
+    }
+    .splash-particles::before { top: 10%; left: 20%; animation-delay: 0s; }
+    .splash-particles::after { bottom: 10%; right: 20%; animation-delay: 3s; }
+
+    @keyframes shimmer {
+      0% { background-position: 0% center; }
+      100% { background-position: 200% center; }
+    }
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes expandLine {
+      from { width: 0; opacity: 0; }
+      to { width: 120px; opacity: 1; }
+    }
+    @keyframes floatParticle {
+      0%, 100% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(-30px) scale(1.1); }
+    }
   </style>
 </head>
 <body>
+  <!-- ========== SPLASH SCREEN ========== -->
+  <div id="splashScreen">
+    <div class="splash-particles"></div>
+    <div class="splash-logo">QUORVA</div>
+    <div class="splash-line"></div>
+    <div class="splash-sub">Digital Concierge</div>
+    <div class="splash-powered">Powered by <span>Peerloom Technologies</span></div>
+  </div>
+
   <!-- main container (glass) -->
-  <div class="glass-panel w-full max-w-4xl p-6 md:p-8 relative">
-    
+  <div class="glass-panel w-full max-w-4xl p-6 md:p-8 relative" id="mainContainer" style="opacity:0; transform: translateY(20px); transition: opacity 0.8s ease, transform 0.8s ease;">
+
     <!-- HOTEL LOGO (centered) -->
     <div class="hotel-logo">
       <i class="fas fa-crown logo-icon"></i>
@@ -284,7 +388,7 @@
     <div class="glass-panel w-full max-w-lg p-6 md:p-8 relative" style="border-radius: 2.5rem;">
       <!-- close button -->
       <button id="closeModal" class="absolute top-4 right-4 text-3xl text-gray-400 hover:text-gold">&times;</button>
-      
+
       <!-- modal title (service name) -->
       <h2 id="modalServiceTitle" class="font-serif text-3xl gold-text mb-5">Housekeeping</h2>
 
@@ -348,8 +452,8 @@
   </div>
 
   <!-- FOOTER (every page) -->
-  <footer class="luxury-footer">
-    © Powered by PeerLoom Technologies
+  <footer class="luxury-footer" id="pageFooter">
+    <span id="footerText">© Powered by PeerLoom Technologies</span>
   </footer>
 
   <!-- Scripts -->
@@ -380,13 +484,23 @@
   </script>
   <script>
     (function() {
+      // ===== SPLASH SCREEN LOGIC =====
+      const splashScreen = document.getElementById('splashScreen');
+      const mainContainer = document.getElementById('mainContainer');
+
+      setTimeout(() => {
+        splashScreen.classList.add('hidden-splash');
+        mainContainer.style.opacity = '1';
+        mainContainer.style.transform = 'translateY(0)';
+      }, 2800);
+
       // ------- room number from URL parameter only -------
       const roomSpan = document.getElementById('roomDisplay');
-      
+
       // Check for room parameter in URL (e.g., request.html?room=242)
       const urlParams = new URLSearchParams(window.location.search);
       const roomParam = urlParams.get('room');
-      
+
       if (!roomParam) {
         document.body.innerHTML = `
           <div class="min-h-screen bg-slate-950 text-white flex items-center justify-center px-6 py-10">
@@ -399,12 +513,12 @@
         `;
         return;
       }
-      
+
       const randomRoom = roomParam;
       const isFromQR = true;
-      
+
       roomSpan.textContent = `Room ${randomRoom}`;
-      
+
       // If from QR, add visual indicator and lock the room
       if (isFromQR) {
         document.body.insertAdjacentHTML('afterbegin', 
@@ -412,6 +526,12 @@
         );
         // Add margin-top to body to account for the banner
         document.body.style.marginTop = '2rem';
+      }
+
+      // Update footer to show Quorva branding
+      const footerText = document.getElementById('footerText');
+      if (footerText) {
+        footerText.innerHTML = 'Quorva · Powered by <span style="color:#d4af37;">Peerloom Technologies</span>';
       }
 
       // ------- socket.io + Supabase config -------
@@ -687,6 +807,17 @@
         if (audioPlayer.src) audioPlayer.play();
       });
 
+      // ===== BUG FIX: Use event delegation for option buttons to prevent duplicate listeners =====
+      modalOptionsDiv.addEventListener('click', function(e) {
+        const btn = e.target.closest('.opt-btn');
+        if (!btn) return;
+
+        // Remove selected from all siblings
+        modalOptionsDiv.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedOption = btn.dataset.option;
+      });
+
       // Populate options based on service
       function renderOptions(serviceKey) {
         const service = services[serviceKey];
@@ -696,15 +827,7 @@
           html += `<button class="opt-btn w-full" data-option="${opt}">${opt}</button>`;
         });
         modalOptionsDiv.innerHTML = html;
-
-        // attach click for selection
-        document.querySelectorAll('.opt-btn').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            document.querySelectorAll('.opt-btn').forEach(b => b.classList.remove('selected'));
-            btn.classList.add('selected');
-            selectedOption = btn.dataset.option;
-          });
-        });
+        selectedOption = null;
       }
 
       // open modal with service
@@ -728,14 +851,10 @@
           voiceSection.classList.add('hidden');
           sendButtonSection.classList.add('hidden');
           modalOptionsDiv.classList.add('hidden');
-          
+
           // Set SSID and room context from backend simulation
           wifiSsidSpan.textContent = wifiCredentials.ssid;
           roomContextSpan.textContent = `Connected from ${roomSpan.textContent}`;
-
-          // Reveal password button: reveals with fade, copies, shows confirmation
-          // We'll implement this event listener only once, but ensure it's not duplicated.
-          // Use a flag or remove existing listeners? We'll define inside openModal? Better to define once outside.
         } else {
           // Regular service flow
           renderOptions(serviceKey);
@@ -784,7 +903,15 @@
         mediaRecorder = null;
         resetWiFiUI();
       });
-      modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+
+      // ===== BUG FIX: Single modal close listener, removed duplicate window click listener =====
+      modal.addEventListener('click', (e) => { 
+        if (e.target === modal) {
+          modal.classList.add('hidden');
+          if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+          mediaRecorder = null;
+        }
+      });
 
       // main service buttons
       document.querySelectorAll('[data-service]').forEach(btn => {
@@ -859,19 +986,11 @@
 
       sendBtn.addEventListener('click', submitRequest);
 
-      // ensure recorder cleanup on modal close
-      window.addEventListener('click', function (e) {
-        if (!modal.classList.contains('hidden') && e.target === modal) {
-          if (stream) stream.getTracks().forEach(t => t.stop());
-          mediaRecorder = null;
-        }
-      });
-
       // ---------- WiFi Feature Event Listeners ----------
       // Reveal password button
       revealPasswordBtn.addEventListener('click', () => {
         if (!passwordRevealed) {
-          // Smooth fade animation: we can use a simple class or style transition
+          // Smooth fade animation
           wifiPasswordDisplay.style.transition = 'opacity 0.3s ease';
           wifiPasswordDisplay.style.opacity = '0';
           setTimeout(() => {
@@ -879,7 +998,7 @@
             wifiPasswordDisplay.style.opacity = '1';
           }, 150);
           passwordRevealed = true;
-          
+
           // Automatically copy to clipboard
           navigator.clipboard.writeText(wifiCredentials.password).then(() => {
             wifiMessage.textContent = 'Password copied successfully';
@@ -888,7 +1007,7 @@
             wifiMessage.textContent = 'Failed to copy';
           });
         } else {
-          // If already revealed, just copy (no need to fade)
+          // If already revealed, just copy
           navigator.clipboard.writeText(wifiCredentials.password).then(() => {
             wifiMessage.textContent = 'Password copied successfully';
             setTimeout(() => { wifiMessage.textContent = ''; }, 2000);
@@ -908,32 +1027,37 @@
       tapToConnectBtn.addEventListener('click', () => {
         const ssid = wifiCredentials.ssid;
         const pwd = wifiCredentials.password;
-        const wifiUri = `WIFI:T:WPA;S:${ssid};P:${pwd};;`;
-        
-        // Check if device supports automatic connection (via intent or webview)
-        // We'll attempt to use window.location or an iframe. If it fails, fallback to copy.
-        const isSupported = /android|iphone|ipad|ipod/i.test(navigator.userAgent); // heuristic
-        if (isSupported) {
-          try {
-            // For iOS, you can't auto-connect via JS, but you can open settings or use universal links?
-            // We'll use a hidden iframe to trigger the URI.
-            const iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = wifiUri;
-            document.body.appendChild(iframe);
-            setTimeout(() => document.body.removeChild(iframe), 1000);
-            wifiMessage.textContent = 'Attempting to connect...';
-          } catch (e) {
-            // fallback
+
+        // ===== BUG FIX: Better cross-platform WiFi connection handling =====
+        const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+
+        if (isMobile) {
+          // Try WiFi URI scheme (works on some Android devices)
+          const wifiUri = `WIFI:T:WPA;S:${encodeURIComponent(ssid)};P:${encodeURIComponent(pwd)};;`;
+
+          // For iOS: show instructions since auto-connect isn't possible via web
+          const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+          if (isIOS) {
+            wifiMessage.innerHTML = `<span style="color:#d4af37;">iOS:</span> Go to Settings > Wi-Fi, select <b>${ssid}</b>, enter password: <b>${pwd}</b>`;
             navigator.clipboard.writeText(pwd);
-            wifiMessage.textContent = 'Auto-connect not supported. Password copied.';
+          } else {
+            // Android: try intent-based approach
+            try {
+              window.location.href = wifiUri;
+              wifiMessage.textContent = 'Opening WiFi settings...';
+            } catch (e) {
+              navigator.clipboard.writeText(pwd);
+              wifiMessage.textContent = 'Password copied. Please connect manually.';
+            }
           }
         } else {
-          // fallback: copy password
+          // Desktop: just copy password
           navigator.clipboard.writeText(pwd);
-          wifiMessage.textContent = 'Password copied (auto-connect not supported)';
+          wifiMessage.textContent = 'Password copied. Please connect manually.';
         }
-        setTimeout(() => { if (wifiMessage.textContent) wifiMessage.textContent = ''; }, 3000);
+
+        setTimeout(() => { if (wifiMessage.textContent && !wifiMessage.innerHTML.includes('iOS')) wifiMessage.textContent = ''; }, 4000);
       });
 
     })();
