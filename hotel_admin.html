@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QUORVA Hotel Admin Portal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --gold: #c9a227;
+      --gold-soft: rgba(201, 162, 39, 0.16);
+      --gold-ring: rgba(201, 162, 39, 0.28);
+      --bg: #f7f5ef;
+      --panel: rgba(255,255,255,0.86);
+      --panel-strong: #ffffff;
+      --text: #171512;
+      --muted: #716d64;
+      --line: rgba(33, 28, 18, 0.1);
+      --shadow: 0 22px 60px rgba(52, 44, 25, 0.1);
+      --danger: #b42318;
+      --success: #12805c;
+      --info: #2563eb;
+    }
+    html.dark {
+      --bg: #090907;
+      --panel: rgba(18,18,16,0.84);
+      --panel-strong: #11110f;
+      --text: #f8f4e8;
+      --muted: #aaa395;
+      --line: rgba(255,255,255,0.1);
+      --shadow: 0 24px 70px rgba(0,0,0,0.42);
+      --gold-soft: rgba(201, 162, 39, 0.18);
+    }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--text);
+      font-family: Inter, system-ui, sans-serif;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(201,162,39,0.11), transparent 34%),
+        linear-gradient(135deg, var(--bg), var(--bg));
+      transition: background 0.25s ease, color 0.25s ease;
+    }
+    .serif { font-family: "Cormorant Garamond", serif; }
+    .gold { color: var(--gold); }
+    .glass {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .card:hover { transform: translateY(-2px); border-color: var(--gold-ring); box-shadow: 0 18px 44px rgba(201,162,39,0.12); }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      min-height: 2.65rem;
+      border-radius: 999px;
+      padding: 0.65rem 1rem;
+      font-weight: 700;
+      font-size: 0.86rem;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      color: var(--text);
+      transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    }
+    .btn:hover { transform: translateY(-1px); border-color: var(--gold-ring); }
+    .btn.gold-btn { background: linear-gradient(135deg, #b88b18, #e3c873); color: #17120a; border-color: rgba(201,162,39,0.42); }
+    .btn.danger-btn { color: var(--danger); }
+    .input, select, textarea {
+      width: 100%;
+      min-height: 2.75rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.75rem 0.9rem;
+      background: var(--panel-strong);
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+    textarea { min-height: 7rem; resize: vertical; }
+    .input:focus, select:focus, textarea:focus { border-color: var(--gold); box-shadow: 0 0 0 4px var(--gold-soft); }
+    .nav-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 0.9rem;
+      border-radius: 12px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      transition: background 0.18s ease, color 0.18s ease;
+    }
+    .nav-btn.active, .nav-btn:hover { background: var(--gold-soft); color: var(--text); }
+    .nav-btn.active i { color: var(--gold); }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 0.25rem 0.6rem;
+      font-size: 0.72rem;
+      font-weight: 800;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      white-space: nowrap;
+    }
+    .status-active, .status-delivered, .status-sent { color: var(--success); background: rgba(18,128,92,0.12); }
+    .status-locked, .status-suspended, .status-failed { color: var(--danger); background: rgba(180,35,24,0.12); }
+    .status-queued, .status-pending { color: #a15c00; background: rgba(201,162,39,0.14); }
+    .table-wrap { overflow-x: auto; border-radius: 16px; border: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    th, td { padding: 0.9rem; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 800; }
+    tr:last-child td { border-bottom: 0; }
+    .skeleton {
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(90deg, rgba(201,162,39,0.08), rgba(255,255,255,0.18), rgba(201,162,39,0.08));
+      background-size: 200% 100%;
+      animation: shimmer 1.3s infinite linear;
+      border-radius: 14px;
+      min-height: 5rem;
+    }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    .section { display: none; animation: rise 0.28s ease both; }
+    .section.active { display: block; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .modal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 1rem; background: rgba(0,0,0,0.45); z-index: 60; }
+    .modal.open { display: flex; }
+    .modal-panel { width: min(920px, 100%); max-height: 90vh; overflow: auto; border-radius: 22px; }
+    .chart-bar { height: 0.65rem; border-radius: 999px; background: var(--gold-soft); overflow: hidden; }
+    .chart-bar span { display: block; height: 100%; background: linear-gradient(90deg, #b88b18, #e3c873); border-radius: inherit; }
+    .mobile-top { display: none; }
+    @media (max-width: 1040px) {
+      #sidebar { position: fixed; inset: 0 auto 0 0; width: min(86vw, 320px); z-index: 50; transform: translateX(-105%); transition: transform 0.22s ease; }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      body.sidebar-open::after { content: ''; position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 40; }
+      .mobile-top { display: flex; }
+      #mainShell { margin-left: 0; }
+    }
+    @media (max-width: 720px) {
+      .metric-grid { grid-template-columns: 1fr 1fr !important; }
+      .toolbar { flex-direction: column; align-items: stretch !important; }
+      .page-pad { padding: 1rem !important; }
+      .btn { width: 100%; }
+    }
+    @media (max-width: 430px) {
+      .metric-grid { grid-template-columns: 1fr !important; }
+      h1 { font-size: 2rem !important; }
+    }
+  </style>
+</head>
+<body>
+  <main id="appScreen" class="hidden min-h-screen">
+    <aside id="sidebar" class="glass h-screen p-4 overflow-y-auto" style="position:fixed;left:0;top:0;width:286px;">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <p class="text-xs uppercase tracking-[0.24em] gold font-bold">QUORVA</p>
+          <h2 class="serif text-2xl">Hotel Admin</h2>
+        </div>
+        <button class="btn lg:hidden" id="closeSidebar" title="Close menu"><i class="fas fa-times"></i></button>
+      </div>
+      <nav id="nav" class="space-y-1"></nav>
+      <div class="mt-6 pt-5 border-t" style="border-color:var(--line);">
+        <button id="themeToggle" class="btn w-full mb-2" type="button"><i class="fas fa-moon"></i> Theme</button>
+        <button id="logoutBtn" class="btn w-full danger-btn" type="button"><i class="fas fa-sign-out-alt"></i> Logout</button>
+      </div>
+    </aside>
+
+    <div id="mainShell" style="margin-left:286px;">
+      <div class="mobile-top items-center justify-between p-4">
+        <button class="btn" id="openSidebar" title="Open menu"><i class="fas fa-bars"></i></button>
+        <strong class="serif text-xl">Hotel Admin</strong>
+      </div>
+      <header class="page-pad p-6 lg:p-8">
+        <div class="toolbar flex items-center justify-between gap-4">
+          <div>
+            <p id="hotelNameLabel" class="text-xs uppercase tracking-[0.22em] gold font-bold">Hotel</p>
+            <h1 id="pageTitle" class="serif text-5xl">Dashboard</h1>
+          </div>
+          <div class="relative w-full max-w-xl">
+            <i class="fas fa-search absolute left-4 top-1/2 -translate-y-1/2" style="color:var(--muted);"></i>
+            <input id="globalSearch" class="input pl-11" type="search" placeholder="Search users, departments, roles, logs, reports">
+            <div id="searchResults" class="hidden glass absolute left-0 right-0 mt-2 rounded-2xl p-3 z-30"></div>
+          </div>
+        </div>
+      </header>
+      <div id="sections" class="page-pad px-6 lg:px-8 pb-8"></div>
+      <footer class="px-6 lg:px-8 pb-8 text-center text-xs" style="color:var(--muted);">Powered by PeerLoom Technologies</footer>
+    </div>
+  </main>
+
+  <div id="modal" class="modal">
+    <div class="modal-panel glass p-5">
+      <div class="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <p id="modalKicker" class="text-xs uppercase tracking-[0.2em] gold font-bold"></p>
+          <h2 id="modalTitle" class="serif text-3xl"></h2>
+        </div>
+        <button id="modalClose" class="btn" title="Close"><i class="fas fa-times"></i></button>
+      </div>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <script>
+  'use strict';
+  const API_BASE_URL =
+    window.location.protocol === 'file:' || !window.location.hostname ||
+    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:3000'
+      : 'https://hotelqrservices-production.up.railway.app';
+
+  const state = {
+    token: localStorage.getItem('hotelAdminToken'),
+    user: null,
+    page: 'dashboard',
+    usersPage: 1,
+    auditPage: 1,
+    cache: { users: [], roles: [], departments: [], shifts: [] }
+  };
+
+  const navItems = [
+    ['dashboard', 'fa-gauge-high', 'Dashboard'],
+    ['users', 'fa-users-gear', 'User Management'],
+    ['roles', 'fa-user-shield', 'Role Management'],
+    ['departments', 'fa-building-user', 'Departments'],
+    ['performance', 'fa-chart-line', 'Staff Performance'],
+    ['shifts', 'fa-business-time', 'Shifts'],
+    ['audit', 'fa-clipboard-list', 'Audit Logs'],
+    ['notifications', 'fa-bell', 'Notifications'],
+    ['reports', 'fa-file-export', 'Reports'],
+    ['settings', 'fa-sliders', 'Hotel Settings'],
+    ['security', 'fa-shield-halved', 'Security Center']
+  ];
+
+  const permissions = [
+    'View Requests', 'Complete Requests', 'Edit Requests', 'Delete Requests', 'Export Reports',
+    'Manage Staff', 'Manage Departments', 'View Analytics', 'Manage Settings'
+  ];
+
+  const $ = id => document.getElementById(id);
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const fmt = value => value ? new Date(value).toLocaleString() : 'Never';
+  const badge = value => `<span class="badge status-${esc(String(value || '').toLowerCase())}">${esc(value || 'Unknown')}</span>`;
+
+  async function api(endpoint, options = {}) {
+    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    if (state.token) headers.Authorization = `Bearer ${state.token}`;
+    const res = await fetch(API_BASE_URL + endpoint, { ...options, headers });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : {};
+    if (!res.ok) {
+      if (res.status === 401) clearSession();
+      throw new Error(data.error || `Request failed (${res.status})`);
+    }
+    return data;
+  }
+
+    function clearSession() {
+      localStorage.removeItem('hotelAdminToken');
+      localStorage.removeItem('hotelAdminUser');
+      state.token = null;
+      state.user = null;
+      window.location.href = 'index.html';
+    }
+
+  function skeleton(count = 4) {
+    return `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">${Array.from({length: count}, () => '<div class="skeleton"></div>').join('')}</div>`;
+  }
+
+  function emptyState(title, detail) {
+    return `<div class="card p-8 text-center">
+      <div class="mx-auto h-12 w-12 rounded-full grid place-items-center mb-3" style="background:var(--gold-soft);"><i class="fas fa-inbox gold"></i></div>
+      <h3 class="serif text-2xl">${esc(title)}</h3>
+      <p class="text-sm mt-1" style="color:var(--muted);">${esc(detail)}</p>
+    </div>`;
+  }
+
+  function errorState(message, retry) {
+    return `<div class="card p-6">
+      <p style="color:var(--danger);" class="font-semibold"><i class="fas fa-circle-exclamation mr-2"></i>${esc(message)}</p>
+      <button class="btn mt-4" onclick="${retry}"><i class="fas fa-rotate"></i> Retry</button>
+    </div>`;
+  }
+
+  function setSectionLoading(id) { $(id).innerHTML = skeleton(); }
+
+  function buildShell() {
+    $('nav').innerHTML = navItems.map(([id, icon, label]) => `
+      <button class="nav-btn ${state.page === id ? 'active' : ''}" data-page="${id}">
+        <i class="fas ${icon} w-5"></i><span>${label}</span>
+      </button>`).join('');
+    $('sections').innerHTML = navItems.map(([id, , label]) => `<section id="section-${id}" class="section ${state.page === id ? 'active' : ''}" aria-label="${label}"></section>`).join('');
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.page)));
+  }
+
+  function navigate(page) {
+    state.page = page;
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.page === page));
+    document.querySelectorAll('.section').forEach(section => section.classList.toggle('active', section.id === `section-${page}`));
+    $('pageTitle').textContent = navItems.find(item => item[0] === page)?.[2] || 'Hotel Admin';
+    document.body.classList.remove('sidebar-open');
+    loaders[page]();
+  }
+
+  function openModal(kicker, title, body) {
+    $('modalKicker').textContent = kicker;
+    $('modalTitle').textContent = title;
+    $('modalBody').innerHTML = body;
+    $('modal').classList.add('open');
+  }
+
+  function closeModal() { $('modal').classList.remove('open'); }
+
+  async function loadReferenceData() {
+    const [roles, departments, shifts, users] = await Promise.all([
+      api('/api/hotel-admin/roles'),
+      api('/api/hotel-admin/departments'),
+      api('/api/hotel-admin/shifts'),
+      api('/api/hotel-admin/users?limit=50')
+    ]);
+    state.cache.roles = roles;
+    state.cache.departments = departments;
+    state.cache.shifts = shifts;
+    state.cache.users = users.users || [];
+  }
+
+  async function loadDashboard() {
+    const section = $('section-dashboard');
+    setSectionLoading('section-dashboard');
+    try {
+      const [data, activity] = await Promise.all([api('/api/hotel-admin/dashboard'), api('/api/hotel-admin/activity')]);
+      $('hotelNameLabel').textContent = data.hotelName || 'Hotel';
+      const hour = new Date().getHours();
+      const greeting = hour < 12 ? 'Good Morning' : hour < 18 ? 'Good Afternoon' : 'Good Evening';
+      const metrics = [
+        ['Total Staff', data.metrics.totalStaff, 'fa-users'],
+        ['Online Staff', data.metrics.onlineStaff, 'fa-signal'],
+        ['Offline Staff', data.metrics.offlineStaff, 'fa-plug-circle-xmark'],
+        ['Active Departments', data.metrics.activeDepartments, 'fa-building'],
+        ['Pending Requests', data.metrics.pendingRequests, 'fa-hourglass-half'],
+        ['Completed Today', data.metrics.requestsCompletedToday, 'fa-circle-check'],
+        ['Avg Response', data.metrics.averageResponseTime, 'fa-clock'],
+        ['Active Shifts', data.metrics.activeShifts, 'fa-business-time'],
+        ['New Users This Month', data.metrics.newUsersThisMonth, 'fa-user-plus'],
+        ['Locked Accounts', data.metrics.lockedAccounts, 'fa-lock'],
+        ['Recent Logins', data.metrics.recentLogins, 'fa-right-to-bracket']
+      ];
+      section.innerHTML = `
+        <div class="glass rounded-[26px] p-6 mb-6">
+          <p class="text-sm gold font-bold">${greeting}, ${esc(data.greetingName || 'Admin')}</p>
+          <h2 class="serif text-4xl mt-1">Executive command center</h2>
+        </div>
+        <div class="metric-grid grid gap-4 mb-6" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
+          ${metrics.map(item => `<div class="card p-4">
+            <i class="fas ${item[2]} gold"></i>
+            <div class="text-3xl font-light mt-3">${esc(item[1])}</div>
+            <div class="text-xs uppercase tracking-wider mt-1" style="color:var(--muted);">${esc(item[0])}</div>
+          </div>`).join('')}
+        </div>
+        <div class="grid gap-5" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">
+          <div class="card p-5">
+            <h3 class="serif text-2xl mb-4">Live Activity Feed</h3>
+            ${activity.length ? `<div class="space-y-3">${activity.slice(0, 12).map(renderActivity).join('')}</div>` : emptyState('No activity yet', 'Audit events will appear here as staff actions occur.')}
+          </div>
+          <div class="card p-5">
+            <h3 class="serif text-2xl mb-4">Recent Logins</h3>
+            ${data.recentLogins.length ? `<div class="space-y-3">${data.recentLogins.map(login => `<div class="flex items-center justify-between gap-3">
+              <div><div class="font-semibold">${esc(login.full_name)}</div><div class="text-xs" style="color:var(--muted);">${esc(login.email)}</div></div>
+              <div class="text-xs text-right" style="color:var(--muted);">${fmt(login.last_login_at)}</div>
+            </div>`).join('')}</div>` : emptyState('No recent logins', 'Successful admin logins will appear here.')}
+          </div>
+        </div>`;
+    } catch (err) {
+      section.innerHTML = errorState(err.message, 'loadDashboard()');
+    }
+  }
+
+  function renderActivity(item) {
+    return `<div class="flex gap-3">
+      <div class="h-9 w-9 rounded-full grid place-items-center shrink-0" style="background:var(--gold-soft);"><i class="fas fa-bolt gold text-sm"></i></div>
+      <div>
+        <div class="font-semibold">${esc((item.action || '').replaceAll('_', ' '))}</div>
+        <div class="text-xs" style="color:var(--muted);">${esc(item.user_name || 'System')} · ${fmt(item.created_at)}</div>
+      </div>
+    </div>`;
+  }
+
+  async function loadUsers() {
+    const section = $('section-users');
+    setSectionLoading('section-users');
+    try {
+      await loadReferenceData();
+      const data = await api(`/api/hotel-admin/users?page=${state.usersPage}&limit=12`);
+      section.innerHTML = `
+        <div class="toolbar flex items-center justify-between gap-3 mb-4">
+          <div class="flex gap-2 flex-wrap">
+            <input id="userSearch" class="input" style="max-width:320px;" placeholder="Search users">
+            <select id="userStatus" style="max-width:190px;"><option value="">All statuses</option><option>active</option><option>suspended</option><option>locked</option></select>
+          </div>
+          <button class="btn gold-btn" onclick="showUserForm()"><i class="fas fa-user-plus"></i> Create User</button>
+        </div>
+        <div id="usersTable">${renderUsersTable(data)}</div>`;
+      $('userSearch').addEventListener('input', debounce(filterUsers, 350));
+      $('userStatus').addEventListener('change', filterUsers);
+    } catch (err) {
+      section.innerHTML = errorState(err.message, 'loadUsers()');
+    }
+  }
+
+  function renderUsersTable(data) {
+    if (!data.users.length) return emptyState('No users found', 'Create staff accounts to manage hotel operations.');
+    return `<div class="table-wrap"><table><thead><tr><th>User</th><th>Department</th><th>Role</th><th>Shift</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>
+      ${data.users.map(user => `<tr>
+        <td><div class="flex items-center gap-3">
+          <div class="h-10 w-10 rounded-full grid place-items-center overflow-hidden" style="background:var(--gold-soft);">${user.profilePhotoUrl ? `<img src="${esc(user.profilePhotoUrl)}" alt="" class="h-full w-full object-cover">` : `<span class="gold font-bold">${esc((user.fullName || '?').slice(0,1))}</span>`}</div>
+          <div><div class="font-semibold">${esc(user.fullName)}</div><div class="text-xs" style="color:var(--muted);">${esc(user.employeeId || user.email)}</div></div>
+        </div></td>
+        <td>${esc(user.department || 'Unassigned')}</td>
+        <td>${esc(user.role || 'Unassigned')}</td>
+        <td>${esc(user.shift || 'Unassigned')}</td>
+        <td>${badge(user.accountStatus)}</td>
+        <td>${fmt(user.lastLogin)}</td>
+        <td><div class="flex gap-2 flex-wrap">
+          <button class="btn" onclick="showUserProfile(${user.id})" title="View profile"><i class="fas fa-eye"></i></button>
+          <button class="btn" onclick="showUserForm(${user.id})" title="Edit user"><i class="fas fa-pen"></i></button>
+          <button class="btn" onclick="userAction(${user.id}, '${user.accountStatus === 'locked' ? 'unlock' : 'lock'}')" title="${user.accountStatus === 'locked' ? 'Unlock' : 'Lock'} account"><i class="fas ${user.accountStatus === 'locked' ? 'fa-lock-open' : 'fa-lock'}"></i></button>
+          <button class="btn" onclick="userAction(${user.id}, '${user.accountStatus === 'suspended' ? 'activate' : 'suspend'}')" title="${user.accountStatus === 'suspended' ? 'Activate' : 'Suspend'}"><i class="fas ${user.accountStatus === 'suspended' ? 'fa-user-check' : 'fa-user-slash'}"></i></button>
+          <button class="btn" onclick="userAction(${user.id}, 'force_password_reset')" title="Force password reset"><i class="fas fa-key"></i></button>
+          <button class="btn danger-btn" onclick="deleteUser(${user.id})" title="Delete user"><i class="fas fa-trash"></i></button>
+        </div></td>
+      </tr>`).join('')}
+    </tbody></table></div>
+    <div class="flex items-center justify-between mt-4">
+      <button class="btn" ${data.page <= 1 ? 'disabled' : ''} onclick="state.usersPage--; loadUsers();"><i class="fas fa-chevron-left"></i> Previous</button>
+      <span class="text-sm" style="color:var(--muted);">Page ${data.page} · ${data.total} users</span>
+      <button class="btn" ${data.page * data.limit >= data.total ? 'disabled' : ''} onclick="state.usersPage++; loadUsers();">Next <i class="fas fa-chevron-right"></i></button>
+    </div>`;
+  }
+
+  async function filterUsers() {
+    const search = encodeURIComponent($('userSearch').value);
+    const status = encodeURIComponent($('userStatus').value);
+    const data = await api(`/api/hotel-admin/users?page=1&limit=12&search=${search}&status=${status}`);
+    $('usersTable').innerHTML = renderUsersTable(data);
+  }
+
+  function optionList(items, selected, label = 'name') {
+    return `<option value="">Unassigned</option>${items.map(item => `<option value="${item.id}" ${Number(selected) === Number(item.id) ? 'selected' : ''}>${esc(item[label])}</option>`).join('')}`;
+  }
+
+  function showUserForm(id) {
+    const user = id ? state.cache.users.find(item => item.id === id) : {};
+    openModal('User Management', id ? 'Edit User' : 'Create User', `
+      <form id="userForm" class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+        <input name="fullName" class="input" placeholder="Full name" value="${esc(user?.fullName || '')}" required>
+        <input name="employeeId" class="input" placeholder="Employee ID" value="${esc(user?.employeeId || '')}">
+        <input name="email" class="input" type="email" placeholder="Email" value="${esc(user?.email || '')}" required>
+        <input name="phone" class="input" placeholder="Phone" value="${esc(user?.phone || '')}">
+        <select name="departmentId">${optionList(state.cache.departments, user?.departmentId)}</select>
+        <select name="roleId">${optionList(state.cache.roles, user?.roleId)}</select>
+        <select name="shiftId">${optionList(state.cache.shifts, user?.shiftId)}</select>
+        <select name="employmentStatus">${['active','inactive','leave','terminated'].map(status => `<option value="${status}" ${user?.employmentStatus === status ? 'selected' : ''}>${status}</option>`).join('')}</select>
+        <input name="profilePhotoUrl" class="input" placeholder="Profile photo URL" value="${esc(user?.profilePhotoUrl || '')}">
+        ${id ? '' : '<input name="password" class="input" type="password" placeholder="Temporary password" required>'}
+        <div class="col-span-full flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save</button></div>
+      </form>`);
+    $('userForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+      ['departmentId','roleId','shiftId'].forEach(key => payload[key] = payload[key] ? Number(payload[key]) : null);
+      await api(id ? `/api/hotel-admin/users/${id}` : '/api/hotel-admin/users', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+      closeModal();
+      loadUsers();
+    });
+  }
+
+  async function showUserProfile(id) {
+    const data = await api(`/api/hotel-admin/users/${id}`);
+    const u = data.user;
+    openModal('User Profile', u.fullName, `
+      <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+        ${[
+          ['Employee ID', u.employeeId], ['Department', u.department], ['Role', u.role], ['Email', u.email],
+          ['Phone', u.phone], ['Shift', u.shift], ['Employment Status', u.employmentStatus], ['Account Status', u.accountStatus],
+          ['Last Login', fmt(u.lastLogin)], ['Created Date', fmt(u.createdDate)]
+        ].map(([k,v]) => `<div class="card p-4"><div class="text-xs uppercase" style="color:var(--muted);">${k}</div><div class="font-semibold mt-1">${esc(v || 'Unassigned')}</div></div>`).join('')}
+      </div>
+      <h3 class="serif text-2xl mt-6 mb-3">Activity History</h3>
+      ${data.activity.length ? `<div class="space-y-3">${data.activity.map(renderActivity).join('')}</div>` : emptyState('No user activity', 'This profile has no recorded audit events yet.')}`);
+  }
+
+  async function userAction(id, action) {
+    await api(`/api/hotel-admin/users/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) });
+    loadUsers();
+  }
+
+  async function deleteUser(id) {
+    if (!confirm('Delete this user account?')) return;
+    await api(`/api/hotel-admin/users/${id}`, { method: 'DELETE' });
+    loadUsers();
+  }
+
+  async function loadRoles() {
+    const section = $('section-roles');
+    setSectionLoading('section-roles');
+    try {
+      const roles = await api('/api/hotel-admin/roles');
+      state.cache.roles = roles;
+      section.innerHTML = `
+        <div class="toolbar flex items-center justify-between mb-4"><p style="color:var(--muted);">Create custom roles and configure permissions.</p><button class="btn gold-btn" onclick="showRoleForm()"><i class="fas fa-plus"></i> Create Role</button></div>
+        ${roles.length ? `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">${roles.map(role => `<div class="card p-5">
+          <div class="flex justify-between gap-3"><h3 class="serif text-2xl">${esc(role.name)}</h3><span class="badge">${role.users} users</span></div>
+          <p class="text-sm mt-2 min-h-10" style="color:var(--muted);">${esc(role.description || '')}</p>
+          <div class="flex flex-wrap gap-2 mt-4">${Object.entries(role.permissions || {}).filter(([,v]) => v).map(([k]) => `<span class="badge status-active">${esc(k)}</span>`).join('') || '<span class="text-sm" style="color:var(--muted);">No permissions enabled</span>'}</div>
+          <div class="flex gap-2 mt-5"><button class="btn" onclick="showRoleForm(${role.id})"><i class="fas fa-pen"></i> Edit</button><button class="btn danger-btn" onclick="deleteRole(${role.id})"><i class="fas fa-trash"></i></button></div>
+        </div>`).join('')}</div>` : emptyState('No roles found', 'Create roles before assigning permissions to staff.')}`;
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadRoles()'); }
+  }
+
+  function showRoleForm(id) {
+    const role = id ? state.cache.roles.find(item => item.id === id) : { permissions: {} };
+    openModal('Role Management', id ? 'Edit Role' : 'Create Role', `
+      <form id="roleForm" class="space-y-4">
+        <input name="name" class="input" placeholder="Role name" value="${esc(role?.name || '')}" required>
+        <textarea name="description" placeholder="Description">${esc(role?.description || '')}</textarea>
+        <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+          ${permissions.map(permission => `<label class="card p-3 flex items-center gap-2"><input type="checkbox" name="permission" value="${esc(permission)}" ${role?.permissions?.[permission] ? 'checked' : ''}> <span>${esc(permission)}</span></label>`).join('')}
+        </div>
+        <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save</button></div>
+      </form>`);
+    $('roleForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const enabled = [...form.querySelectorAll('[name="permission"]:checked')].map(input => input.value);
+      const payload = { name: form.name.value, description: form.description.value, permissions: Object.fromEntries(permissions.map(p => [p, enabled.includes(p)])) };
+      await api(id ? `/api/hotel-admin/roles/${id}` : '/api/hotel-admin/roles', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+      closeModal(); loadRoles();
+    });
+  }
+
+  async function deleteRole(id) {
+    if (!confirm('Delete this role?')) return;
+    await api(`/api/hotel-admin/roles/${id}`, { method: 'DELETE' });
+    loadRoles();
+  }
+
+  async function loadDepartments() {
+    const section = $('section-departments');
+    setSectionLoading('section-departments');
+    try {
+      await loadReferenceData();
+      const departments = state.cache.departments;
+      section.innerHTML = `
+        <div class="toolbar flex items-center justify-between mb-4"><p style="color:var(--muted);">Manage hotel departments, managers, staff assignment and status.</p><button class="btn gold-btn" onclick="showDepartmentForm()"><i class="fas fa-plus"></i> Create Department</button></div>
+        ${departments.length ? `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">${departments.map(dept => `<div class="card p-5">
+          <div class="flex justify-between gap-3"><h3 class="serif text-2xl">${esc(dept.name)}</h3>${badge(dept.status)}</div>
+          <p class="text-sm mt-2" style="color:var(--muted);">Manager: ${esc(dept.manager || 'Unassigned')}</p>
+          <div class="grid grid-cols-3 gap-2 mt-4 text-center">
+            <div class="card p-3"><div class="font-bold">${dept.staff}</div><div class="text-xs" style="color:var(--muted);">Staff</div></div>
+            <div class="card p-3"><div class="font-bold">${dept.pendingRequests}</div><div class="text-xs" style="color:var(--muted);">Pending</div></div>
+            <div class="card p-3"><div class="font-bold">${dept.completedToday}</div><div class="text-xs" style="color:var(--muted);">Today</div></div>
+          </div>
+          <div class="flex gap-2 mt-5 flex-wrap"><button class="btn" onclick="showDepartmentForm(${dept.id})"><i class="fas fa-pen"></i> Edit</button><button class="btn" onclick="assignDepartmentStaff(${dept.id})"><i class="fas fa-users"></i> Assign Staff</button></div>
+        </div>`).join('')}</div>` : emptyState('No departments found', 'Create departments to organize hotel operations.')}`;
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadDepartments()'); }
+  }
+
+  function showDepartmentForm(id) {
+    const dept = id ? state.cache.departments.find(item => item.id === id) : {};
+    openModal('Department Management', id ? 'Edit Department' : 'Create Department', `
+      <form id="departmentForm" class="space-y-4">
+        <input name="name" class="input" placeholder="Department name" value="${esc(dept?.name || '')}" required>
+        <select name="managerId">${optionList(state.cache.users, dept?.managerId, 'fullName')}</select>
+        <select name="status"><option value="active" ${dept?.status === 'active' ? 'selected' : ''}>active</option><option value="inactive" ${dept?.status === 'inactive' ? 'selected' : ''}>inactive</option></select>
+        <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save</button></div>
+      </form>`);
+    $('departmentForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+      payload.managerId = payload.managerId ? Number(payload.managerId) : null;
+      await api(id ? `/api/hotel-admin/departments/${id}` : '/api/hotel-admin/departments', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+      closeModal(); loadDepartments();
+    });
+  }
+
+  function assignDepartmentStaff(id) {
+    const assigned = state.cache.users.filter(user => Number(user.departmentId) === Number(id)).map(user => user.id);
+    openModal('Department Management', 'Assign Staff', `
+      <form id="assignStaffForm" class="space-y-4">
+        <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+          ${state.cache.users.map(user => `<label class="card p-3 flex gap-2"><input type="checkbox" name="staff" value="${user.id}" ${assigned.includes(user.id) ? 'checked' : ''}> ${esc(user.fullName)}</label>`).join('') || emptyState('No staff available', 'Create users before assigning staff.')}
+        </div>
+        <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save</button></div>
+      </form>`);
+    $('assignStaffForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const staffIds = [...event.currentTarget.querySelectorAll('[name="staff"]:checked')].map(input => Number(input.value));
+      await api(`/api/hotel-admin/departments/${id}/staff`, { method: 'POST', body: JSON.stringify({ staffIds }) });
+      closeModal(); loadDepartments();
+    });
+  }
+
+  async function loadPerformance() {
+    const section = $('section-performance');
+    setSectionLoading('section-performance');
+    try {
+      const rows = await api('/api/hotel-admin/performance');
+      section.innerHTML = rows.length ? `<div class="grid gap-4">${rows.map(row => {
+        const score = Math.min(100, Number(row.completed_requests || 0) * 5);
+        return `<div class="card p-5">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-3"><div><h3 class="serif text-2xl">${esc(row.full_name)}</h3><p class="text-sm" style="color:var(--muted);">${esc(row.department_name || 'Unassigned')} · ${esc(row.attendance_status)}</p></div><span class="badge status-active">${esc(row.performance_rating)}</span></div>
+          <div class="chart-bar mb-4"><span style="width:${score}%"></span></div>
+          <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+            ${[
+              ['Completed Requests', row.completed_requests], ['Avg Completion', `${row.average_completion_time || 0} min`], ['Escalated Requests', row.escalated_requests],
+              ['CSAT', row.customer_satisfaction_score ?? 'Not recorded'], ['Late Requests', row.late_requests], ['Attendance', row.attendance_status]
+            ].map(([k,v]) => `<div class="card p-3"><div class="font-bold">${esc(v)}</div><div class="text-xs" style="color:var(--muted);">${esc(k)}</div></div>`).join('')}
+          </div>
+        </div>`;
+      }).join('')}</div>` : emptyState('No performance data', 'Staff performance appears once users and activity exist.');
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadPerformance()'); }
+  }
+
+  async function loadShifts() {
+    const section = $('section-shifts');
+    setSectionLoading('section-shifts');
+    try {
+      await loadReferenceData();
+      const shifts = state.cache.shifts;
+      section.innerHTML = `
+        <div class="toolbar flex items-center justify-between mb-4"><p style="color:var(--muted);">Assign staff and monitor current shift coverage.</p><button class="btn gold-btn" onclick="showShiftForm()"><i class="fas fa-plus"></i> Custom Shift</button></div>
+        ${shifts.length ? `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">${shifts.map(shift => `<div class="card p-5">
+          <div class="flex justify-between"><h3 class="serif text-2xl">${esc(shift.name)}</h3>${badge(shift.status)}</div>
+          <p class="text-sm mt-2" style="color:var(--muted);">${esc(shift.start_time || 'Open')} - ${esc(shift.end_time || 'Open')}</p>
+          <div class="text-3xl mt-4">${shift.staff_count || 0}</div><div class="text-xs uppercase" style="color:var(--muted);">Assigned staff</div>
+          <button class="btn mt-4" onclick="showShiftForm(${shift.id})"><i class="fas fa-pen"></i> Manage</button>
+        </div>`).join('')}</div>` : emptyState('No shifts found', 'Create Morning, Afternoon, Night, or custom shifts.')}`;
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadShifts()'); }
+  }
+
+  function showShiftForm(id) {
+    const shift = id ? state.cache.shifts.find(item => item.id === id) : {};
+    openModal('Shift Management', id ? 'Manage Shift' : 'Create Shift', `
+      <form id="shiftForm" class="space-y-4">
+        <input name="name" class="input" placeholder="Morning Shift, Afternoon Shift, Night Shift" value="${esc(shift?.name || '')}" required>
+        <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));"><input name="startTime" class="input" type="time" value="${esc(shift?.start_time || '')}"><input name="endTime" class="input" type="time" value="${esc(shift?.end_time || '')}"><select name="status"><option>active</option><option>inactive</option></select></div>
+        <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">${state.cache.users.map(user => `<label class="card p-3 flex gap-2"><input type="checkbox" name="staff" value="${user.id}" ${Number(user.shiftId) === Number(id) ? 'checked' : ''}> ${esc(user.fullName)}</label>`).join('')}</div>
+        <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save</button></div>
+      </form>`);
+    $('shiftForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+      payload.staffIds = [...event.currentTarget.querySelectorAll('[name="staff"]:checked')].map(input => Number(input.value));
+      await api(id ? `/api/hotel-admin/shifts/${id}` : '/api/hotel-admin/shifts', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+      closeModal(); loadShifts();
+    });
+  }
+
+  async function loadAudit() {
+    const section = $('section-audit');
+    setSectionLoading('section-audit');
+    try {
+      const data = await api(`/api/hotel-admin/audit-logs?page=${state.auditPage}&limit=25`);
+      section.innerHTML = data.logs.length ? `<div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>IP Address</th><th>Device</th></tr></thead><tbody>
+        ${data.logs.map(log => `<tr><td>${fmt(log.created_at)}</td><td>${esc(log.user_name || 'System')}</td><td>${esc(log.action.replaceAll('_',' '))}</td><td>${esc(log.ip_address || '')}</td><td>${esc(log.device || '')}</td></tr>`).join('')}
+      </tbody></table></div>` : emptyState('No audit logs', 'Security and administration events will appear here.');
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadAudit()'); }
+  }
+
+  async function loadNotifications() {
+    const section = $('section-notifications');
+    setSectionLoading('section-notifications');
+    try {
+      await loadReferenceData();
+      const rows = await api('/api/hotel-admin/notifications');
+      section.innerHTML = `
+        <div class="grid gap-5" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">
+          <form id="notificationForm" class="card p-5 space-y-4">
+            <h3 class="serif text-2xl">Send Notice</h3>
+            <input name="title" class="input" placeholder="Title" required>
+            <select name="type"><option value="announcement">Announcement</option><option value="department">Department Notice</option><option value="maintenance">Maintenance Notice</option></select>
+            <select name="departmentId">${optionList(state.cache.departments, null)}</select>
+            <textarea name="message" placeholder="Message" required></textarea>
+            <button class="btn gold-btn" type="submit"><i class="fas fa-paper-plane"></i> Send</button>
+          </form>
+          <div class="card p-5"><h3 class="serif text-2xl mb-4">Delivery Status</h3>${rows.length ? `<div class="space-y-3">${rows.map(row => `<div class="card p-3"><div class="flex justify-between gap-3"><strong>${esc(row.title)}</strong>${badge(row.delivery_status)}</div><p class="text-sm mt-2" style="color:var(--muted);">${esc(row.message)}</p><div class="text-xs mt-2" style="color:var(--muted);">${fmt(row.created_at)}</div></div>`).join('')}</div>` : emptyState('No notifications', 'Sent notices will appear here.')}</div>
+        </div>`;
+      $('notificationForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+        payload.departmentId = payload.departmentId ? Number(payload.departmentId) : null;
+        await api('/api/hotel-admin/notifications', { method: 'POST', body: JSON.stringify(payload) });
+        loadNotifications();
+      });
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadNotifications()'); }
+  }
+
+  async function loadReports() {
+    const section = $('section-reports');
+    setSectionLoading('section-reports');
+    try {
+      const data = await api('/api/hotel-admin/reports');
+      const reports = [
+        ['staff_performance','Staff Performance', data.staffPerformance.records],
+        ['department_performance','Department Performance', data.departmentPerformance.records],
+        ['user_activity','User Activity', data.userActivity.records],
+        ['request_summary','Request Summary', data.requestSummary.records],
+        ['completion_rates','Completion Rates', data.completionRates.records]
+      ];
+      section.innerHTML = `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">${reports.map(report => `<div class="card p-5">
+        <h3 class="serif text-2xl">${report[1]}</h3>
+        <div class="text-3xl mt-3">${report[2]}</div><div class="text-xs uppercase" style="color:var(--muted);">Available records</div>
+        <div class="flex gap-2 mt-5 flex-wrap"><button class="btn" onclick="exportReport('${report[0]}','csv')">CSV</button><button class="btn" onclick="exportReport('${report[0]}','excel')">Excel</button><button class="btn" onclick="window.print()">PDF</button></div>
+      </div>`).join('')}</div>`;
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadReports()'); }
+  }
+
+  function exportReport(type, format) {
+    window.location.href = `${API_BASE_URL}/api/hotel-admin/reports/export?type=${encodeURIComponent(type)}&format=${encodeURIComponent(format)}&token=${encodeURIComponent(state.token || '')}`;
+  }
+
+  async function loadSettings() {
+    const section = $('section-settings');
+    setSectionLoading('section-settings');
+    try {
+      const s = await api('/api/hotel-admin/settings');
+      section.innerHTML = `<form id="settingsForm" class="card p-5 grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">
+        <input name="hotelName" class="input" placeholder="Hotel Name" value="${esc(s.hotelName || '')}">
+        <input name="hotelLogoUrl" class="input" placeholder="Hotel Logo URL" value="${esc(s.hotelLogoUrl || '')}">
+        <input name="hotelAddress" class="input" placeholder="Hotel Address" value="${esc(s.hotelAddress || '')}">
+        <input name="contactEmail" class="input" placeholder="Contact Email" value="${esc(s.contactEmail || '')}">
+        <input name="contactPhone" class="input" placeholder="Contact Phone" value="${esc(s.contactPhone || '')}">
+        <input name="timezone" class="input" placeholder="Timezone" value="${esc(s.timezone || '')}">
+        <input name="language" class="input" placeholder="Language" value="${esc(s.language || '')}">
+        <input name="dateFormat" class="input" placeholder="Date Format" value="${esc(s.dateFormat || '')}">
+        <input name="primaryColor" class="input" type="color" value="${esc(s.brandColors?.primary || '#c9a227')}">
+        <label class="card p-3 flex items-center gap-2"><input name="emailEnabled" type="checkbox" ${s.emailSettings?.enabled ? 'checked' : ''}> Email notifications</label>
+        <label class="card p-3 flex items-center gap-2"><input name="pushEnabled" type="checkbox" ${s.notificationPreferences?.push ? 'checked' : ''}> Push notifications</label>
+        <div class="col-span-full flex justify-end"><button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save Settings</button></div>
+      </form>`;
+      $('settingsForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const payload = Object.fromEntries(new FormData(form).entries());
+        payload.brandColors = { primary: payload.primaryColor };
+        payload.emailSettings = { enabled: form.emailEnabled.checked };
+        payload.notificationPreferences = { push: form.pushEnabled.checked };
+        delete payload.primaryColor; delete payload.emailEnabled; delete payload.pushEnabled;
+        await api('/api/hotel-admin/settings', { method: 'PUT', body: JSON.stringify(payload) });
+        loadSettings();
+      });
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadSettings()'); }
+  }
+
+  async function loadSecurity() {
+    const section = $('section-security');
+    setSectionLoading('section-security');
+    try {
+      const data = await api('/api/hotel-admin/security');
+      section.innerHTML = `
+        <div class="metric-grid grid gap-4 mb-5" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));">
+          <div class="card p-5"><i class="fas fa-triangle-exclamation gold"></i><div class="text-3xl mt-3">${data.failedLoginAttempts}</div><div class="text-xs uppercase" style="color:var(--muted);">Failed Login Attempts</div></div>
+          <div class="card p-5"><i class="fas fa-lock gold"></i><div class="text-3xl mt-3">${data.lockedAccounts.length}</div><div class="text-xs uppercase" style="color:var(--muted);">Locked Accounts</div></div>
+        </div>
+        <div class="grid gap-5" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">
+          ${securityPanel('Locked Accounts', data.lockedAccounts.map(u => `${u.full_name} · ${u.email}`))}
+          ${securityPanel('Recent Password Changes', data.recentPasswordChanges.map(x => `${x.full_name || 'System'} · ${fmt(x.created_at)}`))}
+          ${securityPanel('Suspicious Activity', data.suspiciousActivity.map(x => `${x.action} · ${x.ip_address || ''}`))}
+          ${securityPanel('Recent Devices', data.recentDevices.map(x => `${x.device} · ${x.events} events`))}
+          ${securityPanel('Recent IP Addresses', data.recentIpAddresses.map(x => `${x.ip_address} · ${x.events} events`))}
+        </div>`;
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadSecurity()'); }
+  }
+
+  function securityPanel(title, rows) {
+    return `<div class="card p-5"><h3 class="serif text-2xl mb-3">${esc(title)}</h3>${rows.length ? `<div class="space-y-2">${rows.map(row => `<div class="card p-3 text-sm">${esc(row)}</div>`).join('')}</div>` : emptyState(`No ${title.toLowerCase()}`, 'Nothing has been recorded for this category.')}</div>`;
+  }
+
+  const loaders = { dashboard: loadDashboard, users: loadUsers, roles: loadRoles, departments: loadDepartments, performance: loadPerformance, shifts: loadShifts, audit: loadAudit, notifications: loadNotifications, reports: loadReports, settings: loadSettings, security: loadSecurity };
+
+  function debounce(fn, delay) {
+    let timer;
+    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); };
+  }
+
+  async function globalSearch() {
+    const q = $('globalSearch').value.trim();
+    if (!q) { $('searchResults').classList.add('hidden'); return; }
+    const data = await api(`/api/hotel-admin/search?q=${encodeURIComponent(q)}`);
+    const groups = Object.entries(data).filter(([,rows]) => rows.length);
+    $('searchResults').innerHTML = groups.length ? groups.map(([name, rows]) => `<div class="mb-3"><div class="text-xs uppercase gold font-bold mb-1">${esc(name)}</div>${rows.map(row => `<button class="w-full text-left p-2 rounded-lg hover:bg-[var(--gold-soft)]"><strong>${esc(row.label)}</strong><div class="text-xs" style="color:var(--muted);">${esc(row.detail || '')}</div></button>`).join('')}</div>`).join('') : '<div class="p-3 text-sm" style="color:var(--muted);">No results found</div>';
+    $('searchResults').classList.remove('hidden');
+  }
+
+  async function boot() {
+    buildShell();
+    $('modalClose').addEventListener('click', closeModal);
+    $('modal').addEventListener('click', event => { if (event.target.id === 'modal') closeModal(); });
+    $('openSidebar').addEventListener('click', () => document.body.classList.add('sidebar-open'));
+    $('closeSidebar').addEventListener('click', () => document.body.classList.remove('sidebar-open'));
+    $('themeToggle').addEventListener('click', () => {
+      document.documentElement.classList.toggle('dark');
+      document.documentElement.classList.toggle('light');
+      localStorage.setItem('hotelAdminTheme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+    });
+    if (localStorage.getItem('hotelAdminTheme') === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    }
+    $('logoutBtn').addEventListener('click', async () => { try { await api('/api/auth/hotel-admin/logout', { method: 'POST' }); } catch (e) {} clearSession(); });
+    $('globalSearch').addEventListener('input', debounce(globalSearch, 300));
+    if (state.token) {
+      try {
+        const me = await api('/api/hotel-admin/me');
+        state.user = me.user;
+        $('appScreen').classList.remove('hidden');
+        navigate('dashboard');
+      } catch (err) {
+        clearSession();
+      }
+    } else {
+      window.location.href = 'index.html';
+    }
+  }
+
+  boot();
+  </script>
+</body>
+</html>
