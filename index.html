@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LUXE Hotel Portal</title>
+  <title>QUORVA — Login</title>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -19,6 +19,7 @@
       --charcoal: #1C1A17;
       --charcoal-soft: #3A3630;
       --muted: #8A8070;
+      --error: #B3492F;
     }
 
     body {
@@ -39,22 +40,23 @@
       from { opacity: 0; transform: translateY(28px); }
       to   { opacity: 1; transform: translateY(0); }
     }
-    @keyframes shimmer {
-      0%   { background-position: -200% center; }
-      100% { background-position: 200% center; }
-    }
     @keyframes lineExpand {
       from { width: 0; opacity: 0; }
       to   { width: 72px; opacity: 1; }
     }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-6px); }
+      40%, 80% { transform: translateX(6px); }
+    }
 
     .portal-wrapper {
       width: 100%;
-      max-width: 720px;
+      max-width: 460px;
       background: #fff;
       border-radius: 28px;
       border: 1px solid rgba(201,168,76,0.25);
-      padding: 60px 56px 56px;
+      padding: 56px 48px 44px;
       box-shadow:
         0 4px 24px rgba(180,150,60,0.10),
         0 1px 3px rgba(180,150,60,0.08),
@@ -64,38 +66,45 @@
 
     .header {
       text-align: center;
-      margin-bottom: 48px;
+      margin-bottom: 40px;
       animation: fadeInUp 0.7s 0.1s cubic-bezier(0.22,1,0.36,1) both;
     }
 
-    .hotel-eyebrow {
+    .system-eyebrow {
       font-family: 'Montserrat', sans-serif;
       font-size: 10px;
       font-weight: 600;
       letter-spacing: 0.42em;
       text-transform: uppercase;
-      color: var(--gold);
-      background: linear-gradient(90deg, var(--gold) 0%, var(--gold-pale) 50%, var(--gold) 100%);
-      background-size: 200% auto;
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      animation: shimmer 3.5s linear infinite;
-      display: block;
-      margin-bottom: 20px;
+      color: var(--muted);
+      margin-bottom: 18px;
     }
 
-    h1 {
+    h1.brand {
       font-family: 'Cormorant Garamond', serif;
-      font-size: clamp(52px, 8vw, 72px);
+      font-size: clamp(46px, 9vw, 58px);
       font-weight: 300;
       line-height: 1;
-      letter-spacing: -0.01em;
+      letter-spacing: 0.04em;
       color: var(--charcoal);
     }
-    h1 em {
+    h1.brand em {
       font-style: italic;
       color: var(--gold);
+      font-weight: 600;
+    }
+
+    .powered-by {
+      margin-top: 10px;
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .powered-by span {
+      color: var(--gold);
+      font-weight: 600;
     }
 
     .gold-divider {
@@ -103,11 +112,12 @@
       align-items: center;
       justify-content: center;
       gap: 14px;
-      margin: 22px auto 20px;
+      margin: 24px auto 18px;
     }
     .gold-divider span {
       display: block;
       height: 1px;
+      width: 56px;
       background: linear-gradient(90deg, transparent, var(--gold), transparent);
       animation: lineExpand 0.8s 0.5s cubic-bezier(0.22,1,0.36,1) both;
     }
@@ -120,166 +130,229 @@
       opacity: 0.85;
     }
 
-    .header-sub {
-      font-size: 13px;
-      font-weight: 300;
-      letter-spacing: 0.06em;
-      color: var(--muted);
-      margin-top: 4px;
-    }
-
-    .cards-grid {
-      display: grid;
-      gap: 20px;
-      grid-template-columns: 1fr 1fr;
-    }
-
-    @media (max-width: 540px) {
-      .portal-wrapper { padding: 44px 28px 40px; }
-      .cards-grid { grid-template-columns: 1fr; }
-    }
-
-    .portal-card {
-      display: block;
-      background: #fff;
-      border-radius: 20px;
-      border: 1px solid rgba(201,168,76,0.28);
-      padding: 32px 28px 28px;
-      text-decoration: none;
-      color: inherit;
-      position: relative;
-      overflow: hidden;
-      transition: transform 0.35s cubic-bezier(0.22,1,0.36,1),
-                  box-shadow 0.35s cubic-bezier(0.22,1,0.36,1),
-                  border-color 0.35s ease;
-      animation: fadeInUp 0.7s 0.22s cubic-bezier(0.22,1,0.36,1) both;
-      box-shadow: 0 2px 12px rgba(180,150,60,0.07), 0 1px 3px rgba(0,0,0,0.04);
-    }
-
-    .portal-card::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(135deg, rgba(201,168,76,0.06) 0%, transparent 60%);
-      opacity: 0;
-      transition: opacity 0.35s ease;
-      border-radius: inherit;
-    }
-
-    .portal-card::after {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, transparent, var(--gold), transparent);
-      opacity: 0;
-      transition: opacity 0.35s ease;
-    }
-
-    .portal-card:hover {
-      transform: translateY(-5px);
-      border-color: rgba(201,168,76,0.65);
-      box-shadow:
-        0 16px 48px rgba(180,150,60,0.16),
-        0 4px 16px rgba(180,150,60,0.12),
-        0 0 0 1px rgba(201,168,76,0.2);
-    }
-    .portal-card:hover::before { opacity: 1; }
-    .portal-card:hover::after  { opacity: 1; }
-
-    .card-icon {
-      width: 44px;
-      height: 44px;
-      border-radius: 12px;
-      background: linear-gradient(135deg, rgba(201,168,76,0.14), rgba(201,168,76,0.06));
-      border: 1px solid rgba(201,168,76,0.3);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 22px;
-      transition: background 0.35s, border-color 0.35s;
-    }
-    .portal-card:hover .card-icon {
-      background: linear-gradient(135deg, rgba(201,168,76,0.25), rgba(201,168,76,0.1));
-      border-color: rgba(201,168,76,0.55);
-    }
-    .card-icon svg {
-      width: 20px; height: 20px;
-      stroke: var(--gold);
-      fill: none;
-      stroke-width: 1.5;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .card-role {
-      font-size: 9.5px;
-      font-weight: 600;
-      letter-spacing: 0.38em;
-      text-transform: uppercase;
-      color: var(--gold);
-      margin-bottom: 10px;
-      display: block;
-    }
-
-    .card-title {
+    .hotel-name {
       font-family: 'Cormorant Garamond', serif;
-      font-size: 26px;
-      font-weight: 600;
-      color: var(--charcoal);
-      line-height: 1.15;
-      margin-bottom: 10px;
-      letter-spacing: 0.01em;
-    }
-
-    .card-desc {
-      font-size: 12.5px;
-      font-weight: 300;
-      line-height: 1.75;
-      color: var(--muted);
+      font-style: italic;
+      font-size: 16px;
+      color: var(--charcoal-soft);
       letter-spacing: 0.02em;
     }
 
-    .card-arrow {
+    /* ---------------- FORM ---------------- */
+
+    form {
+      animation: fadeInUp 0.7s 0.22s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    .field-group {
+      margin-bottom: 22px;
+    }
+
+    .field-label {
+      display: block;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 9px;
+    }
+
+    .field-input-wrap {
+      position: relative;
+    }
+
+    .field-input-wrap svg {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      stroke: var(--muted);
+      fill: none;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+      transition: stroke 0.25s ease;
+    }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 14px 16px 14px 44px;
+      font-family: 'Montserrat', sans-serif;
+      font-size: 14px;
+      font-weight: 400;
+      color: var(--charcoal);
+      background: var(--ivory);
+      border: 1px solid rgba(201,168,76,0.25);
+      border-radius: 12px;
+      outline: none;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+    }
+    input[type="text"]::placeholder,
+    input[type="password"]::placeholder {
+      color: rgba(138,128,112,0.6);
+      font-weight: 300;
+    }
+    input[type="text"]:focus,
+    input[type="password"]:focus {
+      border-color: var(--gold);
+      background: #fff;
+      box-shadow: 0 0 0 4px var(--gold-dim);
+    }
+    .field-input-wrap:has(input:focus) svg {
+      stroke: var(--gold);
+    }
+
+    .password-toggle {
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
       display: flex;
       align-items: center;
-      gap: 6px;
-      margin-top: 22px;
-      font-size: 10px;
+      justify-content: center;
+    }
+    .password-toggle svg {
+      position: static;
+      width: 16px;
+      height: 16px;
+      stroke: var(--muted);
+      fill: none;
+      stroke-width: 1.6;
+      transform: none;
+    }
+    .password-toggle:hover svg { stroke: var(--gold); }
+
+    .form-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+      font-size: 12px;
+    }
+
+    .remember-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    .remember-wrap input[type="checkbox"] {
+      appearance: none;
+      width: 15px;
+      height: 15px;
+      border: 1px solid rgba(201,168,76,0.5);
+      border-radius: 4px;
+      cursor: pointer;
+      position: relative;
+      transition: background 0.25s ease, border-color 0.25s ease;
+      flex-shrink: 0;
+    }
+    .remember-wrap input[type="checkbox"]:checked {
+      background: var(--gold);
+      border-color: var(--gold);
+    }
+    .remember-wrap input[type="checkbox"]:checked::after {
+      content: '';
+      position: absolute;
+      left: 4px;
+      top: 1px;
+      width: 4px;
+      height: 8px;
+      border: solid #fff;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+
+    .forgot-link {
+      color: var(--gold);
+      text-decoration: none;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      transition: color 0.2s ease;
+    }
+    .forgot-link:hover { color: var(--charcoal); }
+
+    .submit-btn {
+      width: 100%;
+      padding: 15px;
+      background: linear-gradient(135deg, var(--gold) 0%, var(--gold-light) 100%);
+      border: none;
+      border-radius: 12px;
+      color: #fff;
+      font-family: 'Montserrat', sans-serif;
+      font-size: 11.5px;
       font-weight: 600;
       letter-spacing: 0.3em;
       text-transform: uppercase;
-      color: var(--gold);
-      opacity: 0;
-      transform: translateX(-6px);
-      transition: opacity 0.3s ease, transform 0.3s ease;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.3s cubic-bezier(0.22,1,0.36,1), box-shadow 0.3s ease;
+      box-shadow: 0 8px 24px rgba(201,168,76,0.28);
     }
-    .card-arrow svg {
-      width: 14px; height: 14px;
-      stroke: var(--gold);
+    .submit-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 32px rgba(201,168,76,0.38);
+    }
+    .submit-btn:active {
+      transform: translateY(0);
+    }
+    .submit-btn::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 100%; height: 100%;
+      background: linear-gradient(120deg, transparent, rgba(255,255,255,0.35), transparent);
+      transition: left 0.6s ease;
+    }
+    .submit-btn:hover::before { left: 100%; }
+
+    .error-msg {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      background: rgba(179,73,47,0.07);
+      border: 1px solid rgba(179,73,47,0.25);
+      color: var(--error);
+      font-size: 12px;
+      font-weight: 400;
+      padding: 11px 14px;
+      border-radius: 10px;
+      margin-bottom: 22px;
+    }
+    .error-msg.show {
+      display: flex;
+      animation: shake 0.4s ease;
+    }
+    .error-msg svg {
+      width: 15px; height: 15px;
+      stroke: var(--error);
       fill: none;
       stroke-width: 2;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      transition: transform 0.3s ease;
-    }
-    .portal-card:hover .card-arrow {
-      opacity: 1;
-      transform: translateX(0);
-    }
-    .portal-card:hover .card-arrow svg {
-      transform: translateX(3px);
+      flex-shrink: 0;
     }
 
     .footer-note {
       text-align: center;
-      margin-top: 36px;
+      margin-top: 34px;
       font-size: 10.5px;
-      letter-spacing: 0.18em;
+      letter-spacing: 0.16em;
       color: rgba(138,128,112,0.55);
       text-transform: uppercase;
       animation: fadeInUp 0.7s 0.38s cubic-bezier(0.22,1,0.36,1) both;
     }
+    .footer-note p + p { margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -287,50 +360,225 @@
   <div class="portal-wrapper">
 
     <div class="header">
-      <span class="hotel-eyebrow">LUXE Hotel</span>
-      <h1>Wel<em>come</em></h1>
+      <div class="system-eyebrow">Hospitality Management System</div>
+      <h1 class="brand">QUOR<em>VA</em></h1>
+      <div class="powered-by">Powered by <span>Peerloom Technologies</span></div>
+
       <div class="gold-divider">
-        <span style="width:72px"></span>
+        <span></span>
         <div class="diamond"></div>
-        <span style="width:72px"></span>
+        <span></span>
       </div>
-      <p class="header-sub">Choose your role and continue to the appropriate portal.</p>
+
+      <!-- Dynamic: replace with actual property/hotel name at render time -->
+      <div class="hotel-name" id="hotelName">LUXE Hotel</div>
     </div>
 
-    <div class="cards-grid">
+    <!-- ============================================================
+         LOGIN FORM
+         Front-end only for now. On submit:
+           1. Send credentials to auth endpoint (to be built)
+           2. Receive user role + assigned department/location
+           3. Redirect:
+              - role === 'staff'    -> department-specific dashboard
+                                       (e.g. /departments/{departmentSlug}/dashboard.html)
+              - role === 'director' -> director_dashboard.html
+              - role === 'hotel_admin' -> hotel_admin.html
+           4. Only 'admin' role can access user-creation tools,
+              enforced server-side, not just hidden in UI.
+         ============================================================ -->
+    <form id="loginForm" novalidate>
 
-      <a href="department_dashboard.html" class="portal-card">
-        <div class="card-icon">
-          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        </div>
-        <span class="card-role">Staff</span>
-        <div class="card-title">Staff Dashboard</div>
-        <p class="card-desc">View and manage incoming requests for your department.</p>
-        <div class="card-arrow">
-          Enter Portal
-          <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-        </div>
-      </a>
+      <div class="error-msg" id="errorMsg">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="errorText">Invalid username or password.</span>
+      </div>
 
-      <a href="director_dashboard.html" class="portal-card">
-        <div class="card-icon">
-          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><path d="M3 17h4m-2-2v4"/></svg>
+      <div class="field-group">
+        <label class="field-label" for="username">Username</label>
+        <div class="field-input-wrap">
+          <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <input type="text" id="username" name="username" placeholder="Enter your username" autocomplete="username" required>
         </div>
-        <span class="card-role">Manager</span>
-        <div class="card-title">Manager Portal</div>
-        <p class="card-desc">Monitor overall hotel operations, metrics, and requests.</p>
-        <div class="card-arrow">
-          Enter Portal
-          <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-        </div>
-      </a>
+      </div>
 
+      <div class="field-group">
+        <label class="field-label" for="password">Password</label>
+        <div class="field-input-wrap">
+          <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <input type="password" id="password" name="password" placeholder="Enter your password" autocomplete="current-password" required>
+          <button type="button" class="password-toggle" id="togglePassword" aria-label="Show password">
+            <svg viewBox="0 0 24 24" id="eyeIcon"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="form-meta">
+        <label class="remember-wrap">
+          <input type="checkbox" id="remember" name="remember">
+          Remember me
+        </label>
+        <a href="#" class="forgot-link">Forgot password?</a>
+      </div>
+
+      <button type="submit" class="submit-btn">Sign In</button>
+
+    </form>
+
+    <div class="footer-note">
+      <p>Private &nbsp;&bull;&nbsp; Authorised Access Only</p>
+      <p>&copy; 2025 Peerloom Technologies. All rights reserved.</p>
     </div>
-
-    <p class="footer-note">Private &nbsp;&bull;&nbsp; Authorised Access Only</p>
-    <p class="footer-note" style="margin-top: 10px; opacity: 0.7;">&copy; 2025 Peerloom Technologies. All rights reserved.</p>
 
   </div>
+
+  <script>
+    // Password show/hide toggle
+    const toggleBtn = document.getElementById('togglePassword');
+    const passwordInput = document.getElementById('password');
+    const eyeIcon = document.getElementById('eyeIcon');
+
+    toggleBtn.addEventListener('click', () => {
+      const isPassword = passwordInput.type === 'password';
+      passwordInput.type = isPassword ? 'text' : 'password';
+      eyeIcon.innerHTML = isPassword
+        ? '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>'
+        : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    });
+
+    // ============================================================
+    // LOGIN SUBMIT HANDLER
+    // Placeholder only — replace with real auth call.
+    // Expected flow once backend exists:
+    //
+    //   const res = await fetch('/api/auth/login', {
+    //     method: 'POST',
+    //     headers: { 'Content-Type': 'application/json' },
+    //     body: JSON.stringify({ username, password })
+    //   });
+    //   const data = await res.json();
+    //
+    //   if (!res.ok) {
+    //     showError(data.message || 'Invalid username or password.');
+    //     return;
+    //   }
+    //
+    //   // data.role: 'staff' | 'director' | 'hotel_admin'
+    //   // data.redirectUrl: server-determined destination
+    //   window.location.href = data.redirectUrl;
+    //
+    // ============================================================
+
+    const form = document.getElementById('loginForm');
+    const errorMsg = document.getElementById('errorMsg');
+    const errorText = document.getElementById('errorText');
+    const API_BASE_URL =
+      window.location.protocol === 'file:' || !window.location.hostname ||
+      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? 'http://localhost:3000'
+        : 'https://hotelqrservices-production.up.railway.app';
+
+    function showError(message) {
+      errorText.textContent = message;
+      errorMsg.classList.remove('show');
+      void errorMsg.offsetWidth; // restart animation
+      errorMsg.classList.add('show');
+    }
+
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!username || !password) {
+        showError('Please enter both username and password.');
+        return;
+      }
+
+      try {
+        const res = await fetch(API_BASE_URL + '/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok && data.role === 'hotel_admin') {
+          localStorage.setItem('hotelAdminToken', data.token);
+          localStorage.setItem('hotelAdminUser', JSON.stringify(data.user || {}));
+          window.location.href = data.redirectUrl || 'hotel_admin.html';
+          return;
+        }
+
+        if (res.ok && data.role === 'director') {
+          const name = data.user?.fullName || data.user?.username || username;
+          const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
+          const params = new URLSearchParams({ name, initials });
+          window.location.href = (data.redirectUrl || 'director_dashboard.html') + '?' + params.toString();
+          return;
+        }
+
+        // Backend was reached but responded with something other than a plain
+        // "wrong credentials" (401) — surface the real error instead of silently
+        // falling through to the demo-account check below, which just shows a
+        // generic "invalid username or password" and hides the actual problem
+        // (e.g. a 500 from a missing database table, a locked account, etc).
+        if (res.status !== 401) {
+          showError(data.error || `Server error (${res.status}). Please try again or contact your administrator.`);
+          return;
+        }
+      } catch (err) {
+        console.warn('Backend unreachable, checking demo credentials:', err.message);
+      }
+
+      // ================================================================
+      // DEMO CREDENTIAL ROUTING
+      // These are temporary hardcoded accounts for front-end preview only.
+      // Replace this entire block with a real fetch('/api/auth/login') call.
+      //
+      // Real flow:
+      //   POST /api/auth/login  { username, password }
+      //   Response: { role, name, initials, dept, redirectUrl }
+      //   Then: window.location.href = data.redirectUrl + '?' + params
+      //
+      // Roles:
+      //   'staff'    → department_dashboard.html?name=...&initials=...&dept=...
+      //   'director' → director_dashboard.html?name=...&initials=...
+      //   'hotel_admin' → hotel_admin.html after secure backend auth
+      // ================================================================
+
+      const DEMO_USERS = [
+        // --- STAFF ---
+        { username: 'mkofi',    password: 'staff123',    role: 'staff',    name: 'Moses Kofi',      initials: 'MK', dept: 'Housekeeping'  },
+        { username: 'abenaa',   password: 'staff123',    role: 'staff',    name: 'Abenaa Mensah',   initials: 'AM', dept: 'Maintenance'   },
+        { username: 'kwabena',  password: 'staff123',    role: 'staff',    name: 'Kwabena Asante',  initials: 'KA', dept: 'Room Service'  },
+        { username: 'efua',     password: 'staff123',    role: 'staff',    name: 'Efua Boateng',    initials: 'EB', dept: 'Concierge'     },
+        { username: 'nana',     password: 'staff123',    role: 'staff',    name: 'Nana Osei',       initials: 'NO', dept: 'Laundry'       },
+        // --- DIRECTOR ---
+        { username: 'director', password: 'director123', role: 'director', name: 'James Osei',      initials: 'JO', dept: null            },
+      ];
+
+      const match = DEMO_USERS.find(
+        u => u.username === username.toLowerCase() && u.password === password
+      );
+
+      if (!match) {
+        showError('Invalid username or password.');
+        return;
+      }
+
+      const params = new URLSearchParams({ name: match.name, initials: match.initials });
+
+      if (match.role === 'director') {
+        window.location.href = 'director_dashboard.html?' + params.toString();
+      } else {
+        // Staff — append department
+        params.set('dept', match.dept);
+        window.location.href = 'department_dashboard.html?' + params.toString();
+      }
+    });
+  </script>
 
 </body>
 </html>
