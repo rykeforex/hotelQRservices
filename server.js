@@ -10,6 +10,7 @@ const fs = require('fs');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
+
 console.log('CWD:', process.cwd());
 console.log('.env file exists:', fs.existsSync('.env'));
 
