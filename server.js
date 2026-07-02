@@ -92,6 +92,7 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/department_dashboard.html', (req, res) => res.sendFile(path.join(__dirname, 'department_dashboard.html')));
 app.get('/director_dashboard.html', (req, res) => res.sendFile(path.join(__dirname, 'director_dashboard.html')));
+app.get('/hotel_admin.html', (req, res) => res.sendFile(path.join(__dirname, 'hotel_admin.html')));
 app.get('/request.html', (req, res) => res.sendFile(path.join(__dirname, 'request.html')));
 app.get('/qr-generator.html', (req, res) => res.sendFile(path.join(__dirname, 'qr-generator.html')));
 
@@ -584,6 +585,926 @@ function getPlainPassword(department) {
   };
   return passwords[department];
 }
+
+function requireDatabase(res) {
+  if (!pool) {
+    res.status(503).json({ error: 'Database is not configured' });
+    return false;
+  }
+  return true;
+}
+
+function getClientIp(req) {
+  return String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '')
+    .split(',')[0]
+    .trim();
+}
+
+async function writeHotelAudit(hotelId, actorId, action, targetType, targetId, req, metadata = {}) {
+  if (!pool || !hotelId) return;
+  try {
+    await pool.query(
+      `INSERT INTO hotel_admin_audit_logs
+       (hotel_id, actor_user_id, action, target_type, target_id, ip_address, device, metadata, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())`,
+      [
+        hotelId,
+        actorId || null,
+        action,
+        targetType || null,
+        targetId ? String(targetId) : null,
+        getClientIp(req),
+        req.headers['user-agent'] || 'Unknown device',
+        metadata
+      ]
+    );
+  } catch (err) {
+    console.error('Hotel audit write failed:', err.message);
+  }
+}
+
+async function requireHotelAdmin(req, res, next) {
+  if (!requireDatabase(res)) return;
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : String(req.query.token || '');
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (payload.type !== 'hotel_admin') return res.status(403).json({ error: 'Hotel admin access required' });
+
+    const result = await pool.query(
+      `SELECT u.id, u.hotel_id, u.full_name, u.email, u.role_id, u.account_status, h.name AS hotel_name
+       FROM hotel_admin_users u
+       JOIN hotels h ON h.id = u.hotel_id
+       WHERE u.id = $1 AND u.hotel_id = $2 AND u.deleted_at IS NULL`,
+      [payload.userId, payload.hotelId]
+    );
+    const user = result.rows[0];
+    if (!user || user.account_status !== 'active') return res.status(401).json({ error: 'Account is not active' });
+
+    req.hotelAdmin = user;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid or expired session' });
+  }
+}
+
+function mapUserRow(row) {
+  return {
+    id: row.id,
+    profilePhotoUrl: row.profile_photo_url,
+    fullName: row.full_name,
+    employeeId: row.employee_id,
+    departmentId: row.department_id,
+    department: row.department_name,
+    roleId: row.role_id,
+    role: row.role_name,
+    email: row.email,
+    phone: row.phone,
+    shiftId: row.shift_id,
+    shift: row.shift_name,
+    employmentStatus: row.employment_status,
+    accountStatus: row.account_status,
+    lastLogin: row.last_login_at,
+    createdDate: row.created_at,
+    isOnline: Boolean(row.is_online),
+    forcePasswordReset: Boolean(row.force_password_reset)
+  };
+}
+
+function mapRoleRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    permissions: row.permissions || {},
+    users: Number(row.users || 0),
+    createdAt: row.created_at
+  };
+}
+
+function mapDepartmentRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    managerId: row.manager_id,
+    manager: row.manager_name,
+    staff: Number(row.staff || 0),
+    pendingRequests: Number(row.pending_requests || 0),
+    completedToday: Number(row.completed_today || 0),
+    averageCompletionMinutes: Number(row.average_completion_minutes || 0),
+    createdAt: row.created_at
+  };
+}
+
+app.post('/api/auth/hotel-admin', async (req, res) => {
+  if (!requireDatabase(res)) return;
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.hotel_id, u.full_name, u.email, u.password_hash, u.account_status, u.failed_login_attempts, h.name AS hotel_name
+       FROM hotel_admin_users u
+       JOIN hotels h ON h.id = u.hotel_id
+       WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
+       LIMIT 1`,
+      [email]
+    );
+    const user = result.rows[0];
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    if (user.account_status === 'locked' || user.account_status === 'suspended') {
+      await writeHotelAudit(user.hotel_id, user.id, 'blocked_login', 'user', user.id, req);
+      return res.status(423).json({ error: 'Account is not active' });
+    }
+
+    const valid = await bcrypt.compare(password, user.password_hash || '');
+    if (!valid) {
+      const failed = Number(user.failed_login_attempts || 0) + 1;
+      const nextStatus = failed >= 5 ? 'locked' : user.account_status;
+      await pool.query(
+        `UPDATE hotel_admin_users
+         SET failed_login_attempts = $1, account_status = $2, locked_at = CASE WHEN $2 = 'locked' THEN NOW() ELSE locked_at END
+         WHERE id = $3`,
+        [failed, nextStatus, user.id]
+      );
+      await writeHotelAudit(user.hotel_id, user.id, 'failed_login', 'user', user.id, req, { failedAttempts: failed });
+      return res.status(401).json({ error: failed >= 5 ? 'Account locked after failed attempts' : 'Invalid credentials' });
+    }
+
+    await pool.query(
+      `UPDATE hotel_admin_users
+       SET failed_login_attempts = 0, last_login_at = NOW(), last_seen_at = NOW(), is_online = TRUE
+       WHERE id = $1`,
+      [user.id]
+    );
+    await writeHotelAudit(user.hotel_id, user.id, 'login', 'user', user.id, req);
+
+    const token = jwt.sign(
+      { type: 'hotel_admin', userId: user.id, hotelId: user.hotel_id },
+      JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+    res.json({
+      token,
+      user: { id: user.id, hotelId: user.hotel_id, fullName: user.full_name, email: user.email, hotelName: user.hotel_name }
+    });
+  } catch (err) {
+    console.error('Hotel admin login failed:', err);
+    res.status(500).json({ error: 'Authentication failed' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+
+  if (pool) {
+    try {
+      const adminResult = await pool.query(
+        `SELECT u.id, u.hotel_id, u.full_name, u.email, u.password_hash, u.account_status, u.failed_login_attempts, h.name AS hotel_name
+         FROM hotel_admin_users u
+         JOIN hotels h ON h.id = u.hotel_id
+         WHERE (LOWER(u.email) = LOWER($1) OR LOWER(COALESCE(u.employee_id,'')) = LOWER($1))
+           AND u.deleted_at IS NULL
+         LIMIT 1`,
+        [username]
+      );
+      const admin = adminResult.rows[0];
+      if (admin) {
+        if (admin.account_status === 'locked' || admin.account_status === 'suspended') {
+          await writeHotelAudit(admin.hotel_id, admin.id, 'blocked_login', 'user', admin.id, req);
+          return res.status(423).json({ error: 'Account is not active' });
+        }
+
+        const validAdminPassword = await bcrypt.compare(password, admin.password_hash || '');
+        if (!validAdminPassword) {
+          const failed = Number(admin.failed_login_attempts || 0) + 1;
+          const nextStatus = failed >= 5 ? 'locked' : admin.account_status;
+          await pool.query(
+            `UPDATE hotel_admin_users
+             SET failed_login_attempts = $1, account_status = $2, locked_at = CASE WHEN $2 = 'locked' THEN NOW() ELSE locked_at END
+             WHERE id = $3`,
+            [failed, nextStatus, admin.id]
+          );
+          await writeHotelAudit(admin.hotel_id, admin.id, 'failed_login', 'user', admin.id, req, { failedAttempts: failed });
+          return res.status(401).json({ error: failed >= 5 ? 'Account locked after failed attempts' : 'Invalid credentials' });
+        }
+
+        await pool.query(
+          `UPDATE hotel_admin_users
+           SET failed_login_attempts = 0, last_login_at = NOW(), last_seen_at = NOW(), is_online = TRUE
+           WHERE id = $1`,
+          [admin.id]
+        );
+        await writeHotelAudit(admin.hotel_id, admin.id, 'login', 'user', admin.id, req);
+
+        const token = jwt.sign(
+          { type: 'hotel_admin', userId: admin.id, hotelId: admin.hotel_id },
+          JWT_SECRET,
+          { expiresIn: '8h' }
+        );
+        return res.json({
+          role: 'hotel_admin',
+          redirectUrl: 'hotel_admin.html',
+          token,
+          user: {
+            id: admin.id,
+            hotelId: admin.hotel_id,
+            fullName: admin.full_name,
+            email: admin.email,
+            hotelName: admin.hotel_name
+          }
+        });
+      }
+    } catch (err) {
+      console.error('Unified hotel admin login failed:', err);
+      return res.status(500).json({ error: 'Authentication failed' });
+    }
+  }
+
+  try {
+    const directors = await supabaseSelect('director', { username: `eq.${username}` });
+    const row = directors[0];
+    if (row && password === 'pearl') {
+      const token = jwt.sign({ type: 'director', username: row.username }, JWT_SECRET, { expiresIn: '8h' });
+      return res.json({
+        role: 'director',
+        redirectUrl: 'director_dashboard.html',
+        token,
+        user: { username: row.username, fullName: row.username }
+      });
+    }
+  } catch (err) {
+    console.warn('Unified director lookup failed:', err.message || err);
+  }
+
+  return res.status(401).json({ error: 'Invalid credentials' });
+});
+
+app.post('/api/auth/hotel-admin/logout', requireHotelAdmin, async (req, res) => {
+  try {
+    await pool.query('UPDATE hotel_admin_users SET is_online = FALSE, last_seen_at = NOW() WHERE id = $1', [req.hotelAdmin.id]);
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'logout', 'user', req.hotelAdmin.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+app.post('/api/auth/hotel-admin/password-reset', async (req, res) => {
+  if (!requireDatabase(res)) return;
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+  try {
+    const result = await pool.query('SELECT id, hotel_id FROM hotel_admin_users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL', [email]);
+    const user = result.rows[0];
+    if (user) {
+      await pool.query(
+        `INSERT INTO hotel_admin_password_resets (hotel_id, user_id, email, status, created_at)
+         VALUES ($1,$2,$3,'pending',NOW())`,
+        [user.hotel_id, user.id, email]
+      );
+      await writeHotelAudit(user.hotel_id, user.id, 'password_reset_requested', 'user', user.id, req);
+    }
+    res.status(202).json({ ok: true });
+  } catch (err) {
+    console.error('Hotel admin password reset failed:', err);
+    res.status(500).json({ error: 'Password reset request failed' });
+  }
+});
+
+app.get('/api/hotel-admin/me', requireHotelAdmin, async (req, res) => {
+  res.json({ user: req.hotelAdmin });
+});
+
+app.get('/api/hotel-admin/dashboard', requireHotelAdmin, async (req, res) => {
+  const hotelId = req.hotelAdmin.hotel_id;
+  try {
+    const [staff, depts, requests, resets, shifts, recentLogins] = await Promise.all([
+      pool.query(
+        `SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE is_online = TRUE AND account_status = 'active')::int AS online,
+          COUNT(*) FILTER (WHERE COALESCE(is_online,FALSE) = FALSE AND account_status = 'active')::int AS offline,
+          COUNT(*) FILTER (WHERE created_at >= date_trunc('month', NOW()))::int AS new_this_month,
+          COUNT(*) FILTER (WHERE account_status = 'locked')::int AS locked
+         FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL`,
+        [hotelId]
+      ),
+      pool.query(`SELECT COUNT(*)::int AS active FROM hotel_admin_departments WHERE hotel_id = $1 AND status = 'active'`, [hotelId]),
+      pool.query(
+        `SELECT
+          COUNT(*) FILTER (WHERE status IN ('pending','in-progress'))::int AS pending,
+          COUNT(*) FILTER (WHERE status = 'completed' AND updated_at::date = CURRENT_DATE)::int AS completed_today,
+          COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')),0)::int AS avg_response
+         FROM requests`,
+      ),
+      pool.query(`SELECT COUNT(*)::int AS pending FROM hotel_admin_password_resets WHERE hotel_id = $1 AND status = 'pending'`, [hotelId]),
+      pool.query(`SELECT COUNT(*)::int AS active FROM hotel_admin_shifts WHERE hotel_id = $1 AND status = 'active'`, [hotelId]),
+      pool.query(
+        `SELECT full_name, email, last_login_at FROM hotel_admin_users
+         WHERE hotel_id = $1 AND last_login_at IS NOT NULL AND deleted_at IS NULL
+         ORDER BY last_login_at DESC LIMIT 6`,
+        [hotelId]
+      )
+    ]);
+    const s = staff.rows[0] || {};
+    const r = requests.rows[0] || {};
+    res.json({
+      greetingName: req.hotelAdmin.full_name,
+      hotelName: req.hotelAdmin.hotel_name,
+      metrics: {
+        totalStaff: s.total || 0,
+        onlineStaff: s.online || 0,
+        offlineStaff: s.offline || 0,
+        activeDepartments: depts.rows[0]?.active || 0,
+        pendingRequests: Number(r.pending || 0) + Number(resets.rows[0]?.pending || 0),
+        requestsCompletedToday: r.completed_today || 0,
+        averageResponseTime: `${r.avg_response || 0} min`,
+        activeShifts: shifts.rows[0]?.active || 0,
+        newUsersThisMonth: s.new_this_month || 0,
+        lockedAccounts: s.locked || 0,
+        recentLogins: recentLogins.rows.length
+      },
+      recentLogins: recentLogins.rows
+    });
+  } catch (err) {
+    console.error('Hotel admin dashboard failed:', err);
+    res.status(500).json({ error: 'Failed to load dashboard' });
+  }
+});
+
+app.get('/api/hotel-admin/activity', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT a.id, a.action, a.target_type, a.target_id, a.ip_address, a.device, a.created_at,
+              u.full_name AS user_name, u.email AS user_email
+       FROM hotel_admin_audit_logs a
+       LEFT JOIN hotel_admin_users u ON u.id = a.actor_user_id
+       WHERE a.hotel_id = $1
+       ORDER BY a.created_at DESC
+       LIMIT 80`,
+      [req.hotelAdmin.hotel_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load activity' });
+  }
+});
+
+app.get('/api/hotel-admin/users', requireHotelAdmin, async (req, res) => {
+  const hotelId = req.hotelAdmin.hotel_id;
+  const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '12', 10), 1), 50);
+  const offset = (page - 1) * limit;
+  const search = `%${String(req.query.search || '').trim()}%`;
+  const status = req.query.status ? String(req.query.status) : null;
+  const department = req.query.department ? Number(req.query.department) : null;
+  try {
+    const params = [hotelId, search, status, department, limit, offset];
+    const where = `u.hotel_id = $1 AND u.deleted_at IS NULL
+      AND ($2 = '%%' OR u.full_name ILIKE $2 OR u.email ILIKE $2 OR u.employee_id ILIKE $2)
+      AND ($3::text IS NULL OR u.account_status = $3)
+      AND ($4::int IS NULL OR u.department_id = $4)`;
+    const data = await pool.query(
+      `SELECT u.*, d.name AS department_name, r.name AS role_name, s.name AS shift_name,
+              COUNT(*) OVER()::int AS total_count
+       FROM hotel_admin_users u
+       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+       LEFT JOIN hotel_admin_roles r ON r.id = u.role_id
+       LEFT JOIN hotel_admin_shifts s ON s.id = u.shift_id
+       WHERE ${where}
+       ORDER BY u.created_at DESC
+       LIMIT $5 OFFSET $6`,
+      params
+    );
+    res.json({
+      users: data.rows.map(mapUserRow),
+      total: data.rows[0]?.total_count || 0,
+      page,
+      limit
+    });
+  } catch (err) {
+    console.error('Hotel admin users failed:', err);
+    res.status(500).json({ error: 'Failed to load users' });
+  }
+});
+
+app.post('/api/hotel-admin/users', requireHotelAdmin, async (req, res) => {
+  const hotelId = req.hotelAdmin.hotel_id;
+  const { fullName, employeeId, departmentId, roleId, email, phone, shiftId, employmentStatus, accountStatus, password, profilePhotoUrl } = req.body;
+  if (!fullName || !email || !password) return res.status(400).json({ error: 'Full name, email and password are required' });
+  try {
+    const passwordHash = await bcrypt.hash(password, 12);
+    const result = await pool.query(
+      `INSERT INTO hotel_admin_users
+       (hotel_id, full_name, employee_id, department_id, role_id, email, phone, shift_id, employment_status, account_status, password_hash, profile_photo_url, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,LOWER($6),$7,$8,$9,$10,$11,$12,NOW(),NOW())
+       RETURNING *`,
+      [hotelId, fullName, employeeId || null, departmentId || null, roleId || null, email, phone || null, shiftId || null, employmentStatus || 'active', accountStatus || 'active', passwordHash, profilePhotoUrl || null]
+    );
+    await writeHotelAudit(hotelId, req.hotelAdmin.id, 'user_created', 'user', result.rows[0].id, req, { email });
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    const message = err.code === '23505' ? 'A user with that email or employee ID already exists' : 'Failed to create user';
+    res.status(err.code === '23505' ? 409 : 500).json({ error: message });
+  }
+});
+
+app.get('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => {
+  try {
+    const userResult = await pool.query(
+      `SELECT u.*, d.name AS department_name, r.name AS role_name, s.name AS shift_name
+       FROM hotel_admin_users u
+       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+       LEFT JOIN hotel_admin_roles r ON r.id = u.role_id
+       LEFT JOIN hotel_admin_shifts s ON s.id = u.shift_id
+       WHERE u.id = $1 AND u.hotel_id = $2 AND u.deleted_at IS NULL`,
+      [req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!userResult.rows.length) return res.status(404).json({ error: 'User not found' });
+    const activity = await pool.query(
+      `SELECT action, target_type, ip_address, device, created_at
+       FROM hotel_admin_audit_logs
+       WHERE hotel_id = $1 AND (actor_user_id = $2 OR target_id = $3)
+       ORDER BY created_at DESC LIMIT 50`,
+      [req.hotelAdmin.hotel_id, req.params.id, String(req.params.id)]
+    );
+    res.json({ user: mapUserRow(userResult.rows[0]), activity: activity.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load user profile' });
+  }
+});
+
+app.put('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => {
+  const { fullName, employeeId, departmentId, roleId, email, phone, shiftId, employmentStatus, profilePhotoUrl } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE hotel_admin_users
+       SET full_name = COALESCE($1, full_name),
+           employee_id = $2,
+           department_id = $3,
+           role_id = $4,
+           email = COALESCE(LOWER($5), email),
+           phone = $6,
+           shift_id = $7,
+           employment_status = COALESCE($8, employment_status),
+           profile_photo_url = $9,
+           updated_at = NOW()
+       WHERE id = $10 AND hotel_id = $11 AND deleted_at IS NULL
+       RETURNING *`,
+      [fullName || null, employeeId || null, departmentId || null, roleId || null, email || null, phone || null, shiftId || null, employmentStatus || null, profilePhotoUrl || null, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'profile_updated', 'user', req.params.id, req);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+app.post('/api/hotel-admin/users/:id/action', requireHotelAdmin, async (req, res) => {
+  const actions = {
+    suspend: { account_status: 'suspended' },
+    activate: { account_status: 'active', failed_login_attempts: 0, locked_at: null },
+    lock: { account_status: 'locked', locked_at: new Date() },
+    unlock: { account_status: 'active', failed_login_attempts: 0, locked_at: null },
+    force_password_reset: { force_password_reset: true }
+  };
+  const patch = actions[req.body.action];
+  if (!patch) return res.status(400).json({ error: 'Invalid user action' });
+  try {
+    const keys = Object.keys(patch);
+    const setSql = keys.map((key, i) => `${key} = $${i + 1}`).join(', ');
+    const values = keys.map(key => patch[key]);
+    const result = await pool.query(
+      `UPDATE hotel_admin_users SET ${setSql}, updated_at = NOW()
+       WHERE id = $${values.length + 1} AND hotel_id = $${values.length + 2} AND deleted_at IS NULL
+       RETURNING id, account_status, force_password_reset`,
+      [...values, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, req.body.action, 'user', req.params.id, req);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update account' });
+  }
+});
+
+app.delete('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE hotel_admin_users SET deleted_at = NOW(), account_status = 'deleted'
+       WHERE id = $1 AND hotel_id = $2 AND deleted_at IS NULL RETURNING id`,
+      [req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'user_deleted', 'user', req.params.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+app.get('/api/hotel-admin/roles', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT r.*, COUNT(u.id)::int AS users
+       FROM hotel_admin_roles r
+       LEFT JOIN hotel_admin_users u ON u.role_id = r.id AND u.deleted_at IS NULL
+       WHERE r.hotel_id = $1
+       GROUP BY r.id
+       ORDER BY r.name`,
+      [req.hotelAdmin.hotel_id]
+    );
+    res.json(result.rows.map(mapRoleRow));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load roles' });
+  }
+});
+
+app.post('/api/hotel-admin/roles', requireHotelAdmin, async (req, res) => {
+  const { name, description, permissions } = req.body;
+  if (!name) return res.status(400).json({ error: 'Role name required' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO hotel_admin_roles (hotel_id, name, description, permissions, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,NOW(),NOW()) RETURNING *`,
+      [req.hotelAdmin.hotel_id, name, description || null, permissions || {}]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'role_created', 'role', result.rows[0].id, req);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create role' });
+  }
+});
+
+app.put('/api/hotel-admin/roles/:id', requireHotelAdmin, async (req, res) => {
+  const { name, description, permissions } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE hotel_admin_roles SET name = COALESCE($1,name), description = $2, permissions = COALESCE($3,permissions), updated_at = NOW()
+       WHERE id = $4 AND hotel_id = $5 RETURNING *`,
+      [name || null, description || null, permissions || null, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Role not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'role_updated', 'role', req.params.id, req);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update role' });
+  }
+});
+
+app.delete('/api/hotel-admin/roles/:id', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM hotel_admin_roles WHERE id = $1 AND hotel_id = $2 RETURNING id', [req.params.id, req.hotelAdmin.hotel_id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Role not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'role_deleted', 'role', req.params.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete role' });
+  }
+});
+
+app.get('/api/hotel-admin/departments', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT d.*, m.full_name AS manager_name, COUNT(u.id)::int AS staff,
+              0::int AS pending_requests, 0::int AS completed_today, 0::int AS average_completion_minutes
+       FROM hotel_admin_departments d
+       LEFT JOIN hotel_admin_users m ON m.id = d.manager_id
+       LEFT JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
+       WHERE d.hotel_id = $1
+       GROUP BY d.id, m.full_name
+       ORDER BY d.name`,
+      [req.hotelAdmin.hotel_id]
+    );
+    res.json(result.rows.map(mapDepartmentRow));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load departments' });
+  }
+});
+
+app.post('/api/hotel-admin/departments', requireHotelAdmin, async (req, res) => {
+  const { name, managerId } = req.body;
+  if (!name) return res.status(400).json({ error: 'Department name required' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO hotel_admin_departments (hotel_id, name, manager_id, status, created_at, updated_at)
+       VALUES ($1,$2,$3,'active',NOW(),NOW()) RETURNING *`,
+      [req.hotelAdmin.hotel_id, name, managerId || null]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_created', 'department', result.rows[0].id, req);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create department' });
+  }
+});
+
+app.put('/api/hotel-admin/departments/:id', requireHotelAdmin, async (req, res) => {
+  const { name, managerId, status } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE hotel_admin_departments SET name = COALESCE($1,name), manager_id = $2, status = COALESCE($3,status), updated_at = NOW()
+       WHERE id = $4 AND hotel_id = $5 RETURNING *`,
+      [name || null, managerId || null, status || null, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Department not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_updated', 'department', req.params.id, req);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update department' });
+  }
+});
+
+app.post('/api/hotel-admin/departments/:id/staff', requireHotelAdmin, async (req, res) => {
+  const staffIds = Array.isArray(req.body.staffIds) ? req.body.staffIds : [];
+  try {
+    await pool.query(
+      `UPDATE hotel_admin_users SET department_id = $1, updated_at = NOW()
+       WHERE hotel_id = $2 AND id = ANY($3::int[]) AND deleted_at IS NULL`,
+      [req.params.id, req.hotelAdmin.hotel_id, staffIds]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_staff_assigned', 'department', req.params.id, req, { staffIds });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to assign staff' });
+  }
+});
+
+app.get('/api/hotel-admin/performance', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.full_name, d.name AS department_name, u.is_online,
+              COUNT(a.id) FILTER (WHERE a.action IN ('request_completed','complete_requests'))::int AS completed_requests,
+              0::int AS average_completion_time,
+              COUNT(a.id) FILTER (WHERE a.action ILIKE '%escalat%')::int AS escalated_requests,
+              NULL::numeric AS customer_satisfaction_score,
+              0::int AS late_requests,
+              CASE WHEN u.is_online THEN 'Present' ELSE 'Offline' END AS attendance_status,
+              CASE
+                WHEN COUNT(a.id) FILTER (WHERE a.action IN ('request_completed','complete_requests')) >= 20 THEN 'Excellent'
+                WHEN COUNT(a.id) FILTER (WHERE a.action IN ('request_completed','complete_requests')) >= 10 THEN 'Strong'
+                WHEN u.is_online THEN 'Active'
+                ELSE 'Unrated'
+              END AS performance_rating
+       FROM hotel_admin_users u
+       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+       LEFT JOIN hotel_admin_audit_logs a ON a.actor_user_id = u.id AND a.created_at >= NOW() - INTERVAL '30 days'
+       WHERE u.hotel_id = $1 AND u.deleted_at IS NULL
+       GROUP BY u.id, d.name
+       ORDER BY completed_requests DESC, u.full_name`,
+      [req.hotelAdmin.hotel_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load performance' });
+  }
+});
+
+app.get('/api/hotel-admin/shifts', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT s.*, COUNT(u.id)::int AS staff_count
+       FROM hotel_admin_shifts s
+       LEFT JOIN hotel_admin_users u ON u.shift_id = s.id AND u.deleted_at IS NULL
+       WHERE s.hotel_id = $1
+       GROUP BY s.id
+       ORDER BY s.start_time NULLS LAST, s.name`,
+      [req.hotelAdmin.hotel_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load shifts' });
+  }
+});
+
+app.post('/api/hotel-admin/shifts', requireHotelAdmin, async (req, res) => {
+  const { name, startTime, endTime, status } = req.body;
+  if (!name) return res.status(400).json({ error: 'Shift name required' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO hotel_admin_shifts (hotel_id, name, start_time, end_time, status, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,NOW(),NOW()) RETURNING *`,
+      [req.hotelAdmin.hotel_id, name, startTime || null, endTime || null, status || 'active']
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'shift_created', 'shift', result.rows[0].id, req);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create shift' });
+  }
+});
+
+app.put('/api/hotel-admin/shifts/:id', requireHotelAdmin, async (req, res) => {
+  const { name, startTime, endTime, status, staffIds } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE hotel_admin_shifts SET name = COALESCE($1,name), start_time = $2, end_time = $3, status = COALESCE($4,status), updated_at = NOW()
+       WHERE id = $5 AND hotel_id = $6 RETURNING *`,
+      [name || null, startTime || null, endTime || null, status || null, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Shift not found' });
+    if (Array.isArray(staffIds)) {
+      await pool.query(
+        `UPDATE hotel_admin_users SET shift_id = $1, updated_at = NOW()
+         WHERE hotel_id = $2 AND id = ANY($3::int[]) AND deleted_at IS NULL`,
+        [req.params.id, req.hotelAdmin.hotel_id, staffIds]
+      );
+    }
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'shift_updated', 'shift', req.params.id, req);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update shift' });
+  }
+});
+
+app.get('/api/hotel-admin/audit-logs', requireHotelAdmin, async (req, res) => {
+  const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 100);
+  try {
+    const result = await pool.query(
+      `SELECT a.*, u.full_name AS user_name, COUNT(*) OVER()::int AS total_count
+       FROM hotel_admin_audit_logs a
+       LEFT JOIN hotel_admin_users u ON u.id = a.actor_user_id
+       WHERE a.hotel_id = $1
+       ORDER BY a.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [req.hotelAdmin.hotel_id, limit, (page - 1) * limit]
+    );
+    res.json({ logs: result.rows, total: result.rows[0]?.total_count || 0, page, limit });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load audit logs' });
+  }
+});
+
+app.get('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM hotel_admin_notifications WHERE hotel_id = $1 ORDER BY created_at DESC LIMIT 100`,
+      [req.hotelAdmin.hotel_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load notifications' });
+  }
+});
+
+app.post('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) => {
+  const { title, message, type, departmentId } = req.body;
+  if (!title || !message) return res.status(400).json({ error: 'Title and message required' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO hotel_admin_notifications
+       (hotel_id, sender_user_id, department_id, type, title, message, delivery_status, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'queued',NOW()) RETURNING *`,
+      [req.hotelAdmin.hotel_id, req.hotelAdmin.id, departmentId || null, type || 'announcement', title, message]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'notification_sent', 'notification', result.rows[0].id, req);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to send notification' });
+  }
+});
+
+app.get('/api/hotel-admin/reports', requireHotelAdmin, async (req, res) => {
+  try {
+    const [users, depts, perf] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL`, [req.hotelAdmin.hotel_id]),
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_departments WHERE hotel_id = $1`, [req.hotelAdmin.hotel_id]),
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`, [req.hotelAdmin.hotel_id])
+    ]);
+    res.json({
+      staffPerformance: { records: users.rows[0]?.total || 0 },
+      departmentPerformance: { records: depts.rows[0]?.total || 0 },
+      userActivity: { records: perf.rows[0]?.total || 0 },
+      requestSummary: { records: 0 },
+      completionRates: { records: 0 }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load reports' });
+  }
+});
+
+app.get('/api/hotel-admin/reports/export', requireHotelAdmin, async (req, res) => {
+  const type = String(req.query.type || 'user_activity');
+  const format = String(req.query.format || 'csv').toLowerCase();
+  try {
+    const result = await pool.query(
+      `SELECT a.created_at, COALESCE(u.full_name,'System') AS user_name, a.action, a.ip_address, a.device
+       FROM hotel_admin_audit_logs a
+       LEFT JOIN hotel_admin_users u ON u.id = a.actor_user_id
+       WHERE a.hotel_id = $1
+       ORDER BY a.created_at DESC LIMIT 1000`,
+      [req.hotelAdmin.hotel_id]
+    );
+    const rows = result.rows;
+    if (format === 'json') return res.json({ type, rows });
+    const headers = ['Timestamp', 'User', 'Action', 'IP Address', 'Device'];
+    const csv = [headers.join(','), ...rows.map(row => headers.map(header => {
+      const key = header === 'Timestamp' ? 'created_at' : header === 'User' ? 'user_name' : header === 'Action' ? 'action' : header === 'IP Address' ? 'ip_address' : 'device';
+      return `"${String(row[key] || '').replace(/"/g, '""')}"`;
+    }).join(','))].join('\n');
+    res.setHeader('Content-Type', format === 'excel' ? 'application/vnd.ms-excel' : 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${type}.${format === 'excel' ? 'xls' : 'csv'}"`);
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to export report' });
+  }
+});
+
+app.get('/api/hotel-admin/settings', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM hotels WHERE id = $1', [req.hotelAdmin.hotel_id]);
+    const row = result.rows[0];
+    res.json({
+      hotelName: row.name,
+      hotelLogoUrl: row.logo_url,
+      hotelAddress: row.address,
+      contactEmail: row.contact_email,
+      contactPhone: row.contact_phone,
+      timezone: row.timezone,
+      language: row.language,
+      dateFormat: row.date_format,
+      brandColors: row.brand_colors || {},
+      emailSettings: row.email_settings || {},
+      notificationPreferences: row.notification_preferences || {}
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load settings' });
+  }
+});
+
+app.put('/api/hotel-admin/settings', requireHotelAdmin, async (req, res) => {
+  const { hotelName, hotelLogoUrl, hotelAddress, contactEmail, contactPhone, timezone, language, dateFormat, brandColors, emailSettings, notificationPreferences } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE hotels SET
+        name = COALESCE($1,name),
+        logo_url = $2,
+        address = $3,
+        contact_email = $4,
+        contact_phone = $5,
+        timezone = COALESCE($6,timezone),
+        language = COALESCE($7,language),
+        date_format = COALESCE($8,date_format),
+        brand_colors = COALESCE($9,brand_colors),
+        email_settings = COALESCE($10,email_settings),
+        notification_preferences = COALESCE($11,notification_preferences),
+        updated_at = NOW()
+       WHERE id = $12 RETURNING *`,
+      [hotelName || null, hotelLogoUrl || null, hotelAddress || null, contactEmail || null, contactPhone || null, timezone || null, language || null, dateFormat || null, brandColors || null, emailSettings || null, notificationPreferences || null, req.hotelAdmin.hotel_id]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'hotel_settings_updated', 'hotel', req.hotelAdmin.hotel_id, req);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+app.get('/api/hotel-admin/security', requireHotelAdmin, async (req, res) => {
+  try {
+    const [failed, locked, passwordChanges, suspicious, devices, ips] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS count FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND action = 'failed_login' AND created_at >= NOW() - INTERVAL '24 hours'`, [req.hotelAdmin.hotel_id]),
+      pool.query(`SELECT id, full_name, email, locked_at FROM hotel_admin_users WHERE hotel_id = $1 AND account_status = 'locked' AND deleted_at IS NULL`, [req.hotelAdmin.hotel_id]),
+      pool.query(`SELECT a.created_at, u.full_name FROM hotel_admin_audit_logs a LEFT JOIN hotel_admin_users u ON u.id = a.actor_user_id WHERE a.hotel_id = $1 AND a.action ILIKE '%password%' ORDER BY a.created_at DESC LIMIT 10`, [req.hotelAdmin.hotel_id]),
+      pool.query(`SELECT * FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND action IN ('failed_login','blocked_login') ORDER BY created_at DESC LIMIT 20`, [req.hotelAdmin.hotel_id]),
+      pool.query(`SELECT device, MAX(created_at) AS last_seen, COUNT(*)::int AS events FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND device IS NOT NULL GROUP BY device ORDER BY last_seen DESC LIMIT 10`, [req.hotelAdmin.hotel_id]),
+      pool.query(`SELECT ip_address, MAX(created_at) AS last_seen, COUNT(*)::int AS events FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND ip_address IS NOT NULL GROUP BY ip_address ORDER BY last_seen DESC LIMIT 10`, [req.hotelAdmin.hotel_id])
+    ]);
+    res.json({
+      failedLoginAttempts: failed.rows[0]?.count || 0,
+      lockedAccounts: locked.rows,
+      recentPasswordChanges: passwordChanges.rows,
+      suspiciousActivity: suspicious.rows,
+      recentDevices: devices.rows,
+      recentIpAddresses: ips.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load security center' });
+  }
+});
+
+app.get('/api/hotel-admin/search', requireHotelAdmin, async (req, res) => {
+  const term = `%${String(req.query.q || '').trim()}%`;
+  if (term === '%%') return res.json({ users: [], departments: [], roles: [], logs: [], reports: [] });
+  try {
+    const [users, departments, roles, logs] = await Promise.all([
+      pool.query(`SELECT id, full_name AS label, email AS detail FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL AND (full_name ILIKE $2 OR email ILIKE $2 OR employee_id ILIKE $2) LIMIT 8`, [req.hotelAdmin.hotel_id, term]),
+      pool.query(`SELECT id, name AS label, status AS detail FROM hotel_admin_departments WHERE hotel_id = $1 AND name ILIKE $2 LIMIT 8`, [req.hotelAdmin.hotel_id, term]),
+      pool.query(`SELECT id, name AS label, description AS detail FROM hotel_admin_roles WHERE hotel_id = $1 AND name ILIKE $2 LIMIT 8`, [req.hotelAdmin.hotel_id, term]),
+      pool.query(`SELECT id, action AS label, created_at::text AS detail FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND action ILIKE $2 LIMIT 8`, [req.hotelAdmin.hotel_id, term])
+    ]);
+    const reports = ['staff performance', 'department performance', 'user activity', 'request summary', 'completion rates']
+      .filter(name => name.includes(term.replace(/%/g, '').toLowerCase()))
+      .map((name, index) => ({ id: index + 1, label: name, detail: 'Report' }));
+    res.json({ users: users.rows, departments: departments.rows, roles: roles.rows, logs: logs.rows, reports });
+  } catch (err) {
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
 
 // Note: uploads are stored directly to Supabase storage; do not serve a local uploads directory.
 
