@@ -448,25 +448,10 @@
 
     // ============================================================
     // LOGIN SUBMIT HANDLER
-    // Placeholder only — replace with real auth call.
-    // Expected flow once backend exists:
-    //
-    //   const res = await fetch('/api/auth/login', {
-    //     method: 'POST',
-    //     headers: { 'Content-Type': 'application/json' },
-    //     body: JSON.stringify({ username, password })
-    //   });
-    //   const data = await res.json();
-    //
-    //   if (!res.ok) {
-    //     showError(data.message || 'Invalid username or password.');
-    //     return;
-    //   }
-    //
-    //   // data.role: 'staff' | 'director' | 'hotel_admin'
-    //   // data.redirectUrl: server-determined destination
-    //   window.location.href = data.redirectUrl;
-    //
+    // Authenticate users through the backend at /api/auth/login.
+    // Expected response:
+    //   { role: 'hotel_admin' | 'director' | 'staff', token, user, redirectUrl, dept }
+    // The backend must provide secure hashed password validation.
     // ============================================================
 
     const form = document.getElementById('loginForm');
@@ -528,54 +513,11 @@
           showError(data.error || `Server error (${res.status}). Please try again or contact your administrator.`);
           return;
         }
-      } catch (err) {
-        console.warn('Backend unreachable, checking demo credentials:', err.message);
-      }
-
-      // ================================================================
-      // DEMO CREDENTIAL ROUTING
-      // These are temporary hardcoded accounts for front-end preview only.
-      // Replace this entire block with a real fetch('/api/auth/login') call.
-      //
-      // Real flow:
-      //   POST /api/auth/login  { username, password }
-      //   Response: { role, name, initials, dept, redirectUrl }
-      //   Then: window.location.href = data.redirectUrl + '?' + params
-      //
-      // Roles:
-      //   'staff'    → department_dashboard.html?name=...&initials=...&dept=...
-      //   'director' → director_dashboard.html?name=...&initials=...
-      //   'hotel_admin' → hotel_admin.html after secure backend auth
-      // ================================================================
-
-      const DEMO_USERS = [
-        // --- STAFF ---
-        { username: 'mkofi',    password: 'staff123',    role: 'staff',    name: 'Moses Kofi',      initials: 'MK', dept: 'Housekeeping'  },
-        { username: 'abenaa',   password: 'staff123',    role: 'staff',    name: 'Abenaa Mensah',   initials: 'AM', dept: 'Maintenance'   },
-        { username: 'kwabena',  password: 'staff123',    role: 'staff',    name: 'Kwabena Asante',  initials: 'KA', dept: 'Room Service'  },
-        { username: 'efua',     password: 'staff123',    role: 'staff',    name: 'Efua Boateng',    initials: 'EB', dept: 'Concierge'     },
-        { username: 'nana',     password: 'staff123',    role: 'staff',    name: 'Nana Osei',       initials: 'NO', dept: 'Laundry'       },
-        // --- DIRECTOR ---
-        { username: 'director', password: 'director123', role: 'director', name: 'James Osei',      initials: 'JO', dept: null            },
-      ];
-
-      const match = DEMO_USERS.find(
-        u => u.username === username.toLowerCase() && u.password === password
-      );
-
-      if (!match) {
         showError('Invalid username or password.');
         return;
-      }
-
-      const params = new URLSearchParams({ name: match.name, initials: match.initials });
-
-      if (match.role === 'director') {
-        window.location.href = 'director_dashboard.html?' + params.toString();
-      } else {
-        // Staff — append department
-        params.set('dept', match.dept);
-        window.location.href = 'department_dashboard.html?' + params.toString();
+      } catch (err) {
+        showError('Unable to reach authentication server. Please try again later.');
+        return;
       }
     });
   </script>

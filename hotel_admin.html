@@ -224,7 +224,7 @@
 
   const state = {
     token: localStorage.getItem('hotelAdminToken'),
-    user: null,
+    user: JSON.parse(localStorage.getItem('hotelAdminUser') || 'null'),
     page: 'dashboard',
     usersPage: 1,
     auditPage: 1,
@@ -260,21 +260,42 @@
     if (state.token) headers.Authorization = `Bearer ${state.token}`;
     const res = await fetch(API_BASE_URL + endpoint, { ...options, headers });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : {};
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (err) {
+      data = { error: 'Invalid server response' };
+    }
+
     if (!res.ok) {
-      if (res.status === 401) clearSession();
+      if (res.status === 401 || res.status === 403) {
+        clearSession(`Authentication expired or not authorized (${res.status}).`);
+      }
       throw new Error(data.error || `Request failed (${res.status})`);
     }
+
     return data;
   }
 
-    function clearSession() {
-      localStorage.removeItem('hotelAdminToken');
-      localStorage.removeItem('hotelAdminUser');
-      state.token = null;
-      state.user = null;
-      window.location.href = 'index.html';
+  function clearSession(message) {
+    localStorage.removeItem('hotelAdminToken');
+    localStorage.removeItem('hotelAdminUser');
+    state.token = null;
+    state.user = null;
+    if (message) console.warn(message);
+    window.location.href = 'index.html';
+  }
+
+  function restoreSession() {
+    const savedUser = localStorage.getItem('hotelAdminUser');
+    if (!state.user && savedUser) {
+      try {
+        state.user = JSON.parse(savedUser);
+      } catch (err) {
+        state.user = null;
+      }
     }
+  }
 
   function skeleton(count = 4) {
     return `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">${Array.from({length: count}, () => '<div class="skeleton"></div>').join('')}</div>`;
@@ -822,17 +843,21 @@
     }
     $('logoutBtn').addEventListener('click', async () => { try { await api('/api/auth/hotel-admin/logout', { method: 'POST' }); } catch (e) {} clearSession(); });
     $('globalSearch').addEventListener('input', debounce(globalSearch, 300));
-    if (state.token) {
-      try {
-        const me = await api('/api/hotel-admin/me');
-        state.user = me.user;
-        $('appScreen').classList.remove('hidden');
-        navigate('dashboard');
-      } catch (err) {
-        clearSession();
-      }
-    } else {
-      window.location.href = 'index.html';
+
+    restoreSession();
+
+    if (!state.token) {
+      clearSession('No admin session found. Redirecting to login.');
+      return;
+    }
+
+    try {
+      const me = await api('/api/hotel-admin/me');
+      state.user = me.user;
+      $('appScreen').classList.remove('hidden');
+      navigate('dashboard');
+    } catch (err) {
+      clearSession();
     }
   }
 

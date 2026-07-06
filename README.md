@@ -43,7 +43,7 @@ This application combines **Supabase client-side operations** with **Socket.io r
 ### Client-Side Operations
 - **Supabase Client**: Direct database queries from browser
 - **Socket.io**: Real-time notifications for new requests and status updates
-- **Authentication**: Simple password-based login (demo)
+- **Authentication**: Secure password-based login with backend-managed credentials
 - **File Storage**: Voice recordings in Supabase Storage
 
 ### Real-Time Features
@@ -115,27 +115,18 @@ This application combines **Supabase client-side operations** with **Socket.io r
 
 ### Testing
 
-1. **Start the Socket Server** (for real-time updates):
+1. **Start the backend server** (real-time updates are built into `server.js`):
    ```bash
-   node socket-server.js
+   npm start
    ```
 
 2. **Guest Interface**: Open `index.html`, select a service, record a message
 3. **Department Dashboard**: Open `department_dashboard.html`, login with department credentials
 4. **Director Dashboard**: Open `director_dashboard.html`, login with director credentials
 
-### Default Credentials
+### Credentials
 
-**Department Logins:**
-- Maintenance: `wrench`
-- Housekeeping: `broom`
-- Room Service: `plate`
-- Concierge: `bell`
-- Laundry: `shirt`
-
-**Director Login:**
-- Username: `director`
-- Password: `luxury2025`
+Authentication is managed by the backend and Supabase configuration. Create and administer department, director, and hotel admin accounts through your database and do not rely on hardcoded demo credentials.
 
 ## Alternative: Local PostgreSQL
 
@@ -167,16 +158,7 @@ If you prefer local development:
 
 ### Default Credentials
 
-**Departments:**
-- Maintenance: `wrench`
-- Housekeeping: `broom`
-- Room Service: `plate`
-- Concierge: `bell`
-- Laundry: `shirt`
-
-**Director:**
-- Username: `director`
-- Password: `pearl`
+This project does not include hardcoded credentials. Configure authentication through your backend and database instead.
 
 ## Development
 
@@ -198,7 +180,7 @@ hotelQRservices/
 3. Update frontend interfaces accordingly
 
 ### Security Notes
-- Passwords are stored in plain text for demo purposes
+- Passwords should be stored as hashes and never kept in plain text
 - In production, use proper password hashing
 - Implement proper authentication tokens
 - Add HTTPS and CORS configuration

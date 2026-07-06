@@ -511,32 +511,24 @@ app.post('/api/auth/department', async (req, res) => {
   }
 
   try {
-    // Use Supabase REST API if configured
-    let departments = [];
-    let row = null;
+    const departments = await supabaseSelect('departments', { name: `eq.${department}` });
+    const row = departments[0];
 
-    try {
-      departments = await supabaseSelect('departments', { name: `eq.${department}` });
-      row = departments[0];
-    } catch (err) {
-      console.warn('Supabase departments lookup failed, falling back to demo auth:', err.message || err);
+    if (!row) {
+      return res.status(401).json({ error: 'Invalid department or password' });
     }
 
-    const demoPassword = getPlainPassword(department);
-    if (!row && !demoPassword) {
-      return res.status(401).json({ error: 'Invalid department' });
+    if (!row.password_hash) {
+      return res.status(501).json({ error: 'Department authentication is not configured. Use a hashed password in password_hash.' });
     }
-
-    // For demo, use plain text passwords (in production, use hashed)
-    const isValidPassword = password === demoPassword;
+    const isValidPassword = await bcrypt.compare(password, row.password_hash);
 
     if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid password' });
+      return res.status(401).json({ error: 'Invalid department or password' });
     }
 
-    const departmentName = row?.name || department;
-    const token = jwt.sign({ type: 'department', department: departmentName }, JWT_SECRET, { expiresIn: '8h' });
-    res.json({ token, department: departmentName });
+    const token = jwt.sign({ type: 'department', department: row.name }, JWT_SECRET, { expiresIn: '8h' });
+    res.json({ token, department: row.name });
   } catch (err) {
     console.error('Error authenticating department:', err);
     res.status(500).json({ error: 'Authentication failed' });
@@ -552,7 +544,6 @@ app.post('/api/auth/director', async (req, res) => {
   }
 
   try {
-    // Use Supabase REST API
     const directors = await supabaseSelect('director', { username: `eq.${username}` });
     const row = directors[0];
 
@@ -560,11 +551,13 @@ app.post('/api/auth/director', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // For demo, use plain text password
-    const isValidPassword = password === 'pearl';
+    if (!row.password_hash) {
+      return res.status(501).json({ error: 'Director authentication is not configured. Use a hashed password in password_hash.' });
+    }
 
+    const isValidPassword = await bcrypt.compare(password, row.password_hash);
     if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid password' });
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const token = jwt.sign({ type: 'director', username: row.username }, JWT_SECRET, { expiresIn: '8h' });
@@ -574,18 +567,6 @@ app.post('/api/auth/director', async (req, res) => {
     res.status(500).json({ error: 'Authentication failed' });
   }
 });
-
-// Helper function for demo passwords
-function getPlainPassword(department) {
-  const passwords = {
-    'Maintenance': 'wrench',
-    'Housekeeping': 'broom',
-    'Room Service': 'plate',
-    'Concierge': 'bell',
-    'Laundry': 'shirt'
-  };
-  return passwords[department];
-}
 
 function requireDatabase(res) {
   if (!pool) {
