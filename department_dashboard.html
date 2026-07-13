@@ -366,8 +366,16 @@
       : 'https://hotelqrservices-production.up.railway.app';
   console.log('API_BASE_URL:', API_BASE_URL);
 
+  const HOTEL_ID = parseInt(new URLSearchParams(window.location.search).get('hotelId') || '', 10) || null;
+
+  function requestUrl(path) {
+    if (!HOTEL_ID) return API_BASE_URL + path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${API_BASE_URL}${path}${separator}hotelId=${HOTEL_ID}`;
+  }
+
   async function apiCall(endpoint, options = {}) {
-    const url = API_BASE_URL + endpoint;
+    const url = requestUrl(endpoint);
     const config = {
       ...options,
       headers: {
@@ -441,7 +449,7 @@
     // Load requests from server API (which uses Supabase REST API)
     async function loadRequestsFromSupabase() {
       try {
-        const res = await fetch(API_BASE_URL + '/api/requests');
+        const res = await fetch(requestUrl('/api/requests'));
         if (!res.ok) throw new Error('Failed to fetch requests');
         const data = await res.json();
         allRequests = (data || []).map(toLocalRequest);
@@ -454,7 +462,7 @@
     // Update request status via server API
     async function updateRequestStatusSupabase(reqId, status) {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/requests/${reqId}/status`, {
+        const res = await fetch(requestUrl(`/api/requests/${reqId}/status`), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status })
@@ -498,6 +506,7 @@
       // Connect to Socket.io for real-time updates from server
       if (typeof io !== 'undefined') {
         const socket = io(API_BASE_URL);
+        if (HOTEL_ID) socket.emit('joinHotel', HOTEL_ID);
         socket.on('connect', () => {
           console.log('Socket connected for department dashboard:', socket.id);
         });
@@ -1156,7 +1165,7 @@
     forgotPwBtn.addEventListener('click', async () => {
       const dept = deptSelect.value || '';
       try {
-        const res = await fetch(API_BASE_URL + '/api/password_resets', {
+        const res = await fetch(requestUrl('/api/password_resets'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dept })

@@ -496,10 +496,9 @@
 
       // ------- room number from URL parameter only -------
       const roomSpan = document.getElementById('roomDisplay');
-
-      // Check for room parameter in URL (e.g., request.html?room=242)
       const urlParams = new URLSearchParams(window.location.search);
       const roomParam = urlParams.get('room');
+      const HOTEL_ID = parseInt(urlParams.get('hotelId') || '', 10) || null;
 
       if (!roomParam) {
         document.body.innerHTML = `
@@ -939,6 +938,9 @@
 
         if (recordedBlob) {
           formData.append('voice', recordedBlob, 'voice.webm');
+        }
+        if (HOTEL_ID) {
+          formData.append('hotelId', HOTEL_ID);
         }
 
         sendBtn.innerHTML = '<span class="spinner mr-2"></span> Sending...';

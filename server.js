@@ -104,6 +104,16 @@ const upload = multer({ storage: multer.memoryStorage() });
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
+  socket.on('joinHotel', (hotelId) => {
+    try {
+      if (hotelId) {
+        const rid = `hotel_${hotelId}`;
+        socket.join(rid);
+        console.log(`Socket ${socket.id} joined room ${rid}`);
+      }
+    } catch (e) { console.warn('joinHotel failed', e); }
+  });
+
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
@@ -240,24 +250,39 @@ async function supabaseGetSignedUrl(bucket, objectPath, expiresInSec = 60*60) {
   return `${base}/storage/v1${rel}`;
 }
 
+function parseHotelIdFromRequest(req) {
+  const rawHotelId = req.body?.hotelId ?? req.body?.hotel_id ?? req.query?.hotelId ?? req.query?.hotel_id ?? req.headers['x-hotel-id'];
+  const hotelId = parseInt(String(rawHotelId || '').trim(), 10);
+  return Number.isInteger(hotelId) && hotelId > 0 ? hotelId : null;
+}
+
 async function insertRequestViaDatabase(requestData) {
   if (!pool) {
     throw new Error('DATABASE_URL is not configured');
   }
 
+  const columns = ['room_number', 'service', 'request_text', 'status', 'voice_url', 'created_at', 'updated_at'];
+  const values = [
+    requestData.room_number,
+    requestData.service,
+    requestData.request_text,
+    requestData.status,
+    requestData.voice_url,
+    requestData.created_at,
+    requestData.created_at
+  ];
+
+  if (requestData.hotel_id) {
+    columns.unshift('hotel_id');
+    values.unshift(requestData.hotel_id);
+  }
+
+  const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
   const result = await pool.query(
-    `INSERT INTO requests (room_number, service, request_text, status, voice_url, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, room_number, service, request_text, status, voice_url, created_at, updated_at`,
-    [
-      requestData.room_number,
-      requestData.service,
-      requestData.request_text,
-      requestData.status,
-      requestData.voice_url,
-      requestData.created_at,
-      requestData.created_at
-    ]
+    `INSERT INTO requests (${columns.join(', ')})
+     VALUES (${placeholders})
+     RETURNING id, hotel_id, room_number, service, request_text, status, voice_url, created_at, updated_at`,
+    values
   );
 
   return result.rows[0];
@@ -269,6 +294,11 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
   console.log('Body:', req.body);
   console.log('File:', req.file);
 
+  const hotelId = parseHotelIdFromRequest(req);
+  if (!hotelId) {
+    console.log('hotelId missing in request body/query/header');
+    return res.status(400).json({ error: 'hotelId is required' });
+  }
   const { roomNumber, service, requestText } = req.body;
   let voiceUrl = null;
 
@@ -308,6 +338,9 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
       status: 'pending',
       created_at: new Date().toISOString()
     };
+    if (hotelId) {
+      requestData.hotel_id = hotelId;
+    }
 
     console.log('Inserting via Supabase REST API:', requestData);
     let newRequest;
@@ -347,7 +380,11 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
       }
     }
 
-    io.emit('newRequest', newRequest);
+    if (newRequest && newRequest.hotel_id) {
+      io.to(`hotel_${newRequest.hotel_id}`).emit('newRequest', newRequest);
+    } else {
+      io.emit('newRequest', newRequest);
+    }
     res.status(201).json(newRequest);
   } catch (err) {
     console.error('Error creating request:', err);
@@ -358,7 +395,10 @@ app.post('/api/requests', upload.single('voice'), async (req, res) => {
 // Get all requests (for director)
 app.get('/api/requests', async (req, res) => {
   try {
-    const rows = await supabaseSelect('requests', { order: 'created_at.desc' });
+    const hotelId = parseHotelIdFromRequest(req);
+    if (!hotelId) return res.status(400).json({ error: 'hotelId is required' });
+    const filters = { order: 'created_at.desc', hotel_id: `eq.${hotelId}` };
+    const rows = await supabaseSelect('requests', filters);
     // Sanitize any legacy local upload URLs so dashboards don't pull from repo
     const sanitized = await Promise.all((rows || []).map(async (r) => {
       if (!r || !r.voice_url) return r;
@@ -401,6 +441,8 @@ app.get('/api/requests', async (req, res) => {
 // Get requests for specific department
 app.get('/api/requests/:department', async (req, res) => {
   const department = req.params.department;
+  const hotelId = parseHotelIdFromRequest(req);
+  if (!hotelId) return res.status(400).json({ error: 'hotelId is required' });
 
   const deptToServices = {
     'Maintenance': ['maintenance', 'report'],
@@ -417,7 +459,9 @@ app.get('/api/requests/:department', async (req, res) => {
 
   try {
     // Use Supabase REST API with filter
-    const allRequests = await supabaseSelect('requests', { order: 'created_at.desc' });
+    const filters = { order: 'created_at.desc' };
+    if (hotelId) filters.hotel_id = `eq.${hotelId}`;
+    const allRequests = await supabaseSelect('requests', filters);
     const filtered = allRequests.filter(r => services.includes(r.service));
     // Sanitize legacy local upload URLs and sign storage URLs
     const sanitized = await Promise.all((filtered || []).map(async (r) => {
@@ -471,7 +515,10 @@ app.put('/api/requests/:id/status', async (req, res) => {
     const useServiceRole = !!SUPABASE_SERVICE_ROLE_KEY;
 
     // Use Supabase REST API to update with service role privileges when available
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/requests?id=eq.${id}`, {
+    const hotelId = parseHotelIdFromRequest(req);
+    if (!hotelId) return res.status(400).json({ error: 'hotelId is required' });
+    const requestPatchUrl = `${SUPABASE_URL}/rest/v1/requests?id=eq.${id}${hotelId ? `&hotel_id=eq.${hotelId}` : ''}`;
+  const response = await fetch(requestPatchUrl, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -493,9 +540,14 @@ app.put('/api/requests/:id/status', async (req, res) => {
       return res.status(404).json({ error: 'Request not found' });
     }
 
+    const hotelIdForUpdate = updated[0]?.hotel_id || null;
     console.log(`[STATUS_UPDATE] Request ${id} updated to ${status} using ${useServiceRole ? 'SERVICE_ROLE' : 'ANON'} key`);
-    io.emit('statusUpdate', { id: parseInt(id), status });
-    res.json({ id: parseInt(id), status });
+    if (hotelIdForUpdate) {
+      io.to(`hotel_${hotelIdForUpdate}`).emit('statusUpdate', { id: parseInt(id), status, hotel_id: hotelIdForUpdate });
+    } else {
+      io.emit('statusUpdate', { id: parseInt(id), status, hotel_id: hotelIdForUpdate });
+    }
+    res.json({ id: parseInt(id), status, hotel_id: hotelIdForUpdate });
   } catch (err) {
     console.error('[STATUS_UPDATE] Error updating request:', err);
     res.status(500).json({ error: 'Failed to update request', details: err.message });
@@ -504,6 +556,7 @@ app.put('/api/requests/:id/status', async (req, res) => {
 
 // Department login
 app.post('/api/auth/department', async (req, res) => {
+  const hotelId = parseHotelIdFromRequest(req);
   const { department, password } = req.body;
 
   if (!department || !password) {
@@ -511,7 +564,9 @@ app.post('/api/auth/department', async (req, res) => {
   }
 
   try {
-    const departments = await supabaseSelect('departments', { name: `eq.${department}` });
+    const filters = { name: `eq.${department}` };
+    if (hotelId) filters.hotel_id = `eq.${hotelId}`;
+    const departments = await supabaseSelect('departments', filters);
     const row = departments[0];
 
     if (!row) {
@@ -537,6 +592,7 @@ app.post('/api/auth/department', async (req, res) => {
 
 // Director login
 app.post('/api/auth/director', async (req, res) => {
+  const hotelId = parseHotelIdFromRequest(req);
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -544,7 +600,9 @@ app.post('/api/auth/director', async (req, res) => {
   }
 
   try {
-    const directors = await supabaseSelect('director', { username: `eq.${username}` });
+    const filters = { username: `eq.${username}` };
+    if (hotelId) filters.hotel_id = `eq.${hotelId}`;
+    const directors = await supabaseSelect('director', filters);
     const row = directors[0];
 
     if (!row) {
@@ -808,15 +866,20 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   try {
-    const directors = await supabaseSelect('director', { username: `eq.${username}` });
+    const hotelId = parseHotelIdFromRequest(req);
+    const filters = { username: `eq.${username}` };
+    if (hotelId) filters.hotel_id = `eq.${hotelId}`;
+    const directors = await supabaseSelect('director', filters);
     const row = directors[0];
-    if (row && password === 'pearl') {
-      const token = jwt.sign({ type: 'director', username: row.username }, JWT_SECRET, { expiresIn: '8h' });
+    if (row && row.password_hash) {
+      const isValid = await bcrypt.compare(password, row.password_hash);
+      if (!isValid) return res.status(401).json({ error: 'Invalid credentials' });
+      const token = jwt.sign({ type: 'director', username: row.username, hotelId: row.hotel_id || hotelId }, JWT_SECRET, { expiresIn: '8h' });
       return res.json({
         role: 'director',
         redirectUrl: 'director_dashboard.html',
         token,
-        user: { username: row.username, fullName: row.username }
+        user: { username: row.username, fullName: row.full_name || row.username, hotelId: row.hotel_id || hotelId }
       });
     }
   } catch (err) {
@@ -882,7 +945,9 @@ app.get('/api/hotel-admin/dashboard', requireHotelAdmin, async (req, res) => {
           COUNT(*) FILTER (WHERE status IN ('pending','in-progress'))::int AS pending,
           COUNT(*) FILTER (WHERE status = 'completed' AND updated_at::date = CURRENT_DATE)::int AS completed_today,
           COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')),0)::int AS avg_response
-         FROM requests`,
+         FROM requests
+         WHERE hotel_id = $1`,
+        [hotelId]
       ),
       pool.query(`SELECT COUNT(*)::int AS pending FROM hotel_admin_password_resets WHERE hotel_id = $1 AND status = 'pending'`, [hotelId]),
       pool.query(`SELECT COUNT(*)::int AS active FROM hotel_admin_shifts WHERE hotel_id = $1 AND status = 'active'`, [hotelId]),
@@ -1514,16 +1579,20 @@ process.on('SIGINT', async () => {
 let passwordResetRequests = [];
 
 app.post('/api/password_resets', async (req, res) => {
+  const hotelId = parseHotelIdFromRequest(req);
   const { dept } = req.body;
   if (!dept) return res.status(400).json({ error: 'Department required' });
 
   // Prefer Supabase REST API when configured
   if (SUPABASE_URL) {
     try {
-      const inserted = await supabaseInsert('password_resets', { dept, status: 'pending', created_at: new Date().toISOString() });
+      const payload = { dept, status: 'pending', created_at: new Date().toISOString() };
+      if (hotelId) payload.hotel_id = hotelId;
+      const inserted = await supabaseInsert('password_resets', payload);
       const row = Array.isArray(inserted) ? inserted[0] : inserted;
-      const out = { id: row.id, dept: row.dept, time: row.created_at };
-      io.emit('passwordReset', out);
+      const out = { id: row.id, dept: row.dept, time: row.created_at, hotel_id: row.hotel_id };
+      if (out.hotel_id) io.to(`hotel_${out.hotel_id}`).emit('passwordReset', out);
+      else io.emit('passwordReset', out);
       return res.status(201).json(out);
     } catch (err) {
       console.error('Supabase insert password_reset failed:', err);
@@ -1533,13 +1602,15 @@ app.post('/api/password_resets', async (req, res) => {
 
   if (pool) {
     try {
-      const result = await pool.query(
-        'INSERT INTO password_resets (dept, status, created_at) VALUES ($1, $2, NOW()) RETURNING id, dept, status, created_at',
-        [dept, 'pending']
-      );
+      const query = hotelId
+        ? 'INSERT INTO password_resets (hotel_id, dept, status, created_at) VALUES ($1, $2, $3, NOW()) RETURNING id, dept, status, created_at'
+        : 'INSERT INTO password_resets (dept, status, created_at) VALUES ($1, $2, NOW()) RETURNING id, dept, status, created_at';
+      const values = hotelId ? [hotelId, dept, 'pending'] : [dept, 'pending'];
+      const result = await pool.query(query, values);
       const row = result.rows[0];
-      const out = { id: row.id, dept: row.dept, time: row.created_at };
-      io.emit('passwordReset', out);
+      const out = { id: row.id, dept: row.dept, time: row.created_at, hotel_id: hotelId || null };
+      if (out.hotel_id) io.to(`hotel_${out.hotel_id}`).emit('passwordReset', out);
+      else io.emit('passwordReset', out);
       return res.status(201).json(out);
     } catch (err) {
       console.error('DB insert password_reset failed:', err);
@@ -1549,17 +1620,22 @@ app.post('/api/password_resets', async (req, res) => {
 
   // fallback in-memory
   const entry = { id: Date.now(), dept, time: new Date().toISOString(), status: 'pending' };
+  if (hotelId) entry.hotel_id = hotelId;
   passwordResetRequests.unshift(entry);
-  io.emit('passwordReset', entry);
+  if (entry.hotel_id) io.to(`hotel_${entry.hotel_id}`).emit('passwordReset', entry);
+  else io.emit('passwordReset', entry);
   res.status(201).json(entry);
 });
 
 app.get('/api/password_resets', async (req, res) => {
+  const hotelId = parseHotelIdFromRequest(req);
   // Prefer Supabase REST API when configured
   if (SUPABASE_URL) {
     try {
-      const rows = await supabaseSelect('password_resets', { order: 'created_at.desc' });
-      const out = (rows || []).map(r => ({ id: r.id, dept: r.dept, time: r.created_at }));
+      const filters = { order: 'created_at.desc' };
+      if (hotelId) filters.hotel_id = `eq.${hotelId}`;
+      const rows = await supabaseSelect('password_resets', filters);
+      const out = (rows || []).map(r => ({ id: r.id, dept: r.dept, time: r.created_at, hotel_id: r.hotel_id }));
       return res.json(out);
     } catch (err) {
       console.error('Supabase fetch password_resets failed:', err);
@@ -1569,8 +1645,12 @@ app.get('/api/password_resets', async (req, res) => {
 
   if (pool) {
     try {
-      const result = await pool.query('SELECT id, dept, status, created_at FROM password_resets ORDER BY created_at DESC');
-      const rows = result.rows.map(r => ({ id: r.id, dept: r.dept, time: r.created_at }));
+      const query = hotelId
+        ? 'SELECT id, dept, status, created_at FROM password_resets WHERE hotel_id = $1 ORDER BY created_at DESC'
+        : 'SELECT id, dept, status, created_at FROM password_resets ORDER BY created_at DESC';
+      const params = hotelId ? [hotelId] : [];
+      const result = await pool.query(query, params);
+      const rows = result.rows.map(r => ({ id: r.id, dept: r.dept, time: r.created_at, hotel_id: hotelId || null }));
       return res.json(rows);
     } catch (err) {
       console.error('DB fetch password_resets failed:', err);
@@ -1578,18 +1658,22 @@ app.get('/api/password_resets', async (req, res) => {
     }
   }
 
-  return res.json(passwordResetRequests);
+  const filtered = hotelId ? passwordResetRequests.filter(r => r.hotel_id === hotelId) : passwordResetRequests;
+  return res.json(filtered);
 });
 
 app.put('/api/password_resets/:id/approve', async (req, res) => {
   const id = parseInt(req.params.id);
+  const hotelId = parseHotelIdFromRequest(req);
   // Prefer Supabase REST API when configured
   if (SUPABASE_URL) {
     try {
       // delete via Supabase REST API using service role key
-      const deleted = await supabaseDelete('password_resets', `id=eq.${id}`);
+      const filter = hotelId ? `id=eq.${id}&hotel_id=eq.${hotelId}` : `id=eq.${id}`;
+      const deleted = await supabaseDelete('password_resets', filter);
       const removed = Array.isArray(deleted) ? deleted[0] : deleted;
-      io.emit('passwordResetApproved', { id: removed.id, dept: removed.dept });
+      if (removed.hotel_id || hotelId) io.to(`hotel_${removed.hotel_id || hotelId}`).emit('passwordResetApproved', { id: removed.id, dept: removed.dept, hotel_id: removed.hotel_id || hotelId || null });
+      else io.emit('passwordResetApproved', { id: removed.id, dept: removed.dept, hotel_id: removed.hotel_id || hotelId || null });
       return res.json({ ok: true });
     } catch (err) {
       console.error('Supabase delete password_reset failed:', err);
@@ -1599,10 +1683,15 @@ app.put('/api/password_resets/:id/approve', async (req, res) => {
 
   if (pool) {
     try {
-      const result = await pool.query('DELETE FROM password_resets WHERE id = $1 RETURNING id, dept', [id]);
+      const query = hotelId
+        ? 'DELETE FROM password_resets WHERE id = $1 AND hotel_id = $2 RETURNING id, dept'
+        : 'DELETE FROM password_resets WHERE id = $1 RETURNING id, dept';
+      const params = hotelId ? [id, hotelId] : [id];
+      const result = await pool.query(query, params);
       if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
       const removed = result.rows[0];
-      io.emit('passwordResetApproved', { id: removed.id, dept: removed.dept });
+      if (hotelId) io.to(`hotel_${hotelId}`).emit('passwordResetApproved', { id: removed.id, dept: removed.dept, hotel_id: hotelId || null });
+      else io.emit('passwordResetApproved', { id: removed.id, dept: removed.dept, hotel_id: hotelId || null });
       return res.json({ ok: true });
     } catch (err) {
       console.error('DB delete password_reset failed:', err);
@@ -1610,9 +1699,10 @@ app.put('/api/password_resets/:id/approve', async (req, res) => {
     }
   }
 
-  const idx = passwordResetRequests.findIndex(p => p.id === id);
+  const idx = passwordResetRequests.findIndex(p => p.id === id && (!hotelId || p.hotel_id === hotelId));
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   const removed = passwordResetRequests.splice(idx, 1)[0];
-  io.emit('passwordResetApproved', { id: removed.id, dept: removed.dept });
+  if (removed.hotel_id) io.to(`hotel_${removed.hotel_id}`).emit('passwordResetApproved', { id: removed.id, dept: removed.dept, hotel_id: removed.hotel_id });
+  else io.emit('passwordResetApproved', { id: removed.id, dept: removed.dept });
   res.json({ ok: true });
 });

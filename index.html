@@ -457,11 +457,18 @@
     const form = document.getElementById('loginForm');
     const errorMsg = document.getElementById('errorMsg');
     const errorText = document.getElementById('errorText');
+    const URL_HOTEL_ID = parseInt(new URLSearchParams(window.location.search).get('hotelId') || '', 10) || null;
     const API_BASE_URL =
       window.location.protocol === 'file:' || !window.location.hostname ||
       window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
         ? 'http://localhost:3000'
         : 'https://hotelqrservices-production.up.railway.app';
+
+    function appendHotelId(url) {
+      if (!URL_HOTEL_ID) return url;
+      const separator = url.includes('?') ? '&' : '?';
+      return `${url}${separator}hotelId=${URL_HOTEL_ID}`;
+    }
 
     function showError(message) {
       errorText.textContent = message;
@@ -500,7 +507,8 @@
           const name = data.user?.fullName || data.user?.username || username;
           const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
           const params = new URLSearchParams({ name, initials });
-          window.location.href = (data.redirectUrl || 'director_dashboard.html') + '?' + params.toString();
+          const targetUrl = appendHotelId((data.redirectUrl || 'director_dashboard.html') + '?' + params.toString());
+          window.location.href = targetUrl;
           return;
         }
 

@@ -127,6 +127,31 @@ CREATE TABLE IF NOT EXISTS hotel_admin_password_resets (
   resolved_at TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS requests (
+  id SERIAL PRIMARY KEY,
+  hotel_id INTEGER REFERENCES hotels(id) ON DELETE SET NULL,
+  room_number TEXT NOT NULL,
+  service TEXT NOT NULL,
+  request_text TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','in-progress','completed')),
+  voice_url TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_requests_hotel_created ON requests(hotel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_requests_status_hotel ON requests(hotel_id, status);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+  id SERIAL PRIMARY KEY,
+  hotel_id INTEGER REFERENCES hotels(id) ON DELETE SET NULL,
+  dept TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_resets_hotel_created ON password_resets(hotel_id, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_hotel_admin_users_hotel ON hotel_admin_users(hotel_id);
 CREATE INDEX IF NOT EXISTS idx_hotel_admin_users_department ON hotel_admin_users(department_id);
 CREATE INDEX IF NOT EXISTS idx_hotel_admin_audit_hotel_created ON hotel_admin_audit_logs(hotel_id, created_at DESC);
