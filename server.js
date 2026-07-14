@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
+const dns = require('dns');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -11,6 +12,8 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
+
+dns.setDefaultResultOrder('ipv4first');
 
 
 console.log('CWD:', process.cwd());
