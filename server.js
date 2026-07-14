@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
+const { createClient } = require('@supabase/supabase-js');
 const dns = require('dns');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -15,7 +16,7 @@ const { Server } = require('socket.io');
 
 dns.setDefaultResultOrder('ipv4first');
 
-async function createPgPool(connectionString) {
+async function createPgPool(connectionString, ipv4HostOverride) {
   const url = new URL(connectionString);
   const config = {
     user: url.username || undefined,
@@ -28,14 +29,25 @@ async function createPgPool(connectionString) {
   const hostname = url.hostname;
   let resolvedHost = hostname;
 
-  try {
-    const { address } = await dns.promises.lookup(hostname, { family: 4 });
-    if (address) {
-      resolvedHost = address;
-      console.log(`Resolved database host to IPv4 address: ${resolvedHost}`);
+  if (ipv4HostOverride) {
+    resolvedHost = ipv4HostOverride;
+    console.log(`Using IPv4 override for database host: ${resolvedHost}`);
+  } else {
+    try {
+      const addresses = await dns.promises.resolve4(hostname);
+      if (addresses && addresses.length > 0) {
+        resolvedHost = addresses[0];
+        console.log(`Resolved database host to IPv4 address: ${resolvedHost}`);
+      } else {
+        console.warn(`No IPv4 A records found for ${hostname}; falling back to original hostname.`);
+      }
+    } catch (lookupErr) {
+      if (lookupErr.code === 'ENODATA' || lookupErr.code === 'ENOTFOUND' || lookupErr.code === 'EAI_AGAIN') {
+        console.warn(`No IPv4 A records found for ${hostname}; this host may be IPv6-only.`);
+      } else {
+        console.warn(`IPv4 DNS lookup failed for ${hostname}, using original host: ${lookupErr.code || lookupErr.message}`);
+      }
     }
-  } catch (lookupErr) {
-    console.warn(`IPv4 DNS lookup failed for ${hostname}, using original host: ${lookupErr.message}`);
   }
 
   config.host = resolvedHost;
@@ -70,6 +82,13 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'audio';
 
+const supabaseAnon = SUPABASE_URL && SUPABASE_ANON_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } })
+  : null;
+const supabaseService = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+  : null;
+
 console.log('SUPABASE_URL loaded:', SUPABASE_URL ? 'YES' : 'NO');
 console.log('SUPABASE_ANON_KEY loaded:', SUPABASE_ANON_KEY ? 'YES' : 'NO');
 console.log('SUPABASE_SERVICE_ROLE_KEY loaded:', SUPABASE_SERVICE_ROLE_KEY ? 'YES' : 'NO');
@@ -79,6 +98,7 @@ console.log('SUPABASE_ANON_KEY length:', process.env.SUPABASE_ANON_KEY ? process
 
 // Database (PostgreSQL / Supabase)
 const DATABASE_URL = process.env.DATABASE_URL;
+const DATABASE_HOST_IPV4 = process.env.DATABASE_HOST_IPV4 || '';
 let pool = null;
 
 async function initDatabase() {
@@ -88,9 +108,29 @@ async function initDatabase() {
   }
 
   console.log('DATABASE_URL loaded: YES');
+  if (DATABASE_HOST_IPV4) {
+    console.log('DATABASE_HOST_IPV4 loaded: YES');
+  }
 
+  // If no explicit IPv4 override is provided, check whether the DB hostname has IPv4 A records.
   try {
-    pool = await createPgPool(DATABASE_URL);
+    const dbUrl = new URL(DATABASE_URL);
+    const dbHost = dbUrl.hostname;
+    let hasA = false;
+    try {
+      const addrs = await dns.promises.resolve4(dbHost);
+      hasA = Array.isArray(addrs) && addrs.length > 0;
+    } catch (e) {
+      // resolve4 may throw when no A records exist
+      hasA = false;
+    }
+    if (!hasA && !DATABASE_HOST_IPV4) {
+      console.warn(`Database host ${dbHost} has no IPv4 A records and no DATABASE_HOST_IPV4 override provided; skipping Postgres pool creation.`);
+      pool = null;
+      return;
+    }
+
+    pool = await createPgPool(DATABASE_URL, DATABASE_HOST_IPV4);
     console.log('Postgres pool created successfully.');
   } catch (err) {
     console.error('Failed to create Postgres pool:', err);
@@ -128,6 +168,21 @@ async function initDatabase() {
 }
 
 initDatabase().catch(console.error);
+
+// Ensure verification columns are available (callable from routes)
+async function ensureVerificationColumns() {
+  if (!pool) return;
+  try {
+    await pool.query(`
+      ALTER TABLE hotel_admin_users
+      ADD COLUMN IF NOT EXISTS verification_token TEXT,
+      ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+    `);
+    console.log('Verified verification columns exist (global helper).');
+  } catch (err) {
+    console.error('Error ensuring verification columns (global):', err);
+  }
+}
 
 // Middleware
 const allowedCorsOrigins = process.env.CORS_ORIGINS
@@ -222,118 +277,114 @@ app.get('/api/config', (req, res) => {
   res.json({ supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY });
 });
 
-// Supabase REST API helper functions
-async function supabaseInsert(table, data) {
-  const isUsingServiceRole = Boolean(SUPABASE_SERVICE_ROLE_KEY);
-  const authKey = isUsingServiceRole ? SUPABASE_SERVICE_ROLE_KEY : SUPABASE_ANON_KEY;
+// Supabase helper functions using official client
+function getSupabaseClient(useServiceRole = false) {
+  if (useServiceRole && supabaseService) return supabaseService;
+  if (supabaseAnon) return supabaseAnon;
+  throw new Error('Supabase client is not configured');
+}
 
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': authKey,
-      'Authorization': `Bearer ${authKey}`,
-      'Prefer': 'return=representation'
-    },
-    body: JSON.stringify(data)
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Supabase insert failed: ${error}`);
+function parseFilterQuery(filterQuery) {
+  const clauses = {};
+  if (!filterQuery) return clauses;
+  for (const part of filterQuery.split('&')) {
+    const [key, value] = part.split('=');
+    if (key && value !== undefined) {
+      clauses[key] = decodeURIComponent(value);
+    }
   }
+  return clauses;
+}
 
-  return response.json();
+function applySupabaseFilters(query, filters = {}) {
+  let builder = query;
+  for (const [key, value] of Object.entries(filters)) {
+    if (key === 'order' && typeof value === 'string') {
+      const [field, direction] = value.split('.');
+      builder = builder.order(field, { ascending: direction !== 'desc' });
+      continue;
+    }
+
+    if (typeof value === 'string') {
+      if (value.startsWith('eq.')) {
+        builder = builder.eq(key, value.slice(3));
+        continue;
+      }
+      if (value.startsWith('ilike.')) {
+        builder = builder.ilike(key, value.slice(6));
+        continue;
+      }
+      if (value.startsWith('neq.')) {
+        builder = builder.neq(key, value.slice(4));
+        continue;
+      }
+      if (value.startsWith('gt.')) {
+        builder = builder.gt(key, value.slice(3));
+        continue;
+      }
+      if (value.startsWith('lt.')) {
+        builder = builder.lt(key, value.slice(3));
+        continue;
+      }
+    }
+
+    builder = builder.match({ [key]: value });
+  }
+  return builder;
+}
+
+async function supabaseInsert(table, data) {
+  const client = getSupabaseClient(Boolean(SUPABASE_SERVICE_ROLE_KEY));
+  const { data: result, error } = await client.from(table).insert(data).select();
+  if (error) throw error;
+  return result;
 }
 
 async function supabaseSelect(table, filters = {}) {
-  const params = new URLSearchParams(filters).toString();
-  const url = `${SUPABASE_URL}/rest/v1/${table}${params ? '?' + params : ''}`;
-  
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-    }
-  });
-  
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Supabase select failed: ${error}`);
-  }
-  
-  return response.json();
+  const client = getSupabaseClient(false);
+  let query = client.from(table).select('*');
+  query = applySupabaseFilters(query, filters);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
 }
 
 async function supabaseDelete(table, filterQuery) {
-  if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error('Service role key required for delete');
-  const url = `${SUPABASE_URL}/rest/v1/${table}${filterQuery ? '?' + filterQuery : ''}`;
-  const response = await fetch(url, {
-    method: 'DELETE',
-    headers: {
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'Prefer': 'return=representation'
-    }
-  });
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Supabase delete failed: ${error}`);
-  }
-  return response.json();
+  if (!supabaseService) throw new Error('Service role key required for delete');
+  const filters = parseFilterQuery(filterQuery);
+  let query = supabaseService.from(table).delete();
+  query = applySupabaseFilters(query, filters);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
 }
 
 async function supabaseStorageUpload(bucket, objectPath, fileBuffer, contentType = 'application/octet-stream') {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  if (!supabaseService) {
     throw new Error('Supabase storage is not configured');
   }
-  const url = `${SUPABASE_URL}/storage/v1/object/${bucket}/${encodeURIComponent(objectPath)}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'Content-Type': contentType
-    },
-    body: fileBuffer
+  const { data, error } = await supabaseService.storage.from(bucket).upload(objectPath, fileBuffer, {
+    contentType,
+    upsert: false
   });
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Supabase storage upload failed: ${error}`);
-  }
-  return response.json();
+  if (error) throw error;
+  return data;
 }
 
 function getSupabaseStoragePublicUrl(bucket, objectPath) {
-  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodeURIComponent(objectPath)}`;
+  if (!supabaseAnon) {
+    return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodeURIComponent(objectPath)}`;
+  }
+  return supabaseAnon.storage.from(bucket).getPublicUrl(objectPath).data.publicUrl;
 }
 
 async function supabaseGetSignedUrl(bucket, objectPath, expiresInSec = 60*60) {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  if (!supabaseService) {
     throw new Error('Supabase service role key is not configured for signing URLs');
   }
-  const base = SUPABASE_URL.replace(/\/$/, '');
-  const signUrl = `${base}/storage/v1/object/sign/${bucket}/${encodeURIComponent(objectPath)}`;
-  const resp = await fetch(signUrl, {
-    method: 'POST',
-    headers: {
-      'apikey': SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ expiresIn: expiresInSec })
-  });
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '<no body>');
-    throw new Error(`Failed to get signed URL: ${resp.status} ${text}`);
-  }
-  const data = await resp.json();
-  // data.signedURL may be a relative path (e.g. "/object/sign/...?..."), make it absolute
-  const rel = data.signedURL || data.signed_url || data.signedUrl || data?.signedURL;
-  if (!rel) return null;
-  if (rel.startsWith('http')) return rel;
-  return `${base}/storage/v1${rel}`;
+  const { data, error } = await supabaseService.storage.from(bucket).createSignedUrl(objectPath, expiresInSec);
+  if (error) throw error;
+  return data.signedUrl;
 }
 
 function parseHotelIdFromRequest(req) {
@@ -642,34 +693,32 @@ app.put('/api/requests/:id/status', async (req, res) => {
     const supabaseAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
     const useServiceRole = !!SUPABASE_SERVICE_ROLE_KEY;
 
-    // Use Supabase REST API to update with service role privileges when available
+    // Use Supabase client to update with service role privileges when available
     const hotelId = parseHotelIdFromRequest(req);
     if (!hotelId) return res.status(400).json({ error: 'hotelId is required' });
-    const requestPatchUrl = `${SUPABASE_URL}/rest/v1/requests?id=eq.${id}${hotelId ? `&hotel_id=eq.${hotelId}` : ''}`;
-  const response = await fetch(requestPatchUrl, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': supabaseAuthKey,
-        'Authorization': `Bearer ${supabaseAuthKey}`,
-        'Prefer': 'return=representation'
-      },
-      body: JSON.stringify({ status, updated_at: new Date().toISOString() })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[STATUS_UPDATE] Supabase update failed:', response.status, errorText);
-      return res.status(500).json({ error: 'Failed to update request', details: errorText });
+    const client = (SUPABASE_SERVICE_ROLE_KEY && supabaseService) ? supabaseService : supabaseAnon;
+    if (!client) {
+      console.error('[STATUS_UPDATE] Supabase client not configured');
+      return res.status(500).json({ error: 'Supabase client is not configured' });
     }
 
-    const updated = await response.json();
+    const { data: updated, error } = await client
+      .from('requests')
+      .update({ status, updated_at: new Date().toISOString() })
+      .match({ id: Number(id), hotel_id: hotelId })
+      .select();
+
+    if (error) {
+      console.error('[STATUS_UPDATE] Supabase update failed:', error.message || error);
+      return res.status(500).json({ error: 'Failed to update request', details: error.message || error });
+    }
+
     if (!Array.isArray(updated) || updated.length === 0) {
       return res.status(404).json({ error: 'Request not found' });
     }
 
     const hotelIdForUpdate = updated[0]?.hotel_id || null;
-    console.log(`[STATUS_UPDATE] Request ${id} updated to ${status} using ${useServiceRole ? 'SERVICE_ROLE' : 'ANON'} key`);
+    console.log(`[STATUS_UPDATE] Request ${id} updated to ${status} using ${SUPABASE_SERVICE_ROLE_KEY ? 'SERVICE_ROLE' : 'ANON'} key`);
     if (hotelIdForUpdate) {
       io.to(`hotel_${hotelIdForUpdate}`).emit('statusUpdate', { id: parseInt(id), status, hotel_id: hotelIdForUpdate });
     } else {
@@ -740,10 +789,76 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ error: 'Passwords do not match.' });
   }
 
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
+  } catch (connErr) {
+    console.warn('Postgres pool connect failed, attempting Supabase client fallback:', connErr?.message || connErr);
+    // Fallback: use Supabase service client when available
+    if (!supabaseService) {
+      console.error('No Supabase service client available for fallback registration');
+      return res.status(503).json({ error: 'Database is unreachable and no Supabase service client is configured' });
+    }
 
+    try {
+      // Create hotel
+      const { data: hotelRows, error: hotelErr } = await supabaseService
+        .from('hotels')
+        .insert({ name: trimmedHotelName, contact_email: trimmedEmail, timezone: 'UTC', language: 'en', date_format: 'MMM D, YYYY', created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .select();
+      if (hotelErr) throw hotelErr;
+      const hotel = Array.isArray(hotelRows) ? hotelRows[0] : hotelRows;
+
+      // Ensure role exists
+      let roleId = null;
+      const { data: roleRows, error: roleErr } = await supabaseService
+        .from('hotel_admin_roles')
+        .select('id')
+        .eq('hotel_id', hotel.id)
+        .ilike('name', 'Hotel Admin')
+        .limit(1);
+      if (roleErr) throw roleErr;
+      roleId = roleRows?.[0]?.id || null;
+      if (!roleId) {
+        const { data: newRoleRows, error: newRoleErr } = await supabaseService
+          .from('hotel_admin_roles')
+          .insert({ hotel_id: hotel.id, name: 'Hotel Admin', description: 'Full administrative access', permissions: { 'View Requests': true }, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .select();
+        if (newRoleErr) throw newRoleErr;
+        roleId = newRoleRows?.[0]?.id;
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 12);
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const verificationUrl = buildVerificationUrl(req, verificationToken);
+
+      const { data: userRows, error: userErr } = await supabaseService
+        .from('hotel_admin_users')
+        .insert({ hotel_id: hotel.id, role_id: roleId, full_name: trimmedFullName, employee_id: `ADM-${Date.now()}`, email: trimmedEmail, password_hash: hashedPassword, account_status: 'pending_verification', employment_status: 'active', verification_token: verificationToken, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .select();
+      if (userErr) throw userErr;
+      const createdUser = Array.isArray(userRows) ? userRows[0] : userRows;
+
+      await writeHotelAudit(hotel.id, createdUser.id, 'registered_hotel', 'hotel', hotel.id, req);
+      const emailResult = await sendVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
+      console.log('Verification link for new signup (supabase fallback):', verificationUrl);
+
+      return res.status(201).json({
+        ok: true,
+        requiresVerification: true,
+        message: emailResult.skipped ? 'Account created. Please verify your email before signing in. The verification link was prepared locally because SMTP is not configured yet.' : 'Account created. Please verify your email before signing in.',
+        verificationUrl,
+        user: { id: createdUser.id, hotelId: hotel.id, fullName: createdUser.full_name, email: createdUser.email, hotelName: hotel.name },
+        role: 'hotel_admin'
+      });
+    } catch (fallbackErr) {
+      console.error('Supabase fallback registration failed:', fallbackErr);
+      return res.status(500).json({ error: 'Registration failed (fallback)', details: fallbackErr.message || String(fallbackErr) });
+    }
+  }
+
+  try {
     const existingUser = await client.query(
       `SELECT id FROM hotel_admin_users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL LIMIT 1`,
       [trimmedEmail]
