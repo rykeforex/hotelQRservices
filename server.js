@@ -7,6 +7,8 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -25,6 +27,12 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'luxehotel2026';
+const SMTP_HOST = process.env.SMTP_HOST || process.env.BREVO_SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || process.env.BREVO_SMTP_PORT || '587', 10);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || process.env.BREVO_SMTP_SECURE || 'false').toLowerCase() === 'true';
+const SMTP_USER = process.env.SMTP_USER || process.env.BREVO_SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || process.env.BREVO_SMTP_PASS || '';
+const SMTP_FROM = process.env.SMTP_FROM || process.env.EMAIL_FROM || process.env.BREVO_SMTP_FROM || 'no-reply@luxehotel.com';
 
 // Supabase client config from env
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
@@ -61,7 +69,17 @@ if (DATABASE_URL) {
     }
   }
 
+  async function ensureVerificationColumns() {
+    if (!pool) return;
+    await pool.query(`
+      ALTER TABLE hotel_admin_users
+      ADD COLUMN IF NOT EXISTS verification_token TEXT,
+      ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+    `);
+  }
+
   initDb().catch(console.error);
+  ensureVerificationColumns().catch(console.error);
 } else {
   console.warn('DATABASE_URL is not set. Skipping postgres pool initialization.');
 }
@@ -96,6 +114,8 @@ app.get('/director_dashboard.html', (req, res) => res.sendFile(path.join(__dirna
 app.get('/hotel_admin.html', (req, res) => res.sendFile(path.join(__dirname, 'hotel_admin.html')));
 app.get('/request.html', (req, res) => res.sendFile(path.join(__dirname, 'request.html')));
 app.get('/qr-generator.html', (req, res) => res.sendFile(path.join(__dirname, 'qr-generator.html')));
+app.get('/signup.html', (req, res) => res.sendFile(path.join(__dirname, 'signup.html')));
+app.get('/signup', (req, res) => res.sendFile(path.join(__dirname, 'signup.html')));
 
 // Use memory storage for uploads to avoid persisting files in the repository
 const upload = multer({ storage: multer.memoryStorage() });
@@ -254,6 +274,48 @@ function parseHotelIdFromRequest(req) {
   const rawHotelId = req.body?.hotelId ?? req.body?.hotel_id ?? req.query?.hotelId ?? req.query?.hotel_id ?? req.headers['x-hotel-id'];
   const hotelId = parseInt(String(rawHotelId || '').trim(), 10);
   return Number.isInteger(hotelId) && hotelId > 0 ? hotelId : null;
+}
+
+function buildVerificationUrl(req, token) {
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers.host || 'localhost:3000';
+  return `${protocol}://${host}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+}
+
+async function sendVerificationEmail(to, verifyUrl, hotelName) {
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+    console.log(`[EMAIL] SMTP not configured. Verification email not sent. To=${to} Link=${verifyUrl}`);
+    return { ok: true, skipped: true };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS
+    }
+  });
+
+  const info = await transporter.sendMail({
+    from: SMTP_FROM,
+    to,
+    subject: `Verify your ${hotelName} admin account`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1c1a17;">
+        <h2>Verify your hotel admin account</h2>
+        <p>Hello,</p>
+        <p>Your account for <strong>${hotelName}</strong> has been created. Please verify your email address to activate the account.</p>
+        <p><a href="${verifyUrl}" style="display:inline-block;padding:10px 16px;background:#C9A84C;color:#fff;text-decoration:none;border-radius:999px;">Verify Email</a></p>
+        <p>If the button does not work, copy and paste this link into your browser:</p>
+        <p>${verifyUrl}</p>
+      </div>
+    `
+  });
+
+  console.log(`[EMAIL] Verification email sent to ${to}: ${info.messageId}`);
+  return { ok: true, skipped: false, messageId: info.messageId };
 }
 
 async function insertRequestViaDatabase(requestData) {
@@ -590,6 +652,139 @@ app.post('/api/auth/department', async (req, res) => {
   }
 });
 
+app.post('/api/auth/register', async (req, res) => {
+  if (!requireDatabase(res)) return;
+
+  await ensureVerificationColumns().catch(() => {});
+
+  const { hotelName, fullName, email, password, confirmPassword } = req.body;
+  const trimmedHotelName = String(hotelName || '').trim();
+  const trimmedFullName = String(fullName || '').trim();
+  const trimmedEmail = String(email || '').trim().toLowerCase();
+
+  if (!trimmedHotelName || !trimmedFullName || !trimmedEmail || !password || !confirmPassword) {
+    return res.status(400).json({ error: 'Hotel name, full name, email, and password are required.' });
+  }
+
+  if (String(password).length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+  }
+
+  if (String(password) !== String(confirmPassword)) {
+    return res.status(400).json({ error: 'Passwords do not match.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existingUser = await client.query(
+      `SELECT id FROM hotel_admin_users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL LIMIT 1`,
+      [trimmedEmail]
+    );
+    if (existingUser.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+
+    const hotelResult = await client.query(
+      `INSERT INTO hotels (name, contact_email, timezone, language, date_format, created_at, updated_at)
+       VALUES ($1, $2, 'UTC', 'en', 'MMM D, YYYY', NOW(), NOW())
+       RETURNING id, name`,
+      [trimmedHotelName, trimmedEmail]
+    );
+    const hotel = hotelResult.rows[0];
+
+    const roleResult = await client.query(
+      `SELECT id FROM hotel_admin_roles WHERE hotel_id = $1 AND LOWER(name) = LOWER('Hotel Admin') LIMIT 1`,
+      [hotel.id]
+    );
+    let roleId = roleResult.rows[0]?.id || null;
+    if (!roleId) {
+      const newRole = await client.query(
+        `INSERT INTO hotel_admin_roles (hotel_id, name, description, permissions, created_at, updated_at)
+         VALUES ($1, 'Hotel Admin', 'Full administrative access', '{"View Requests": true, "Complete Requests": true, "Edit Requests": true, "Delete Requests": true, "Export Reports": true, "Manage Staff": true, "Manage Departments": true, "View Analytics": true, "Manage Settings": true}'::jsonb, NOW(), NOW())
+         RETURNING id`,
+        [hotel.id]
+      );
+      roleId = newRole.rows[0].id;
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationUrl = buildVerificationUrl(req, verificationToken);
+    const userResult = await client.query(
+      `INSERT INTO hotel_admin_users (
+         hotel_id, role_id, full_name, employee_id, email, password_hash, account_status, employment_status, verification_token, created_at, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'pending_verification', 'active', $7, NOW(), NOW())
+       RETURNING id, hotel_id, full_name, email`,
+      [hotel.id, roleId, trimmedFullName, `ADM-${Date.now()}`, trimmedEmail, hashedPassword, verificationToken]
+    );
+    const createdUser = userResult.rows[0];
+
+    await client.query('COMMIT');
+    await writeHotelAudit(hotel.id, createdUser.id, 'registered_hotel', 'hotel', hotel.id, req);
+
+    const emailResult = await sendVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
+    console.log('Verification link for new signup:', verificationUrl);
+
+    res.status(201).json({
+      ok: true,
+      requiresVerification: true,
+      message: emailResult.skipped
+        ? 'Account created. Please verify your email before signing in. The verification link was prepared locally because SMTP is not configured yet.'
+        : 'Account created. Please verify your email before signing in.',
+      verificationUrl,
+      user: {
+        id: createdUser.id,
+        hotelId: hotel.id,
+        fullName: createdUser.full_name,
+        email: createdUser.email,
+        hotelName: hotel.name
+      },
+      role: 'hotel_admin'
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Hotel registration failed:', err);
+    res.status(500).json({ error: 'Hotel registration failed. Please try again.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/auth/verify-email', async (req, res) => {
+  if (!requireDatabase(res)) return;
+  await ensureVerificationColumns().catch(() => {});
+  const token = String(req.query.token || '').trim();
+  if (!token) {
+    return res.status(400).send('<h2>Invalid verification link.</h2><p>The verification token is missing.</p>');
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT id, email, account_status FROM hotel_admin_users WHERE verification_token = $1 LIMIT 1`,
+      [token]
+    );
+    const user = result.rows[0];
+    if (!user) {
+      return res.status(404).send('<h2>Verification failed.</h2><p>This link is invalid or has already been used.</p>');
+    }
+
+    await pool.query(
+      `UPDATE hotel_admin_users
+       SET account_status = 'active', email_verified_at = NOW(), verification_token = NULL
+       WHERE id = $1`,
+      [user.id]
+    );
+
+    res.send(`<!doctype html><html><head><meta charset="utf-8"><title>Email Verified</title><style>body{font-family:Arial,sans-serif;padding:40px;line-height:1.5}h2{color:#2f7d32}</style></head><body><h2>Email verified successfully.</h2><p>Your hotel admin account is now active. You can sign in.</p><p><a href="/">Go to sign in</a></p></body></html>`);
+  } catch (err) {
+    console.error('Email verification failed:', err);
+    res.status(500).send('<h2>Verification failed.</h2><p>Please try again later.</p>');
+  }
+});
+
 // Director login
 app.post('/api/auth/director', async (req, res) => {
   const hotelId = parseHotelIdFromRequest(req);
@@ -755,6 +950,9 @@ app.post('/api/auth/hotel-admin', async (req, res) => {
     );
     const user = result.rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    if (user.account_status === 'pending_verification') {
+      return res.status(403).json({ error: 'Please verify your email before signing in.' });
+    }
     if (user.account_status === 'locked' || user.account_status === 'suspended') {
       await writeHotelAudit(user.hotel_id, user.id, 'blocked_login', 'user', user.id, req);
       return res.status(423).json({ error: 'Account is not active' });
@@ -814,6 +1012,9 @@ app.post('/api/auth/login', async (req, res) => {
       );
       const admin = adminResult.rows[0];
       if (admin) {
+        if (admin.account_status === 'pending_verification') {
+          return res.status(403).json({ error: 'Please verify your email before signing in.' });
+        }
         if (admin.account_status === 'locked' || admin.account_status === 'suspended') {
           await writeHotelAudit(admin.hotel_id, admin.id, 'blocked_login', 'user', admin.id, req);
           return res.status(423).json({ error: 'Account is not active' });

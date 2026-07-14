@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QUORVA — Create Your Hotel Account</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --gold: #C9A84C;
+      --gold-light: #E2C47A;
+      --gold-pale: #F0DFA0;
+      --gold-dim: rgba(201,168,76,0.18);
+      --cream: #FDFAF4;
+      --ivory: #F7F2E8;
+      --charcoal: #1C1A17;
+      --charcoal-soft: #3A3630;
+      --muted: #8A8070;
+      --error: #B3492F;
+    }
+    body {
+      min-height: 100vh;
+      background-color: var(--cream);
+      font-family: 'Montserrat', sans-serif;
+      color: var(--charcoal);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 520px;
+      background: #fff;
+      border-radius: 28px;
+      border: 1px solid rgba(201,168,76,0.25);
+      padding: 44px 40px;
+      box-shadow: 0 10px 40px rgba(100,80,20,0.08);
+    }
+    .header { text-align: center; margin-bottom: 28px; }
+    .eyebrow { font-size: 10px; letter-spacing: 0.42em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+    h1 { font-family: 'Cormorant Garamond', serif; font-size: 40px; font-weight: 300; }
+    h1 em { color: var(--gold); font-style: italic; font-weight: 600; }
+    .subtext { margin-top: 10px; color: var(--muted); font-size: 14px; }
+    .field-group { margin-bottom: 16px; }
+    label { display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.28em; text-transform: uppercase; color: var(--gold); margin-bottom: 8px; }
+    input { width: 100%; padding: 14px 16px; font-size: 14px; border: 1px solid rgba(201,168,76,0.25); border-radius: 12px; background: var(--ivory); outline: none; }
+    input:focus { border-color: var(--gold); box-shadow: 0 0 0 4px var(--gold-dim); }
+    .alert { display: none; margin-bottom: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(179,73,47,0.1); color: var(--error); font-size: 14px; }
+    .alert.show { display: block; }
+    .success { background: rgba(47,125,50,0.12); color: #2f7d32; }
+    button { width: 100%; padding: 14px 16px; border: none; border-radius: 999px; background: linear-gradient(90deg, var(--gold), var(--gold-light)); color: #fff; font-weight: 600; cursor: pointer; margin-top: 8px; }
+    button:hover { transform: translateY(-1px); }
+    .footer-link { text-align: center; margin-top: 16px; font-size: 13px; color: var(--muted); }
+    .footer-link a { color: var(--gold); text-decoration: none; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="eyebrow">Hospitality Management System</div>
+      <h1>QUOR<em>VA</em></h1>
+      <p class="subtext">Register your hotel and create the first admin account for your property.</p>
+    </div>
+
+    <div class="alert" id="errorMsg"></div>
+    <div class="alert success" id="successMsg"></div>
+
+    <form id="signupForm">
+      <div class="field-group">
+        <label for="hotelName">Hotel Name</label>
+        <input id="hotelName" name="hotelName" type="text" placeholder="LUXE Hotel" required />
+      </div>
+      <div class="field-group">
+        <label for="fullName">Your Full Name</label>
+        <input id="fullName" name="fullName" type="text" placeholder="Alex Morgan" required />
+      </div>
+      <div class="field-group">
+        <label for="email">Email Address</label>
+        <input id="email" name="email" type="email" placeholder="admin@yourhotel.com" required />
+      </div>
+      <div class="field-group">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" placeholder="At least 8 characters" required />
+      </div>
+      <div class="field-group">
+        <label for="confirmPassword">Confirm Password</label>
+        <input id="confirmPassword" name="confirmPassword" type="password" placeholder="Re-enter password" required />
+      </div>
+      <button type="submit">Create Hotel Account</button>
+    </form>
+
+    <div class="footer-link">
+      Already have an account? <a href="/">Sign in</a>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE_URL = window.location.protocol === 'file:' || !window.location.hostname || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:3000'
+      : 'https://hotelqrservices-production.up.railway.app';
+    const form = document.getElementById('signupForm');
+    const errorMsg = document.getElementById('errorMsg');
+    const successMsg = document.getElementById('successMsg');
+
+    function showError(message) {
+      errorMsg.textContent = message;
+      errorMsg.classList.add('show');
+      successMsg.classList.remove('show');
+    }
+
+    function showSuccess(message) {
+      successMsg.textContent = message;
+      successMsg.classList.add('show');
+      errorMsg.classList.remove('show');
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      showError('');
+      errorMsg.classList.remove('show');
+      successMsg.classList.remove('show');
+
+      const payload = {
+        hotelName: document.getElementById('hotelName').value.trim(),
+        fullName: document.getElementById('fullName').value.trim(),
+        email: document.getElementById('email').value.trim(),
+        password: document.getElementById('password').value,
+        confirmPassword: document.getElementById('confirmPassword').value
+      };
+
+      try {
+        const response = await fetch(API_BASE_URL + '/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          showError(data.error || 'Registration failed.');
+          return;
+        }
+
+        if (data.requiresVerification) {
+          showSuccess(data.message || 'Account created. Please check your email to verify your account before signing in.');
+          form.reset();
+          return;
+        }
+
+        localStorage.setItem('hotelAdminToken', data.token);
+        localStorage.setItem('hotelAdminUser', JSON.stringify(data.user || {}));
+        window.location.href = data.redirectUrl || 'hotel_admin.html';
+      } catch (err) {
+        showError('Unable to reach the server. Please try again.');
+      }
+    });
+  </script>
+</body>
+</html>
