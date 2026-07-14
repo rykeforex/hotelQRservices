@@ -15,6 +15,33 @@ const { Server } = require('socket.io');
 
 dns.setDefaultResultOrder('ipv4first');
 
+async function createPgPool(connectionString) {
+  const url = new URL(connectionString);
+  const config = {
+    user: url.username || undefined,
+    password: url.password || undefined,
+    database: url.pathname ? url.pathname.substring(1) : undefined,
+    port: parseInt(url.port || '5432', 10),
+    ssl: { rejectUnauthorized: false }
+  };
+
+  const hostname = url.hostname;
+  let resolvedHost = hostname;
+
+  try {
+    const { address } = await dns.promises.lookup(hostname, { family: 4 });
+    if (address) {
+      resolvedHost = address;
+      console.log(`Resolved database host to IPv4 address: ${resolvedHost}`);
+    }
+  } catch (lookupErr) {
+    console.warn(`IPv4 DNS lookup failed for ${hostname}, using original host: ${lookupErr.message}`);
+  }
+
+  config.host = resolvedHost;
+  return new Pool(config);
+}
+
 
 console.log('CWD:', process.cwd());
 console.log('.env file exists:', fs.existsSync('.env'));
@@ -54,12 +81,22 @@ console.log('SUPABASE_ANON_KEY length:', process.env.SUPABASE_ANON_KEY ? process
 const DATABASE_URL = process.env.DATABASE_URL;
 let pool = null;
 
-if (DATABASE_URL) {
+async function initDatabase() {
+  if (!DATABASE_URL) {
+    console.warn('DATABASE_URL is not set. Skipping postgres pool initialization.');
+    return;
+  }
+
   console.log('DATABASE_URL loaded: YES');
-  pool = new Pool({
-    connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-  });
+
+  try {
+    pool = await createPgPool(DATABASE_URL);
+    console.log('Postgres pool created successfully.');
+  } catch (err) {
+    console.error('Failed to create Postgres pool:', err);
+    pool = null;
+    return;
+  }
 
   async function initDb() {
     if (process.env.INIT_DB !== 'true') return;
@@ -74,18 +111,23 @@ if (DATABASE_URL) {
 
   async function ensureVerificationColumns() {
     if (!pool) return;
-    await pool.query(`
-      ALTER TABLE hotel_admin_users
-      ADD COLUMN IF NOT EXISTS verification_token TEXT,
-      ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
-    `);
+    try {
+      await pool.query(`
+        ALTER TABLE hotel_admin_users
+        ADD COLUMN IF NOT EXISTS verification_token TEXT,
+        ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+      `);
+      console.log('Verified verification columns exist.');
+    } catch (err) {
+      console.error('Error ensuring verification columns:', err);
+    }
   }
 
-  initDb().catch(console.error);
-  ensureVerificationColumns().catch(console.error);
-} else {
-  console.warn('DATABASE_URL is not set. Skipping postgres pool initialization.');
+  await initDb();
+  await ensureVerificationColumns();
 }
+
+initDatabase().catch(console.error);
 
 // Middleware
 const allowedCorsOrigins = process.env.CORS_ORIGINS
