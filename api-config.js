@@ -1,11 +1,11 @@
 // API Configuration - Update this when deploying to production
 // During development: http://localhost:3000
-// On GitHub Pages: https://your-deployed-server.railway.app or similar
+// On GitHub Pages: https://your-deployed-server.onrender.com or similar
 
 const API_BASE_URL = 
   window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:3000'
-    : 'https://hotelqrservices-production.up.railway.app'; // production backend URL
+    : 'https://hotelqrservices.onrender.com'; // production backend URL
 
 // Helper function for API calls
 async function apiCall(endpoint, options = {}) {

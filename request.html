@@ -464,7 +464,7 @@
       window.location.protocol === 'file:' || !window.location.hostname ||
       window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
         ? 'http://localhost:3000'
-        : 'https://hotelqrservices-production.up.railway.app';
+        : 'https://hotelqrservices.onrender.com';
     console.log('API_BASE_URL:', window.API_BASE_URL);
 
     window.apiCall = async function(endpoint, options = {}) {
