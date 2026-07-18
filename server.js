@@ -185,16 +185,39 @@ async function ensureVerificationColumns() {
 }
 
 // Middleware
-const allowedCorsOrigins = process.env.CORS_ORIGINS
+const configuredCorsOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
-  : ['*'];
+  : [];
+
+const defaultCorsOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:8000',
+  'http://127.0.0.1:8000',
+  'https://hotelqrservices.onrender.com',
+  'https://hotelqrservices-production.up.railway.app'
+];
+const allowedCorsOrigins = configuredCorsOrigins.length > 0 ? configuredCorsOrigins : [...defaultCorsOrigins, '*'];
 
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (allowedCorsOrigins[0] === '*' || allowedCorsOrigins.includes(origin)) {
+    const normalizedOrigin = origin.toLowerCase();
+
+    if (allowedCorsOrigins.includes('*')) {
       return callback(null, true);
     }
+
+    if (allowedCorsOrigins.includes(origin) || allowedCorsOrigins.includes(normalizedOrigin)) {
+      return callback(null, true);
+    }
+
+    const isLocalDevOrigin = normalizedOrigin.includes('localhost') || normalizedOrigin.includes('127.0.0.1');
+    const isRenderOrigin = normalizedOrigin.endsWith('.onrender.com') || normalizedOrigin.endsWith('.render.com');
+    if (isLocalDevOrigin || isRenderOrigin) {
+      return callback(null, true);
+    }
+
     console.warn('CORS origin denied:', origin);
     callback(new Error('Not allowed by CORS'));
   },
@@ -768,8 +791,6 @@ app.post('/api/auth/department', async (req, res) => {
 });
 
 app.post('/api/auth/register', async (req, res) => {
-  if (!requireDatabase(res)) return;
-
   await ensureVerificationColumns().catch(() => {});
 
   const { hotelName, fullName, email, password, confirmPassword } = req.body;
@@ -789,30 +810,40 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ error: 'Passwords do not match.' });
   }
 
-  let client;
-  try {
-    client = await pool.connect();
-    await client.query('BEGIN');
-  } catch (connErr) {
-    console.warn('Postgres pool connect failed, attempting Supabase client fallback:', connErr?.message || connErr);
-    // Fallback: use Supabase service client when available
+  let client = null;
+  let usingPool = false;
+
+  if (pool) {
+    try {
+      client = await pool.connect();
+      await client.query('BEGIN');
+      usingPool = true;
+    } catch (connErr) {
+      console.warn('Postgres pool connect failed, attempting Supabase fallback:', connErr?.message || connErr);
+    }
+  }
+
+  if (!usingPool) {
+    const fallbackClient = supabaseService || supabaseAnon;
+    if (!fallbackClient) {
+      console.error('No database pool and no Supabase client available for registration fallback');
+      return res.status(503).json({ error: 'Database is unreachable and no Supabase client is configured' });
+    }
+
     if (!supabaseService) {
-      console.error('No Supabase service client available for fallback registration');
-      return res.status(503).json({ error: 'Database is unreachable and no Supabase service client is configured' });
+      console.warn('Using Supabase anon client for registration fallback; this requires permissive table policies.');
     }
 
     try {
-      // Create hotel
-      const { data: hotelRows, error: hotelErr } = await supabaseService
+      const { data: hotelRows, error: hotelErr } = await fallbackClient
         .from('hotels')
         .insert({ name: trimmedHotelName, contact_email: trimmedEmail, timezone: 'UTC', language: 'en', date_format: 'MMM D, YYYY', created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .select();
       if (hotelErr) throw hotelErr;
       const hotel = Array.isArray(hotelRows) ? hotelRows[0] : hotelRows;
 
-      // Ensure role exists
       let roleId = null;
-      const { data: roleRows, error: roleErr } = await supabaseService
+      const { data: roleRows, error: roleErr } = await fallbackClient
         .from('hotel_admin_roles')
         .select('id')
         .eq('hotel_id', hotel.id)
@@ -821,7 +852,7 @@ app.post('/api/auth/register', async (req, res) => {
       if (roleErr) throw roleErr;
       roleId = roleRows?.[0]?.id || null;
       if (!roleId) {
-        const { data: newRoleRows, error: newRoleErr } = await supabaseService
+        const { data: newRoleRows, error: newRoleErr } = await fallbackClient
           .from('hotel_admin_roles')
           .insert({ hotel_id: hotel.id, name: 'Hotel Admin', description: 'Full administrative access', permissions: { 'View Requests': true }, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .select();
@@ -833,7 +864,7 @@ app.post('/api/auth/register', async (req, res) => {
       const verificationToken = crypto.randomBytes(32).toString('hex');
       const verificationUrl = buildVerificationUrl(req, verificationToken);
 
-      const { data: userRows, error: userErr } = await supabaseService
+      const { data: userRows, error: userErr } = await fallbackClient
         .from('hotel_admin_users')
         .insert({ hotel_id: hotel.id, role_id: roleId, full_name: trimmedFullName, employee_id: `ADM-${Date.now()}`, email: trimmedEmail, password_hash: hashedPassword, account_status: 'pending_verification', employment_status: 'active', verification_token: verificationToken, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .select();
@@ -841,19 +872,26 @@ app.post('/api/auth/register', async (req, res) => {
       const createdUser = Array.isArray(userRows) ? userRows[0] : userRows;
 
       await writeHotelAudit(hotel.id, createdUser.id, 'registered_hotel', 'hotel', hotel.id, req);
-      const emailResult = await sendVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
-      console.log('Verification link for new signup (supabase fallback):', verificationUrl);
+      let emailResult = { ok: true, skipped: true };
+      try {
+        emailResult = await sendVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
+      } catch (emailErr) {
+        console.error('Verification email send failed after fallback registration:', emailErr);
+      }
+      console.log('Verification link for new signup (Supabase fallback):', verificationUrl);
 
       return res.status(201).json({
         ok: true,
         requiresVerification: true,
-        message: emailResult.skipped ? 'Account created. Please verify your email before signing in. The verification link was prepared locally because SMTP is not configured yet.' : 'Account created. Please verify your email before signing in.',
+        message: emailResult.skipped
+          ? 'Account created. Please verify your email before signing in. Verification email was not sent automatically.'
+          : 'Account created. Please verify your email before signing in.',
         verificationUrl,
         user: { id: createdUser.id, hotelId: hotel.id, fullName: createdUser.full_name, email: createdUser.email, hotelName: hotel.name },
         role: 'hotel_admin'
       });
     } catch (fallbackErr) {
-      console.error('Supabase fallback registration failed:', fallbackErr);
+      console.error('Fallback registration failed:', fallbackErr);
       return res.status(500).json({ error: 'Registration failed (fallback)', details: fallbackErr.message || String(fallbackErr) });
     }
   }
@@ -906,14 +944,19 @@ app.post('/api/auth/register', async (req, res) => {
     await client.query('COMMIT');
     await writeHotelAudit(hotel.id, createdUser.id, 'registered_hotel', 'hotel', hotel.id, req);
 
-    const emailResult = await sendVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
+    let emailResult = { ok: true, skipped: true };
+    try {
+      emailResult = await sendVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
+    } catch (emailErr) {
+      console.error('Verification email send failed after successful registration:', emailErr);
+    }
     console.log('Verification link for new signup:', verificationUrl);
 
-    res.status(201).json({
+    return res.status(201).json({
       ok: true,
       requiresVerification: true,
       message: emailResult.skipped
-        ? 'Account created. Please verify your email before signing in. The verification link was prepared locally because SMTP is not configured yet.'
+        ? 'Account created. Please verify your email before signing in. Verification email was not sent automatically.'
         : 'Account created. Please verify your email before signing in.',
       verificationUrl,
       user: {
@@ -926,11 +969,11 @@ app.post('/api/auth/register', async (req, res) => {
       role: 'hotel_admin'
     });
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
+    await client?.query('ROLLBACK').catch(() => {});
     console.error('Hotel registration failed:', err);
-    res.status(500).json({ error: 'Hotel registration failed. Please try again.' });
+    return res.status(500).json({ error: 'Hotel registration failed. Please try again.' });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
@@ -1131,7 +1174,7 @@ app.post('/api/auth/hotel-admin', async (req, res) => {
     );
     const user = result.rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-    if (user.account_status === 'pending_verification') {
+    if (user.account_status === 'pending_verification' || !user.email_verified_at) {
       return res.status(403).json({ error: 'Please verify your email before signing in.' });
     }
     if (user.account_status === 'locked' || user.account_status === 'suspended') {
@@ -1193,7 +1236,7 @@ app.post('/api/auth/login', async (req, res) => {
       );
       const admin = adminResult.rows[0];
       if (admin) {
-        if (admin.account_status === 'pending_verification') {
+        if (admin.account_status === 'pending_verification' || !admin.email_verified_at) {
           return res.status(403).json({ error: 'Please verify your email before signing in.' });
         }
         if (admin.account_status === 'locked' || admin.account_status === 'suspended') {

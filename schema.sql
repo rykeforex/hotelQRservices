@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS hotel_admin_users (
   phone TEXT,
   shift_id INTEGER REFERENCES hotel_admin_shifts(id) ON DELETE SET NULL,
   employment_status TEXT NOT NULL DEFAULT 'active' CHECK (employment_status IN ('active','inactive','terminated','leave')),
-  account_status TEXT NOT NULL DEFAULT 'active' CHECK (account_status IN ('active','suspended','locked','deleted')),
+  account_status TEXT NOT NULL DEFAULT 'active' CHECK (account_status IN ('active','pending_verification','suspended','locked','deleted')),
   password_hash TEXT NOT NULL,
   profile_photo_url TEXT,
   force_password_reset BOOLEAN NOT NULL DEFAULT FALSE,
@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS hotel_admin_users (
   last_login_at TIMESTAMPTZ,
   last_seen_at TIMESTAMPTZ,
   locked_at TIMESTAMPTZ,
+  verification_token TEXT,
+  email_verified_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   deleted_at TIMESTAMPTZ,
@@ -242,6 +244,12 @@ BEGIN
     ALTER TABLE requests ADD COLUMN updated_at TIMESTAMPTZ;
   END IF;
 
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'hotel_admin_users' AND column_name = 'verification_token') THEN
+    ALTER TABLE hotel_admin_users ADD COLUMN verification_token TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'hotel_admin_users' AND column_name = 'email_verified_at') THEN
+    ALTER TABLE hotel_admin_users ADD COLUMN email_verified_at TIMESTAMPTZ;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'password_resets' AND column_name = 'hotel_id') THEN
     ALTER TABLE password_resets ADD COLUMN hotel_id INTEGER;
   END IF;
