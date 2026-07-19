@@ -72,6 +72,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'luxehotel2026';
 const SMTP_HOST = process.env.SMTP_HOST || process.env.BREVO_SMTP_HOST || 'smtp.gmail.com';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || process.env.BREVO_SMTP_PORT || '587', 10);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || process.env.BREVO_SMTP_SECURE || 'false').toLowerCase() === 'true';
+const SMTP_SERVICE = process.env.SMTP_SERVICE || process.env.GMAIL_SERVICE || '';
 const SMTP_USER = process.env.SMTP_USER || process.env.BREVO_SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || process.env.BREVO_SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || process.env.EMAIL_FROM || process.env.BREVO_SMTP_FROM || 'no-reply@luxehotel.com';
@@ -417,45 +418,190 @@ function parseHotelIdFromRequest(req) {
 }
 
 function buildVerificationUrl(req, token) {
+  const baseUrl = process.env.APP_BASE_URL || process.env.PUBLIC_BASE_URL || '';
+  if (baseUrl) {
+    return `${baseUrl.replace(/\/$/, '')}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+  }
+
   const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-  const host = req.headers.host || 'localhost:3000';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000';
   return `${protocol}://${host}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
 }
 
-async function sendVerificationEmail(to, verifyUrl, hotelName) {
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    console.log(`[EMAIL] SMTP not configured. Verification email not sent. To=${to} Link=${verifyUrl}`);
-    return { ok: true, skipped: true };
+function buildVerificationEmailHtml(hotelName, verifyUrl) {
+  return `
+    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1c1a17;">
+      <h2>Verify your hotel admin account</h2>
+      <p>Hello,</p>
+      <p>Your account for <strong>${hotelName}</strong> has been created. Please verify your email address to activate the account.</p>
+      <p><a href="${verifyUrl}" style="display:inline-block;padding:10px 16px;background:#C9A84C;color:#fff;text-decoration:none;border-radius:999px;">Verify Email</a></p>
+      <p>If the button does not work, copy and paste this link into your browser:</p>
+      <p>${verifyUrl}</p>
+    </div>
+  `;
+}
+
+function buildVerificationEmailText(hotelName, verifyUrl) {
+  return [
+    'Verify your hotel admin account',
+    '',
+    `Hello,`,
+    '',
+    `Your account for ${hotelName} has been created. Please verify your email address to activate the account.`,
+    '',
+    `Verification link: ${verifyUrl}`
+  ].join('\n');
+}
+
+async function sendViaResend(to, subject, html, text) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error('RESEND_API_KEY is not configured');
   }
 
-  const transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS
-    }
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      from: SMTP_FROM,
+      to: [to],
+      subject,
+      html,
+      text
+    })
   });
+
+  const payload = await response.text();
+  if (!response.ok) {
+    throw new Error(`Resend API error ${response.status}: ${payload}`);
+  }
+
+  const parsed = payload ? JSON.parse(payload) : {};
+  return { provider: 'resend', messageId: parsed.id || parsed.message_id };
+}
+
+async function sendViaBrevo(to, subject, html, text) {
+  const apiKey = process.env.BREVO_API_KEY;
+  if (!apiKey) {
+    throw new Error('BREVO_API_KEY is not configured');
+  }
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': apiKey
+    },
+    body: JSON.stringify({
+      sender: { name: 'LUXE Hotel', email: SMTP_FROM },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+      textContent: text
+    })
+  });
+
+  const payload = await response.text();
+  if (!response.ok) {
+    throw new Error(`Brevo API error ${response.status}: ${payload}`);
+  }
+
+  const parsed = payload ? JSON.parse(payload) : {};
+  return { provider: 'brevo', messageId: parsed.messageId || parsed.message_id || parsed.id };
+}
+
+async function sendViaSmtp(to, subject, html, text) {
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+    throw new Error('SMTP credentials are not configured');
+  }
+
+  const isGmail = String(SMTP_SERVICE || SMTP_HOST || '').toLowerCase().includes('gmail') || String(SMTP_USER || '').toLowerCase().endsWith('@gmail.com');
+
+  const transporterConfig = isGmail
+    ? {
+        service: 'gmail',
+        auth: {
+          user: SMTP_USER,
+          pass: SMTP_PASS
+        }
+      }
+    : {
+        host: SMTP_HOST,
+        port: SMTP_PORT,
+        secure: SMTP_SECURE,
+        auth: {
+          user: SMTP_USER,
+          pass: SMTP_PASS
+        }
+      };
+
+  const transporter = nodemailer.createTransport(transporterConfig);
 
   const info = await transporter.sendMail({
     from: SMTP_FROM,
     to,
-    subject: `Verify your ${hotelName} admin account`,
-    html: `
-      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1c1a17;">
-        <h2>Verify your hotel admin account</h2>
-        <p>Hello,</p>
-        <p>Your account for <strong>${hotelName}</strong> has been created. Please verify your email address to activate the account.</p>
-        <p><a href="${verifyUrl}" style="display:inline-block;padding:10px 16px;background:#C9A84C;color:#fff;text-decoration:none;border-radius:999px;">Verify Email</a></p>
-        <p>If the button does not work, copy and paste this link into your browser:</p>
-        <p>${verifyUrl}</p>
-      </div>
-    `
+    subject,
+    html,
+    text
   });
 
-  console.log(`[EMAIL] Verification email sent to ${to}: ${info.messageId}`);
-  return { ok: true, skipped: false, messageId: info.messageId };
+  return { provider: isGmail ? 'google' : 'smtp', messageId: info.messageId };
+}
+
+async function sendVerificationEmail(to, verifyUrl, hotelName) {
+  const subject = `Verify your ${hotelName} admin account`;
+  const html = buildVerificationEmailHtml(hotelName, verifyUrl);
+  const text = buildVerificationEmailText(hotelName, verifyUrl);
+  const providers = [];
+
+  if (process.env.EMAIL_PROVIDER) {
+    const preferred = String(process.env.EMAIL_PROVIDER).toLowerCase();
+    if (preferred === 'resend') providers.push('resend');
+    if (preferred === 'brevo') providers.push('brevo');
+    if (preferred === 'smtp' || preferred === 'google' || preferred === 'gmail') providers.push('smtp');
+  }
+
+  if (!providers.includes('smtp') && SMTP_HOST && SMTP_USER && SMTP_PASS) {
+    providers.push('smtp');
+  }
+  if (!providers.includes('resend') && process.env.RESEND_API_KEY) {
+    providers.push('resend');
+  }
+  if (!providers.includes('brevo') && process.env.BREVO_API_KEY) {
+    providers.push('brevo');
+  }
+
+  if (!providers.length) {
+    console.log(`[EMAIL] No mail provider configured. Verification email not sent. To=${to} Link=${verifyUrl}`);
+    return { ok: true, skipped: true, reason: 'no_provider_configured' };
+  }
+
+  const errors = [];
+  for (const provider of providers) {
+    try {
+      let result;
+      if (provider === 'resend') {
+        result = await sendViaResend(to, subject, html, text);
+      } else if (provider === 'brevo') {
+        result = await sendViaBrevo(to, subject, html, text);
+      } else {
+        result = await sendViaSmtp(to, subject, html, text);
+      }
+
+      console.log(`[EMAIL] Verification email sent via ${result.provider} to ${to}: ${result.messageId}`);
+      return { ok: true, skipped: false, provider: result.provider, messageId: result.messageId };
+    } catch (err) {
+      const message = err?.message || String(err);
+      errors.push(`${provider}: ${message}`);
+      console.error(`[EMAIL] ${provider} failed for ${to}:`, err);
+    }
+  }
+
+  console.warn(`[EMAIL] All configured mail providers failed. Verification email skipped. Errors: ${errors.join(' | ')}`);
+  return { ok: false, skipped: true, reason: 'provider_failed', errors };
 }
 
 async function insertRequestViaDatabase(requestData) {

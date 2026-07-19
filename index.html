@@ -179,7 +179,8 @@
     }
 
     input[type="text"],
-    input[type="password"] {
+    input[type="password"],
+    input[type="email"] {
       width: 100%;
       padding: 14px 16px 14px 44px;
       font-family: 'Montserrat', sans-serif;
@@ -193,12 +194,14 @@
       transition: border-color 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
     }
     input[type="text"]::placeholder,
-    input[type="password"]::placeholder {
+    input[type="password"]::placeholder,
+    input[type="email"]::placeholder {
       color: rgba(138,128,112,0.6);
       font-weight: 300;
     }
     input[type="text"]:focus,
-    input[type="password"]:focus {
+    input[type="password"]:focus,
+    input[type="email"]:focus {
       border-color: var(--gold);
       background: #fff;
       box-shadow: 0 0 0 4px var(--gold-dim);
@@ -483,9 +486,7 @@
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
 
-      const username = document.getElementById('username').value.trim();
       const password = document.getElementById('password').value;
-
       const email = document.getElementById('email').value.trim();
 
       if (!email || !password) {
