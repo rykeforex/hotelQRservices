@@ -860,6 +860,16 @@ app.post('/api/auth/register', async (req, res) => {
         roleId = newRoleRows?.[0]?.id;
       }
 
+      const existingUserCheck = await fallbackClient
+        .from('hotel_admin_users')
+        .select('id')
+        .ilike('email', trimmedEmail)
+        .limit(1);
+      if (existingUserCheck.error) throw existingUserCheck.error;
+      if ((existingUserCheck.data || []).length > 0) {
+        return res.status(409).json({ error: 'An account with this email already exists.' });
+      }
+
       const hashedPassword = await bcrypt.hash(password, 12);
       const verificationToken = crypto.randomBytes(32).toString('hex');
       const verificationUrl = buildVerificationUrl(req, verificationToken);
@@ -1220,8 +1230,9 @@ app.post('/api/auth/hotel-admin', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const { email, password } = req.body;
+  const loginIdentifier = String(email || '').trim().toLowerCase();
+  if (!loginIdentifier || !password) return res.status(400).json({ error: 'Email and password required' });
 
   if (pool) {
     try {
@@ -1232,7 +1243,7 @@ app.post('/api/auth/login', async (req, res) => {
          WHERE (LOWER(u.email) = LOWER($1) OR LOWER(COALESCE(u.employee_id,'')) = LOWER($1))
            AND u.deleted_at IS NULL
          LIMIT 1`,
-        [username]
+        [loginIdentifier]
       );
       const admin = adminResult.rows[0];
       if (admin) {
@@ -1292,7 +1303,7 @@ app.post('/api/auth/login', async (req, res) => {
 
   try {
     const hotelId = parseHotelIdFromRequest(req);
-    const filters = { username: `eq.${username}` };
+    const filters = { username: `eq.${loginIdentifier}` };
     if (hotelId) filters.hotel_id = `eq.${hotelId}`;
     const directors = await supabaseSelect('director', filters);
     const row = directors[0];

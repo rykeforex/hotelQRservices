@@ -391,14 +391,14 @@
 
       <div class="error-msg" id="errorMsg">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        <span id="errorText">Invalid username or password.</span>
+        <span id="errorText">Invalid email or password.</span>
       </div>
 
       <div class="field-group">
-        <label class="field-label" for="username">Username</label>
+        <label class="field-label" for="email">Email</label>
         <div class="field-input-wrap">
           <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          <input type="text" id="username" name="username" placeholder="Enter your username" autocomplete="username" required>
+          <input type="email" id="email" name="email" placeholder="Enter your email" autocomplete="email" required>
         </div>
       </div>
 
@@ -486,8 +486,10 @@
       const username = document.getElementById('username').value.trim();
       const password = document.getElementById('password').value;
 
-      if (!username || !password) {
-        showError('Please enter both username and password.');
+      const email = document.getElementById('email').value.trim();
+
+      if (!email || !password) {
+        showError('Please enter both email and password.');
         return;
       }
 
@@ -495,7 +497,7 @@
         const res = await fetch(API_BASE_URL + '/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password })
+          body: JSON.stringify({ email, password })
         });
         const data = await res.json().catch(() => ({}));
 
@@ -507,7 +509,7 @@
         }
 
         if (res.ok && data.role === 'director') {
-          const name = data.user?.fullName || data.user?.username || username;
+          const name = data.user?.fullName || data.user?.username || email;
           const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
           const params = new URLSearchParams({ name, initials });
           const targetUrl = appendHotelId((data.redirectUrl || 'director_dashboard.html') + '?' + params.toString());
@@ -524,7 +526,7 @@
           showError(data.error || `Server error (${res.status}). Please try again or contact your administrator.`);
           return;
         }
-        showError('Invalid username or password.');
+        showError('Invalid email or password.');
         return;
       } catch (err) {
         showError('Unable to reach authentication server. Please try again later.');
