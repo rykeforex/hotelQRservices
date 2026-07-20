@@ -1215,29 +1215,56 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 app.get('/api/auth/verify-email', async (req, res) => {
-  if (!requireDatabase(res)) return;
-  await ensureVerificationColumns().catch(() => {});
   const token = String(req.query.token || '').trim();
   if (!token) {
     return res.status(400).send('<h2>Invalid verification link.</h2><p>The verification token is missing.</p>');
   }
 
   try {
-    const result = await pool.query(
-      `SELECT id, email, account_status FROM hotel_admin_users WHERE verification_token = $1 LIMIT 1`,
-      [token]
-    );
-    const user = result.rows[0];
+    let user = null;
+
+    if (pool) {
+      await ensureVerificationColumns().catch(() => {});
+      const result = await pool.query(
+        `SELECT id, email, account_status FROM hotel_admin_users WHERE verification_token = $1 LIMIT 1`,
+        [token]
+      );
+      user = result.rows[0];
+
+      if (user) {
+        await pool.query(
+          `UPDATE hotel_admin_users
+           SET account_status = 'active', email_verified_at = NOW(), verification_token = NULL
+           WHERE id = $1`,
+          [user.id]
+        );
+      }
+    } else {
+      const fallbackClient = supabaseService || supabaseAnon;
+      if (!fallbackClient) {
+        return res.status(503).json({ error: 'Database is not configured' });
+      }
+
+      const { data, error } = await fallbackClient
+        .from('hotel_admin_users')
+        .select('id, email, account_status')
+        .eq('verification_token', token)
+        .limit(1);
+      if (error) throw error;
+      user = Array.isArray(data) ? data[0] : data;
+
+      if (user) {
+        const { error: updateError } = await fallbackClient
+          .from('hotel_admin_users')
+          .update({ account_status: 'active', email_verified_at: new Date().toISOString(), verification_token: null })
+          .eq('id', user.id);
+        if (updateError) throw updateError;
+      }
+    }
+
     if (!user) {
       return res.status(404).send('<h2>Verification failed.</h2><p>This link is invalid or has already been used.</p>');
     }
-
-    await pool.query(
-      `UPDATE hotel_admin_users
-       SET account_status = 'active', email_verified_at = NOW(), verification_token = NULL
-       WHERE id = $1`,
-      [user.id]
-    );
 
     res.send(`<!doctype html><html><head><meta charset="utf-8"><title>Email Verified</title><style>body{font-family:Arial,sans-serif;padding:40px;line-height:1.5}h2{color:#2f7d32}</style></head><body><h2>Email verified successfully.</h2><p>Your hotel admin account is now active. You can sign in.</p><p><a href="/">Go to sign in</a></p></body></html>`);
   } catch (err) {
