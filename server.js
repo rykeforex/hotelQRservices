@@ -76,6 +76,9 @@ const SMTP_SERVICE = process.env.SMTP_SERVICE || process.env.GMAIL_SERVICE || ''
 const SMTP_USER = process.env.SMTP_USER || process.env.BREVO_SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || process.env.BREVO_SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || process.env.EMAIL_FROM || process.env.BREVO_SMTP_FROM || 'no-reply@luxehotel.com';
+const EMAIL_PROVIDER = String(process.env.EMAIL_PROVIDER || process.env.MAIL_PROVIDER || '').toLowerCase();
+const SMTP_TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS || '15000', 10);
+const IS_RENDER = Boolean(process.env.RENDER || process.env.RENDER_SERVICE_NAME || process.env.RENDER_EXTERNAL_URL);
 
 // Supabase client config from env
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
@@ -519,36 +522,63 @@ async function sendViaSmtp(to, subject, html, text) {
   }
 
   const isGmail = String(SMTP_SERVICE || SMTP_HOST || '').toLowerCase().includes('gmail') || String(SMTP_USER || '').toLowerCase().endsWith('@gmail.com');
+  const sharedAuth = {
+    user: SMTP_USER,
+    pass: SMTP_PASS
+  };
+  const baseOptions = {
+    connectionTimeout: SMTP_TIMEOUT_MS,
+    greetingTimeout: SMTP_TIMEOUT_MS,
+    socketTimeout: SMTP_TIMEOUT_MS,
+    auth: sharedAuth
+  };
 
-  const transporterConfig = isGmail
-    ? {
-        service: 'gmail',
-        auth: {
-          user: SMTP_USER,
-          pass: SMTP_PASS
-        }
-      }
-    : {
-        host: SMTP_HOST,
-        port: SMTP_PORT,
-        secure: SMTP_SECURE,
-        auth: {
-          user: SMTP_USER,
-          pass: SMTP_PASS
-        }
-      };
+  const transportConfigs = [];
+  if (isGmail) {
+    transportConfigs.push({
+      service: 'gmail',
+      ...baseOptions
+    });
+    transportConfigs.push({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      ...baseOptions
+    });
+    transportConfigs.push({
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      ...baseOptions
+    });
+  } else {
+    transportConfigs.push({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      ...baseOptions
+    });
+  }
 
-  const transporter = nodemailer.createTransport(transporterConfig);
+  let lastError = null;
+  for (const transporterConfig of transportConfigs) {
+    const transporter = nodemailer.createTransport(transporterConfig);
+    try {
+      const info = await transporter.sendMail({
+        from: SMTP_FROM,
+        to,
+        subject,
+        html,
+        text
+      });
+      return { provider: isGmail ? 'google' : 'smtp', messageId: info.messageId };
+    } catch (err) {
+      lastError = err;
+      console.warn(`[EMAIL] SMTP attempt failed for ${to}:`, err?.message || err);
+    }
+  }
 
-  const info = await transporter.sendMail({
-    from: SMTP_FROM,
-    to,
-    subject,
-    html,
-    text
-  });
-
-  return { provider: isGmail ? 'google' : 'smtp', messageId: info.messageId };
+  throw lastError || new Error('SMTP delivery failed');
 }
 
 async function sendVerificationEmail(to, verifyUrl, hotelName) {
@@ -557,11 +587,18 @@ async function sendVerificationEmail(to, verifyUrl, hotelName) {
   const text = buildVerificationEmailText(hotelName, verifyUrl);
   const providers = [];
 
-  if (process.env.EMAIL_PROVIDER) {
-    const preferred = String(process.env.EMAIL_PROVIDER).toLowerCase();
+  if (EMAIL_PROVIDER) {
+    const preferred = EMAIL_PROVIDER;
     if (preferred === 'resend') providers.push('resend');
     if (preferred === 'brevo') providers.push('brevo');
     if (preferred === 'smtp' || preferred === 'google' || preferred === 'gmail') providers.push('smtp');
+  }
+
+  if (IS_RENDER && process.env.BREVO_API_KEY && !providers.includes('brevo')) {
+    providers.unshift('brevo');
+  }
+  if (IS_RENDER && process.env.RESEND_API_KEY && !providers.includes('resend')) {
+    providers.unshift('resend');
   }
 
   if (!providers.includes('smtp') && SMTP_HOST && SMTP_USER && SMTP_PASS) {
