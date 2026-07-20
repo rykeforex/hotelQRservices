@@ -50,8 +50,7 @@
     .alert { display: none; margin-bottom: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(179,73,47,0.1); color: var(--error); font-size: 14px; }
     .alert.show { display: block; }
     .success { background: rgba(47,125,50,0.12); color: #2f7d32; }
-    .verification-box { display: none; margin-bottom: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(201,168,76,0.12); color: var(--charcoal); font-size: 13px; word-break: break-all; }
-    .verification-box a { color: var(--gold); font-weight: 600; text-decoration: none; }
+    .verification-box { display: none; margin-bottom: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(201,168,76,0.12); color: var(--charcoal); font-size: 13px; }
     button { width: 100%; padding: 14px 16px; border: none; border-radius: 999px; background: linear-gradient(90deg, var(--gold), var(--gold-light)); color: #fff; font-weight: 600; cursor: pointer; margin-top: 8px; }
     button:hover { transform: translateY(-1px); }
     .footer-link { text-align: center; margin-top: 16px; font-size: 13px; color: var(--muted); }
@@ -115,17 +114,12 @@
       verificationBox.style.display = 'none';
     }
 
-    function showSuccess(message, verificationUrl) {
+    function showSuccess(message) {
       successMsg.textContent = message;
       successMsg.classList.add('show');
       errorMsg.classList.remove('show');
-
-      if (verificationUrl) {
-        verificationBox.innerHTML = `<strong>Verification link:</strong> <a href="${verificationUrl}" target="_blank" rel="noopener">${verificationUrl}</a>`;
-        verificationBox.style.display = 'block';
-      } else {
-        verificationBox.style.display = 'none';
-      }
+      verificationBox.textContent = 'A verification email has been sent. Please check your inbox and follow the secure link there.';
+      verificationBox.style.display = 'block';
     }
 
     form.addEventListener('submit', async (event) => {
@@ -156,7 +150,7 @@
         }
 
         if (data.requiresVerification) {
-          showSuccess(data.message || 'Account created. Please verify your email before signing in.', data.verificationUrl);
+          showSuccess(data.message || 'Account created. Please verify your email before signing in.');
           form.reset();
           return;
         }

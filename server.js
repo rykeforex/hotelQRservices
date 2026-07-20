@@ -564,7 +564,9 @@ async function sendViaSmtp(to, subject, html, text) {
     greetingTimeout: SMTP_TIMEOUT_MS,
     socketTimeout: SMTP_TIMEOUT_MS,
     auth: sharedAuth,
-    requireTLS: SMTP_REQUIRE_TLS || isGmail
+    requireTLS: true,
+    secure: isGmail,
+    debug: true
   };
 
   const transportConfigs = [];
@@ -573,12 +575,14 @@ async function sendViaSmtp(to, subject, html, text) {
       host: 'smtp.gmail.com',
       port: 465,
       secure: true,
+      service: 'gmail',
       ...baseOptions
     });
     transportConfigs.push({
       host: 'smtp.gmail.com',
       port: 587,
       secure: false,
+      service: 'gmail',
       ...baseOptions
     });
   } else {
@@ -654,7 +658,7 @@ async function sendVerificationEmail(to, verifyUrl, hotelName) {
   }
 
   if (!providers.length) {
-    console.log(`[EMAIL] No mail provider configured. Verification email not sent. To=${to} Link=${verifyUrl}`);
+    console.warn(`[EMAIL] No mail provider configured for verification emails. To=${to}`);
     return { ok: true, skipped: true, reason: 'no_provider_configured' };
   }
 
@@ -1121,9 +1125,8 @@ app.post('/api/auth/register', async (req, res) => {
         ok: true,
         requiresVerification: true,
         message: emailResult.skipped
-          ? 'Account created. Please verify your email before signing in. Verification email was not sent automatically.'
+          ? 'Account created. Please verify your email before signing in. Your verification email could not be delivered automatically.'
           : 'Account created. Please verify your email before signing in.',
-        verificationUrl,
         user: { id: createdUser.id, hotelId: hotel.id, fullName: createdUser.full_name, email: createdUser.email, hotelName: hotel.name },
         role: 'hotel_admin'
       });
@@ -1193,9 +1196,8 @@ app.post('/api/auth/register', async (req, res) => {
       ok: true,
       requiresVerification: true,
       message: emailResult.skipped
-        ? 'Account created. Please verify your email before signing in. Verification email was not sent automatically.'
+        ? 'Account created. Please verify your email before signing in. Your verification email could not be delivered automatically.'
         : 'Account created. Please verify your email before signing in.',
-      verificationUrl,
       user: {
         id: createdUser.id,
         hotelId: hotel.id,
