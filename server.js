@@ -77,7 +77,8 @@ const SMTP_USER = process.env.SMTP_USER || process.env.BREVO_SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || process.env.BREVO_SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || process.env.EMAIL_FROM || process.env.BREVO_SMTP_FROM || 'no-reply@luxehotel.com';
 const EMAIL_PROVIDER = String(process.env.EMAIL_PROVIDER || process.env.MAIL_PROVIDER || '').toLowerCase();
-const SMTP_TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS || '15000', 10);
+const SMTP_TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS || '30000', 10);
+const SMTP_REQUIRE_TLS = String(process.env.SMTP_REQUIRE_TLS || '').toLowerCase() === 'true';
 const IS_RENDER = Boolean(process.env.RENDER || process.env.RENDER_SERVICE_NAME || process.env.RENDER_EXTERNAL_URL);
 
 // Supabase client config from env
@@ -516,6 +517,38 @@ async function sendViaBrevo(to, subject, html, text) {
   return { provider: 'brevo', messageId: parsed.messageId || parsed.message_id || parsed.id };
 }
 
+async function sendViaSendgrid(to, subject, html, text) {
+  const apiKey = process.env.SENDGRID_API_KEY;
+  if (!apiKey) {
+    throw new Error('SENDGRID_API_KEY is not configured');
+  }
+
+  const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: SMTP_FROM, name: 'LUXE Hotel' },
+      subject,
+      content: [
+        { type: 'text/plain', value: text },
+        { type: 'text/html', value: html }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const payload = await response.text();
+    throw new Error(`SendGrid API error ${response.status}: ${payload}`);
+  }
+
+  const messageId = response.headers.get('x-message-id') || 'sendgrid';
+  return { provider: 'sendgrid', messageId };
+}
+
 async function sendViaSmtp(to, subject, html, text) {
   if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
     throw new Error('SMTP credentials are not configured');
@@ -530,15 +563,12 @@ async function sendViaSmtp(to, subject, html, text) {
     connectionTimeout: SMTP_TIMEOUT_MS,
     greetingTimeout: SMTP_TIMEOUT_MS,
     socketTimeout: SMTP_TIMEOUT_MS,
-    auth: sharedAuth
+    auth: sharedAuth,
+    requireTLS: SMTP_REQUIRE_TLS || isGmail
   };
 
   const transportConfigs = [];
   if (isGmail) {
-    transportConfigs.push({
-      service: 'gmail',
-      ...baseOptions
-    });
     transportConfigs.push({
       host: 'smtp.gmail.com',
       port: 465,
@@ -554,10 +584,18 @@ async function sendViaSmtp(to, subject, html, text) {
   } else {
     transportConfigs.push({
       host: SMTP_HOST,
-      port: SMTP_PORT,
+      port: SMTP_PORT || 587,
       secure: SMTP_SECURE,
       ...baseOptions
     });
+    if (SMTP_PORT !== 465) {
+      transportConfigs.push({
+        host: SMTP_HOST,
+        port: 465,
+        secure: true,
+        ...baseOptions
+      });
+    }
   }
 
   let lastError = null;
@@ -591,6 +629,7 @@ async function sendVerificationEmail(to, verifyUrl, hotelName) {
     const preferred = EMAIL_PROVIDER;
     if (preferred === 'resend') providers.push('resend');
     if (preferred === 'brevo') providers.push('brevo');
+    if (preferred === 'sendgrid') providers.push('sendgrid');
     if (preferred === 'smtp' || preferred === 'google' || preferred === 'gmail') providers.push('smtp');
   }
 
@@ -610,6 +649,9 @@ async function sendVerificationEmail(to, verifyUrl, hotelName) {
   if (!providers.includes('brevo') && process.env.BREVO_API_KEY) {
     providers.push('brevo');
   }
+  if (!providers.includes('sendgrid') && process.env.SENDGRID_API_KEY) {
+    providers.push('sendgrid');
+  }
 
   if (!providers.length) {
     console.log(`[EMAIL] No mail provider configured. Verification email not sent. To=${to} Link=${verifyUrl}`);
@@ -624,6 +666,8 @@ async function sendVerificationEmail(to, verifyUrl, hotelName) {
         result = await sendViaResend(to, subject, html, text);
       } else if (provider === 'brevo') {
         result = await sendViaBrevo(to, subject, html, text);
+      } else if (provider === 'sendgrid') {
+        result = await sendViaSendgrid(to, subject, html, text);
       } else {
         result = await sendViaSmtp(to, subject, html, text);
       }
