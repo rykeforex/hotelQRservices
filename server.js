@@ -1425,22 +1425,48 @@ function mapDepartmentRow(row) {
 }
 
 app.post('/api/auth/hotel-admin', async (req, res) => {
-  if (!requireDatabase(res)) return;
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
   try {
-    const result = await pool.query(
-      `SELECT u.id, u.hotel_id, u.full_name, u.email, u.password_hash, u.account_status, u.failed_login_attempts, h.name AS hotel_name
-       FROM hotel_admin_users u
-       JOIN hotels h ON h.id = u.hotel_id
-       WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
-       LIMIT 1`,
-      [email]
-    );
-    const user = result.rows[0];
+    let user = null;
+
+    if (pool) {
+      const result = await pool.query(
+        `SELECT u.id, u.hotel_id, u.full_name, u.email, u.password_hash, u.account_status, u.failed_login_attempts, u.email_verified_at, h.name AS hotel_name
+         FROM hotel_admin_users u
+         JOIN hotels h ON h.id = u.hotel_id
+         WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
+         LIMIT 1`,
+        [email]
+      );
+      user = result.rows[0];
+    }
+
+    if (!user) {
+      const fallbackClient = supabaseService || supabaseAnon;
+      if (!fallbackClient) {
+        return res.status(503).json({ error: 'Database is not configured' });
+      }
+
+      const { data, error } = await fallbackClient
+        .from('hotel_admin_users')
+        .select('id, hotel_id, full_name, email, password_hash, account_status, failed_login_attempts, email_verified_at')
+        .ilike('email', String(email).trim().toLowerCase())
+        .limit(1);
+      if (error) throw error;
+      const row = Array.isArray(data) ? data[0] : data;
+      if (row) {
+        const { data: hotelRows, error: hotelError } = await fallbackClient.from('hotels').select('name').eq('id', row.hotel_id).limit(1);
+        if (hotelError) throw hotelError;
+        user = { ...row, hotel_name: hotelRows?.[0]?.name || '' };
+      }
+    }
+
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-    if (user.account_status === 'pending_verification' || !user.email_verified_at) {
+
+    const isVerified = user.account_status === 'active' || Boolean(user.email_verified_at);
+    if (user.account_status === 'pending_verification' || !isVerified) {
       return res.status(403).json({ error: 'Please verify your email before signing in.' });
     }
     if (user.account_status === 'locked' || user.account_status === 'suspended') {
@@ -1452,22 +1478,39 @@ app.post('/api/auth/hotel-admin', async (req, res) => {
     if (!valid) {
       const failed = Number(user.failed_login_attempts || 0) + 1;
       const nextStatus = failed >= 5 ? 'locked' : user.account_status;
-      await pool.query(
-        `UPDATE hotel_admin_users
-         SET failed_login_attempts = $1, account_status = $2, locked_at = CASE WHEN $2 = 'locked' THEN NOW() ELSE locked_at END
-         WHERE id = $3`,
-        [failed, nextStatus, user.id]
-      );
+
+      if (pool) {
+        await pool.query(
+          `UPDATE hotel_admin_users
+           SET failed_login_attempts = $1, account_status = $2, locked_at = CASE WHEN $2 = 'locked' THEN NOW() ELSE locked_at END
+           WHERE id = $3`,
+          [failed, nextStatus, user.id]
+        );
+      } else {
+        const fallbackClient = supabaseService || supabaseAnon;
+        if (fallbackClient) {
+          await fallbackClient.from('hotel_admin_users').update({ failed_login_attempts: failed, account_status: nextStatus, locked_at: nextStatus === 'locked' ? new Date().toISOString() : null }).eq('id', user.id);
+        }
+      }
+
       await writeHotelAudit(user.hotel_id, user.id, 'failed_login', 'user', user.id, req, { failedAttempts: failed });
       return res.status(401).json({ error: failed >= 5 ? 'Account locked after failed attempts' : 'Invalid credentials' });
     }
 
-    await pool.query(
-      `UPDATE hotel_admin_users
-       SET failed_login_attempts = 0, last_login_at = NOW(), last_seen_at = NOW(), is_online = TRUE
-       WHERE id = $1`,
-      [user.id]
-    );
+    if (pool) {
+      await pool.query(
+        `UPDATE hotel_admin_users
+         SET failed_login_attempts = 0, last_login_at = NOW(), last_seen_at = NOW(), is_online = TRUE
+         WHERE id = $1`,
+        [user.id]
+      );
+    } else {
+      const fallbackClient = supabaseService || supabaseAnon;
+      if (fallbackClient) {
+        await fallbackClient.from('hotel_admin_users').update({ failed_login_attempts: 0, last_login_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), is_online: true }).eq('id', user.id);
+      }
+    }
+
     await writeHotelAudit(user.hotel_id, user.id, 'login', 'user', user.id, req);
 
     const token = jwt.sign(
@@ -1490,10 +1533,12 @@ app.post('/api/auth/login', async (req, res) => {
   const loginIdentifier = String(email || '').trim().toLowerCase();
   if (!loginIdentifier || !password) return res.status(400).json({ error: 'Email and password required' });
 
-  if (pool) {
-    try {
+  try {
+    let admin = null;
+
+    if (pool) {
       const adminResult = await pool.query(
-        `SELECT u.id, u.hotel_id, u.full_name, u.email, u.password_hash, u.account_status, u.failed_login_attempts, h.name AS hotel_name
+        `SELECT u.id, u.hotel_id, u.full_name, u.email, u.password_hash, u.account_status, u.failed_login_attempts, u.email_verified_at, h.name AS hotel_name
          FROM hotel_admin_users u
          JOIN hotels h ON h.id = u.hotel_id
          WHERE (LOWER(u.email) = LOWER($1) OR LOWER(COALESCE(u.employee_id,'')) = LOWER($1))
@@ -1501,60 +1546,94 @@ app.post('/api/auth/login', async (req, res) => {
          LIMIT 1`,
         [loginIdentifier]
       );
-      const admin = adminResult.rows[0];
-      if (admin) {
-        if (admin.account_status === 'pending_verification' || !admin.email_verified_at) {
-          return res.status(403).json({ error: 'Please verify your email before signing in.' });
-        }
-        if (admin.account_status === 'locked' || admin.account_status === 'suspended') {
-          await writeHotelAudit(admin.hotel_id, admin.id, 'blocked_login', 'user', admin.id, req);
-          return res.status(423).json({ error: 'Account is not active' });
-        }
+      admin = adminResult.rows[0];
+    }
 
-        const validAdminPassword = await bcrypt.compare(password, admin.password_hash || '');
-        if (!validAdminPassword) {
-          const failed = Number(admin.failed_login_attempts || 0) + 1;
-          const nextStatus = failed >= 5 ? 'locked' : admin.account_status;
+    if (!admin) {
+      const fallbackClient = supabaseService || supabaseAnon;
+      if (fallbackClient) {
+        const { data, error } = await fallbackClient
+          .from('hotel_admin_users')
+          .select('id, hotel_id, full_name, email, password_hash, account_status, failed_login_attempts, email_verified_at')
+          .ilike('email', loginIdentifier)
+          .limit(1);
+        if (error) throw error;
+        const row = Array.isArray(data) ? data[0] : data;
+        if (row) {
+          const { data: hotelRows, error: hotelError } = await fallbackClient.from('hotels').select('name').eq('id', row.hotel_id).limit(1);
+          if (hotelError) throw hotelError;
+          admin = { ...row, hotel_name: hotelRows?.[0]?.name || '' };
+        }
+      }
+    }
+
+    if (admin) {
+      const isVerified = admin.account_status === 'active' || Boolean(admin.email_verified_at);
+      if (admin.account_status === 'pending_verification' || !isVerified) {
+        return res.status(403).json({ error: 'Please verify your email before signing in.' });
+      }
+      if (admin.account_status === 'locked' || admin.account_status === 'suspended') {
+        await writeHotelAudit(admin.hotel_id, admin.id, 'blocked_login', 'user', admin.id, req);
+        return res.status(423).json({ error: 'Account is not active' });
+      }
+
+      const validAdminPassword = await bcrypt.compare(password, admin.password_hash || '');
+      if (!validAdminPassword) {
+        const failed = Number(admin.failed_login_attempts || 0) + 1;
+        const nextStatus = failed >= 5 ? 'locked' : admin.account_status;
+        if (pool) {
           await pool.query(
             `UPDATE hotel_admin_users
              SET failed_login_attempts = $1, account_status = $2, locked_at = CASE WHEN $2 = 'locked' THEN NOW() ELSE locked_at END
              WHERE id = $3`,
             [failed, nextStatus, admin.id]
           );
-          await writeHotelAudit(admin.hotel_id, admin.id, 'failed_login', 'user', admin.id, req, { failedAttempts: failed });
-          return res.status(401).json({ error: failed >= 5 ? 'Account locked after failed attempts' : 'Invalid credentials' });
+        } else {
+          const fallbackClient = supabaseService || supabaseAnon;
+          if (fallbackClient) {
+            await fallbackClient.from('hotel_admin_users').update({ failed_login_attempts: failed, account_status: nextStatus, locked_at: nextStatus === 'locked' ? new Date().toISOString() : null }).eq('id', admin.id);
+          }
         }
+        await writeHotelAudit(admin.hotel_id, admin.id, 'failed_login', 'user', admin.id, req, { failedAttempts: failed });
+        return res.status(401).json({ error: failed >= 5 ? 'Account locked after failed attempts' : 'Invalid credentials' });
+      }
 
+      if (pool) {
         await pool.query(
           `UPDATE hotel_admin_users
            SET failed_login_attempts = 0, last_login_at = NOW(), last_seen_at = NOW(), is_online = TRUE
            WHERE id = $1`,
           [admin.id]
         );
-        await writeHotelAudit(admin.hotel_id, admin.id, 'login', 'user', admin.id, req);
-
-        const token = jwt.sign(
-          { type: 'hotel_admin', userId: admin.id, hotelId: admin.hotel_id },
-          JWT_SECRET,
-          { expiresIn: '8h' }
-        );
-        return res.json({
-          role: 'hotel_admin',
-          redirectUrl: 'hotel_admin.html',
-          token,
-          user: {
-            id: admin.id,
-            hotelId: admin.hotel_id,
-            fullName: admin.full_name,
-            email: admin.email,
-            hotelName: admin.hotel_name
-          }
-        });
+      } else {
+        const fallbackClient = supabaseService || supabaseAnon;
+        if (fallbackClient) {
+          await fallbackClient.from('hotel_admin_users').update({ failed_login_attempts: 0, last_login_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), is_online: true }).eq('id', admin.id);
+        }
       }
-    } catch (err) {
-      console.error('Unified hotel admin login failed:', err);
-      return res.status(500).json({ error: 'Authentication failed' });
+      await writeHotelAudit(admin.hotel_id, admin.id, 'login', 'user', admin.id, req);
+
+      const token = jwt.sign(
+        { type: 'hotel_admin', userId: admin.id, hotelId: admin.hotel_id },
+        JWT_SECRET,
+        { expiresIn: '8h' }
+      );
+      return res.json({
+        role: 'hotel_admin',
+        redirectUrl: 'hotel_admin.html',
+        token,
+        user: {
+          id: admin.id,
+          hotelId: admin.hotel_id,
+          fullName: admin.full_name,
+          email: admin.email,
+          hotelName: admin.hotel_name
+        }
+      });
     }
+  } catch (err) {
+    console.error('Unified hotel admin login failed:', err);
+    return res.status(500).json({ error: 'Authentication failed' });
   }
 
   try {
