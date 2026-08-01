@@ -357,6 +357,7 @@
     }
     .footer-note p + p { margin-top: 8px; }
   </style>
+  <script src="ui-kit.js"></script>
 </head>
 <body>
 
@@ -488,11 +489,15 @@
 
       const password = document.getElementById('password').value;
       const email = document.getElementById('email').value.trim();
+      const submitBtn = form.querySelector('.submit-btn');
 
       if (!email || !password) {
         showError('Please enter both email and password.');
+        window.LuxeUI?.toast('error', 'Missing details', 'Please enter both email and password.');
         return;
       }
+
+      window.LuxeUI?.loading(submitBtn, true, 'Signing in…');
 
       try {
         const res = await fetch(API_BASE_URL + '/api/auth/login', {
@@ -503,20 +508,24 @@
         const data = await res.json().catch(() => ({}));
 
         if (res.ok && data.role === 'hotel_admin') {
+          window.LuxeUI?.toast('success', 'Welcome back', 'Taking you to your admin suite…');
           localStorage.setItem('hotelAdminToken', data.token);
           localStorage.setItem('hotelAdminUser', JSON.stringify(data.user || {}));
-          window.location.href = data.redirectUrl || 'hotel_admin.html';
+          setTimeout(() => { window.location.href = data.redirectUrl || 'hotel_admin.html'; }, 450);
           return;
         }
 
         if (res.ok && data.role === 'director') {
+          window.LuxeUI?.toast('success', 'Welcome back', 'Taking you to the director suite…');
           const name = data.user?.fullName || data.user?.username || email;
           const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
           const params = new URLSearchParams({ name, initials });
           const targetUrl = appendHotelId((data.redirectUrl || 'director_dashboard.html') + '?' + params.toString());
-          window.location.href = targetUrl;
+          setTimeout(() => { window.location.href = targetUrl; }, 450);
           return;
         }
+
+        window.LuxeUI?.loading(submitBtn, false);
 
         // Backend was reached but responded with something other than a plain
         // "wrong credentials" (401) — surface the real error instead of silently
@@ -524,13 +533,18 @@
         // generic "invalid username or password" and hides the actual problem
         // (e.g. a 500 from a missing database table, a locked account, etc).
         if (res.status !== 401) {
-          showError(data.error || `Server error (${res.status}). Please try again or contact your administrator.`);
+          const msg = data.error || `Server error (${res.status}). Please try again or contact your administrator.`;
+          showError(msg);
+          window.LuxeUI?.toast('error', 'Sign in failed', msg);
           return;
         }
         showError('Invalid email or password.');
+        window.LuxeUI?.toast('error', 'Sign in failed', 'Invalid email or password.');
         return;
       } catch (err) {
+        window.LuxeUI?.loading(submitBtn, false);
         showError('Unable to reach authentication server. Please try again later.');
+        window.LuxeUI?.toast('error', 'Connection problem', 'Unable to reach the authentication server. Please try again later.');
         return;
       }
     });

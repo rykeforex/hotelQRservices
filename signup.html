@@ -56,6 +56,7 @@
     .footer-link { text-align: center; margin-top: 16px; font-size: 13px; color: var(--muted); }
     .footer-link a { color: var(--gold); text-decoration: none; font-weight: 600; }
   </style>
+  <script src="ui-kit.js"></script>
 </head>
 <body>
   <div class="card">
@@ -136,6 +137,9 @@
         confirmPassword: document.getElementById('confirmPassword').value
       };
 
+      const submitBtn = form.querySelector('button[type="submit"]');
+      window.LuxeUI?.loading(submitBtn, true, 'Creating your account…');
+
       try {
         const response = await fetch(API_BASE_URL + '/api/auth/register', {
           method: 'POST',
@@ -145,21 +149,29 @@
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-          showError(data.error || 'Registration failed.');
+          const msg = data.error || 'Registration failed.';
+          showError(msg);
+          window.LuxeUI?.toast('error', 'Account creation failed', msg);
           return;
         }
 
         if (data.requiresVerification) {
-          showSuccess(data.message || 'Account created. Please verify your email before signing in.');
+          const msg = data.message || 'Account created. Please verify your email before signing in.';
+          showSuccess(msg);
+          window.LuxeUI?.toast('success', 'Hotel account created', 'Check your inbox for a verification link.');
           form.reset();
           return;
         }
 
+        window.LuxeUI?.toast('success', 'Hotel account created', 'Taking you to your admin suite…');
         localStorage.setItem('hotelAdminToken', data.token);
         localStorage.setItem('hotelAdminUser', JSON.stringify(data.user || {}));
-        window.location.href = data.redirectUrl || 'hotel_admin.html';
+        setTimeout(() => { window.location.href = data.redirectUrl || 'hotel_admin.html'; }, 450);
       } catch (err) {
         showError('Unable to reach the server. Please try again.');
+        window.LuxeUI?.toast('error', 'Connection problem', 'Unable to reach the server. Please try again.');
+      } finally {
+        window.LuxeUI?.loading(submitBtn, false);
       }
     });
   </script>

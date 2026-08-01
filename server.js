@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
+const { generateReportPdf, REPORT_TYPES } = require('./report-engine');
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -2189,17 +2190,20 @@ app.post('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) =
 
 app.get('/api/hotel-admin/reports', requireHotelAdmin, async (req, res) => {
   try {
-    const [users, depts, perf] = await Promise.all([
-      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL`, [req.hotelAdmin.hotel_id]),
-      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_departments WHERE hotel_id = $1`, [req.hotelAdmin.hotel_id]),
-      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`, [req.hotelAdmin.hotel_id])
+    const hotelId = req.hotelAdmin.hotel_id;
+    const [users, depts, requests] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL`, [hotelId]),
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_departments WHERE hotel_id = $1`, [hotelId]),
+      pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`, [hotelId])
     ]);
+    const r = requests.rows[0] || {};
     res.json({
+      reportTypes: Object.entries(REPORT_TYPES).map(([key, cfg]) => ({ type: key, title: cfg.title, subtitle: cfg.subtitle })),
       staffPerformance: { records: users.rows[0]?.total || 0 },
       departmentPerformance: { records: depts.rows[0]?.total || 0 },
-      userActivity: { records: perf.rows[0]?.total || 0 },
-      requestSummary: { records: 0 },
-      completionRates: { records: 0 }
+      userActivity: { records: users.rows[0]?.total || 0 },
+      requestSummary: { records: r.total || 0 },
+      completionRates: { records: r.completed || 0 }
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load reports' });
@@ -2207,28 +2211,89 @@ app.get('/api/hotel-admin/reports', requireHotelAdmin, async (req, res) => {
 });
 
 app.get('/api/hotel-admin/reports/export', requireHotelAdmin, async (req, res) => {
-  const type = String(req.query.type || 'user_activity');
-  const format = String(req.query.format || 'csv').toLowerCase();
+  const type = String(req.query.type || 'executive_summary');
+  const format = String(req.query.format || 'pdf').toLowerCase();
+  const periodDays = parseInt(req.query.period, 10) || 30;
+  const hotelId = req.hotelAdmin.hotel_id;
+
+  if (format === 'pdf') {
+    try {
+      const pdfBuffer = await generateReportPdf({
+        pool, hotelId,
+        hotelName: req.hotelAdmin.hotel_name,
+        adminName: req.hotelAdmin.full_name,
+        reportType: type,
+        periodDays
+      });
+      await writeHotelAudit(hotelId, req.hotelAdmin.id, 'report_exported', 'report', type, req, { format, periodDays });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${type}-${new Date().toISOString().slice(0, 10)}.pdf"`);
+      res.send(pdfBuffer);
+    } catch (err) {
+      console.error('PDF report generation failed:', err);
+      res.status(500).json({ error: 'Failed to generate PDF report' });
+    }
+    return;
+  }
+
+  // CSV / Excel / JSON — dataset selected by report type, not a fixed audit dump.
   try {
-    const result = await pool.query(
-      `SELECT a.created_at, COALESCE(u.full_name,'System') AS user_name, a.action, a.ip_address, a.device
-       FROM hotel_admin_audit_logs a
-       LEFT JOIN hotel_admin_users u ON u.id = a.actor_user_id
-       WHERE a.hotel_id = $1
-       ORDER BY a.created_at DESC LIMIT 1000`,
-      [req.hotelAdmin.hotel_id]
-    );
-    const rows = result.rows;
+    let headers, rows, keyMap;
+    if (type === 'staff_performance' || type === 'user_activity') {
+      const result = await pool.query(
+        `SELECT u.full_name, d.name AS department, r.name AS role, u.employment_status, u.account_status,
+                u.last_login_at, u.created_at
+         FROM hotel_admin_users u
+         LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+         LEFT JOIN hotel_admin_roles r ON r.id = u.role_id
+         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL ORDER BY u.full_name`,
+        [hotelId]
+      );
+      headers = ['Full Name', 'Department', 'Role', 'Employment Status', 'Account Status', 'Last Login', 'Created'];
+      keyMap = ['full_name', 'department', 'role', 'employment_status', 'account_status', 'last_login_at', 'created_at'];
+      rows = result.rows;
+    } else if (type === 'department_performance' || type === 'completion_rates') {
+      const result = await pool.query(
+        `SELECT d.name, d.status, COUNT(u.id)::int AS staff_count
+         FROM hotel_admin_departments d
+         LEFT JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
+         WHERE d.hotel_id = $1 GROUP BY d.id ORDER BY d.name`,
+        [hotelId]
+      );
+      headers = ['Department', 'Status', 'Staff Count'];
+      keyMap = ['name', 'status', 'staff_count'];
+      rows = result.rows;
+    } else if (type === 'request_summary') {
+      const result = await pool.query(
+        `SELECT room_number, service, status, created_at, updated_at
+         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - ($2 || ' days')::interval
+         ORDER BY created_at DESC LIMIT 1000`,
+        [hotelId, periodDays]
+      );
+      headers = ['Room', 'Service', 'Status', 'Created', 'Updated'];
+      keyMap = ['room_number', 'service', 'status', 'created_at', 'updated_at'];
+      rows = result.rows;
+    } else {
+      const result = await pool.query(
+        `SELECT a.created_at, COALESCE(u.full_name,'System') AS user_name, a.action, a.ip_address, a.device
+         FROM hotel_admin_audit_logs a
+         LEFT JOIN hotel_admin_users u ON u.id = a.actor_user_id
+         WHERE a.hotel_id = $1 ORDER BY a.created_at DESC LIMIT 1000`,
+        [hotelId]
+      );
+      headers = ['Timestamp', 'User', 'Action', 'IP Address', 'Device'];
+      keyMap = ['created_at', 'user_name', 'action', 'ip_address', 'device'];
+      rows = result.rows;
+    }
+
     if (format === 'json') return res.json({ type, rows });
-    const headers = ['Timestamp', 'User', 'Action', 'IP Address', 'Device'];
-    const csv = [headers.join(','), ...rows.map(row => headers.map(header => {
-      const key = header === 'Timestamp' ? 'created_at' : header === 'User' ? 'user_name' : header === 'Action' ? 'action' : header === 'IP Address' ? 'ip_address' : 'device';
-      return `"${String(row[key] || '').replace(/"/g, '""')}"`;
-    }).join(','))].join('\n');
+    const csv = [headers.join(','), ...rows.map(row => keyMap.map(key => `"${String(row[key] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
     res.setHeader('Content-Type', format === 'excel' ? 'application/vnd.ms-excel' : 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${type}.${format === 'excel' ? 'xls' : 'csv'}"`);
+    await writeHotelAudit(hotelId, req.hotelAdmin.id, 'report_exported', 'report', type, req, { format, periodDays });
     res.send(csv);
   } catch (err) {
+    console.error('Report export failed:', err);
     res.status(500).json({ error: 'Failed to export report' });
   }
 });

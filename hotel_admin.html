@@ -160,6 +160,7 @@
       h1 { font-size: 2rem !important; }
     }
   </style>
+<script src="ui-kit.js"></script>
 </head>
 <body>
   <main id="appScreen" class="hidden min-h-screen">
@@ -501,11 +502,20 @@
       </form>`);
     $('userForm').addEventListener('submit', async event => {
       event.preventDefault();
-      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+      const form = event.currentTarget;
+      const submitBtn = form.querySelector('button[type="submit"]');
+      const payload = Object.fromEntries(new FormData(form).entries());
       ['departmentId','roleId','shiftId'].forEach(key => payload[key] = payload[key] ? Number(payload[key]) : null);
-      await api(id ? `/api/hotel-admin/users/${id}` : '/api/hotel-admin/users', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-      closeModal();
-      loadUsers();
+      window.LuxeUI?.loading(submitBtn, true, id ? 'Saving…' : 'Creating…');
+      try {
+        await api(id ? `/api/hotel-admin/users/${id}` : '/api/hotel-admin/users', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+        window.LuxeUI?.toast('success', id ? 'User updated' : 'User created', `${payload.fullName} has been ${id ? 'updated' : 'added to your staff directory'}.`);
+        closeModal();
+        loadUsers();
+      } catch (err) {
+        window.LuxeUI?.toast('error', id ? 'Update failed' : 'Creation failed', err.message);
+        window.LuxeUI?.loading(submitBtn, false);
+      }
     });
   }
 
@@ -735,23 +745,85 @@
     setSectionLoading('section-reports');
     try {
       const data = await api('/api/hotel-admin/reports');
-      const reports = [
-        ['staff_performance','Staff Performance', data.staffPerformance.records],
-        ['department_performance','Department Performance', data.departmentPerformance.records],
-        ['user_activity','User Activity', data.userActivity.records],
-        ['request_summary','Request Summary', data.requestSummary.records],
-        ['completion_rates','Completion Rates', data.completionRates.records]
-      ];
-      section.innerHTML = `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">${reports.map(report => `<div class="card p-5">
-        <h3 class="serif text-2xl">${report[1]}</h3>
-        <div class="text-3xl mt-3">${report[2]}</div><div class="text-xs uppercase" style="color:var(--muted);">Available records</div>
-        <div class="flex gap-2 mt-5 flex-wrap"><button class="btn" onclick="exportReport('${report[0]}','csv')">CSV</button><button class="btn" onclick="exportReport('${report[0]}','excel')">Excel</button><button class="btn" onclick="window.print()">PDF</button></div>
-      </div>`).join('')}</div>`;
+      const counts = {
+        staff_performance: data.staffPerformance.records,
+        department_performance: data.departmentPerformance.records,
+        user_activity: data.userActivity.records,
+        request_summary: data.requestSummary.records,
+        completion_rates: data.completionRates.records,
+        executive_summary: data.requestSummary.records
+      };
+      const reportTypes = data.reportTypes || [];
+      if (!state.reportPeriod) state.reportPeriod = 30;
+
+      section.innerHTML = `
+        <div class="card p-4 flex items-center justify-between flex-wrap gap-3 mb-5">
+          <div>
+            <p class="text-xs uppercase tracking-[0.2em] gold font-bold">Report Command Center</p>
+            <p class="text-sm mt-1" style="color:var(--muted);">Executive-grade PDFs with a branded cover page, live metrics, charts and insights — every export carries the Peerloom Technologies copyright footer.</p>
+          </div>
+          <label class="text-xs uppercase" style="color:var(--muted);">Reporting Period
+            <select id="reportPeriodSelect" class="mt-1">
+              <option value="7" ${state.reportPeriod === 7 ? 'selected' : ''}>Last 7 days</option>
+              <option value="30" ${state.reportPeriod === 30 ? 'selected' : ''}>Last 30 days</option>
+              <option value="90" ${state.reportPeriod === 90 ? 'selected' : ''}>Last quarter</option>
+              <option value="365" ${state.reportPeriod === 365 ? 'selected' : ''}>Last 12 months</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">
+          ${reportTypes.map(rt => `<div class="card p-5">
+            <h3 class="serif text-2xl">${esc(rt.title)}</h3>
+            <p class="text-xs mt-1" style="color:var(--muted);">${esc(rt.subtitle || '')}</p>
+            <div class="text-3xl mt-3">${counts[rt.type] ?? '—'}</div>
+            <div class="text-xs uppercase" style="color:var(--muted);">Records in scope</div>
+            <div class="flex gap-2 mt-5 flex-wrap">
+              <button class="btn gold-btn" onclick="exportReport('${rt.type}','pdf', this)"><i class="fas fa-file-pdf"></i> Generate PDF</button>
+              <button class="btn" onclick="exportReport('${rt.type}','csv', this)">CSV</button>
+              <button class="btn" onclick="exportReport('${rt.type}','excel', this)">Excel</button>
+            </div>
+          </div>`).join('')}
+        </div>`;
+
+      $('reportPeriodSelect').addEventListener('change', event => {
+        state.reportPeriod = Number(event.target.value);
+      });
     } catch (err) { section.innerHTML = errorState(err.message, 'loadReports()'); }
   }
 
-  function exportReport(type, format) {
-    window.location.href = `${API_BASE_URL}/api/hotel-admin/reports/export?type=${encodeURIComponent(type)}&format=${encodeURIComponent(format)}&token=${encodeURIComponent(state.token || '')}`;
+  async function exportReport(type, format, btn) {
+    const period = state.reportPeriod || 30;
+
+    if (format === 'pdf') {
+      window.LuxeUI?.loading(btn, true, 'Generating…');
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/hotel-admin/reports/export?type=${encodeURIComponent(type)}&format=pdf&period=${period}`, {
+          headers: { Authorization: `Bearer ${state.token}` }
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `Failed to generate report (${res.status})`);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${type}-${new Date().toISOString().slice(0, 10)}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+        window.LuxeUI?.toast('success', 'Report ready', 'Your executive PDF report has downloaded.');
+      } catch (err) {
+        window.LuxeUI?.toast('error', 'Report failed', err.message);
+      } finally {
+        window.LuxeUI?.loading(btn, false);
+      }
+      return;
+    }
+
+    window.LuxeUI?.toast('info', 'Export started', `Downloading ${format.toUpperCase()}…`);
+    window.location.href = `${API_BASE_URL}/api/hotel-admin/reports/export?type=${encodeURIComponent(type)}&format=${encodeURIComponent(format)}&period=${period}&token=${encodeURIComponent(state.token || '')}`;
   }
 
   function brandingPreviewMarkup(v) {
@@ -923,9 +995,10 @@
         try {
           await api('/api/hotel-admin/branding', { method: 'PUT', body: JSON.stringify(payload) });
           $('brandingSavedNote').classList.remove('hidden');
+          window.LuxeUI?.toast('success', 'Branding saved', 'Your changes are now live across the system.');
           setTimeout(() => $('brandingSavedNote')?.classList.add('hidden'), 2500);
         } catch (err) {
-          alert(err.message);
+          window.LuxeUI?.toast('error', 'Save failed', err.message);
         } finally {
           btn.disabled = false;
         }

@@ -686,6 +686,7 @@
       .topbar-right .hide-mobile { display: none; }
     }
   </style>
+<script src="ui-kit.js"></script>
 </head>
 <body class="antialiased">
 
@@ -2027,15 +2028,14 @@
   /* ── LOGIN / SPLASH ── */
   loginBtn.addEventListener('click', async e => {
     e.preventDefault();
-    loginBtn.textContent = 'Connecting…';
-    loginBtn.disabled = true;
+    window.LuxeUI?.loading(loginBtn, true, 'Connecting…');
     const ok = await initSupabase();
     if (!ok) {
-      loginBtn.textContent = 'Enter suite';
-      loginBtn.disabled = false;
-      alert('Unable to connect to the server. Please check your connection.');
+      window.LuxeUI?.loading(loginBtn, false);
+      window.LuxeUI?.toast('error', 'Connection failed', 'Unable to connect to the server. Please check your connection.');
       return;
     }
+    window.LuxeUI?.toast('success', 'Welcome back', 'Entering the director suite…');
     loginDiv.classList.add('hidden');
     splashDiv.classList.remove('hidden');
     $('splashGreeting').textContent = getGreeting() + ', Director';

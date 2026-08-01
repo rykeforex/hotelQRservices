@@ -128,6 +128,7 @@
     .performance-card:nth-child(2) { animation-delay: 0.2s; }
     .performance-card:nth-child(3) { animation-delay: 0.3s; }
   </style>
+<script src="ui-kit.js"></script>
 </head>
 <body class="antialiased">
 
@@ -1113,6 +1114,13 @@
       const dept = deptSelect.value;
       const pw = passwordInput.value;
 
+      if (!pw) {
+        window.LuxeUI?.toast('error', 'Missing password', 'Please enter your department password.');
+        return;
+      }
+
+      window.LuxeUI?.loading(loginBtn, true, 'Signing in…');
+
       try {
         const authResponse = await apiCall('/api/auth/department', {
           method: 'POST',
@@ -1125,10 +1133,12 @@
 
         const supabaseOk = await initSupabaseClient();
         if (!supabaseOk) {
-          alert('Unable to initialize Supabase. Check server configuration.');
+          window.LuxeUI?.loading(loginBtn, false);
+          window.LuxeUI?.toast('error', 'Setup problem', 'Unable to initialize the server connection.');
           return;
         }
 
+        window.LuxeUI?.toast('success', 'Welcome back', `Signed in to ${authResponse.department || dept}.`);
         localStorage.setItem('departmentAuthToken', authResponse.token || '');
         localStorage.setItem('departmentAuthDept', authResponse.department || dept);
         loginContainer.classList.add('hidden');
@@ -1138,7 +1148,9 @@
         unlockNotificationAudio();
         subscribeToRequestUpdates();
       } catch (err) {
-        alert('Invalid password or unable to authenticate.');
+        window.LuxeUI?.toast('error', 'Sign in failed', 'Invalid password or unable to authenticate.');
+      } finally {
+        window.LuxeUI?.loading(loginBtn, false);
       }
     }
 
@@ -1164,6 +1176,7 @@
 
     forgotPwBtn.addEventListener('click', async () => {
       const dept = deptSelect.value || '';
+      window.LuxeUI?.loading(forgotPwBtn, true, 'Sending…');
       try {
         const res = await fetch(requestUrl('/api/password_resets'), {
           method: 'POST',
@@ -1171,10 +1184,12 @@
           body: JSON.stringify({ dept })
         });
         if (!res.ok) throw new Error('Failed');
-        alert('✉️ Password reset request sent to Hotel Director.');
+        window.LuxeUI?.toast('success', 'Request sent', 'Your password reset request has been sent to the Hotel Director.');
       } catch (err) {
         console.error('Password reset request failed', err);
-        alert('Failed to send password reset request.');
+        window.LuxeUI?.toast('error', 'Request failed', 'Unable to send the password reset request. Please try again.');
+      } finally {
+        window.LuxeUI?.loading(forgotPwBtn, false);
       }
     });
 
