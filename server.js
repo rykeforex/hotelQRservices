@@ -1360,7 +1360,7 @@ async function requireHotelAdmin(req, res, next) {
     if (payload.type !== 'hotel_admin') return res.status(403).json({ error: 'Hotel admin access required' });
 
     const result = await pool.query(
-      `SELECT u.id, u.hotel_id, u.full_name, u.email, u.role_id, u.account_status, h.name AS hotel_name
+      `SELECT u.id, u.hotel_id, u.full_name, u.email, u.role_id, u.account_status, u.force_logout_at, h.name AS hotel_name
        FROM hotel_admin_users u
        JOIN hotels h ON h.id = u.hotel_id
        WHERE u.id = $1 AND u.hotel_id = $2 AND u.deleted_at IS NULL`,
@@ -1368,6 +1368,9 @@ async function requireHotelAdmin(req, res, next) {
     );
     const user = result.rows[0];
     if (!user || user.account_status !== 'active') return res.status(401).json({ error: 'Account is not active' });
+    if (user.force_logout_at && payload.iat && (payload.iat * 1000) < new Date(user.force_logout_at).getTime()) {
+      return res.status(401).json({ error: 'Your session was terminated. Please sign in again.' });
+    }
 
     req.hotelAdmin = user;
     next();
@@ -1861,6 +1864,14 @@ app.get('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => {
 app.put('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => {
   const { fullName, employeeId, departmentId, roleId, email, phone, shiftId, employmentStatus, profilePhotoUrl } = req.body;
   try {
+    const before = await pool.query(
+      `SELECT full_name, employee_id, department_id, role_id, email, phone, shift_id, employment_status, profile_photo_url
+       FROM hotel_admin_users WHERE id = $1 AND hotel_id = $2 AND deleted_at IS NULL`,
+      [req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!before.rows.length) return res.status(404).json({ error: 'User not found' });
+    const prev = before.rows[0];
+
     const result = await pool.query(
       `UPDATE hotel_admin_users
        SET full_name = COALESCE($1, full_name),
@@ -1878,8 +1889,18 @@ app.put('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => {
       [fullName || null, employeeId || null, departmentId || null, roleId || null, email || null, phone || null, shiftId || null, employmentStatus || null, profilePhotoUrl || null, req.params.id, req.hotelAdmin.hotel_id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'profile_updated', 'user', req.params.id, req);
-    res.json(result.rows[0]);
+
+    const next = result.rows[0];
+    const fieldMap = { full_name: 'fullName', employee_id: 'employeeId', department_id: 'departmentId', role_id: 'roleId', email: 'email', phone: 'phone', shift_id: 'shiftId', employment_status: 'employmentStatus', profile_photo_url: 'profilePhotoUrl' };
+    const changes = {};
+    Object.keys(fieldMap).forEach(dbKey => {
+      if (String(prev[dbKey] ?? '') !== String(next[dbKey] ?? '')) {
+        changes[fieldMap[dbKey]] = { previous: prev[dbKey], next: next[dbKey] };
+      }
+    });
+
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'profile_updated', 'user', req.params.id, req, { changes });
+    res.json(next);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update user' });
   }
@@ -1891,23 +1912,37 @@ app.post('/api/hotel-admin/users/:id/action', requireHotelAdmin, async (req, res
     activate: { account_status: 'active', failed_login_attempts: 0, locked_at: null },
     lock: { account_status: 'locked', locked_at: new Date() },
     unlock: { account_status: 'active', failed_login_attempts: 0, locked_at: null },
-    force_password_reset: { force_password_reset: true }
+    force_password_reset: { force_password_reset: true },
+    terminate_sessions: { force_logout_at: new Date() }
   };
   const patch = actions[req.body.action];
   if (!patch) return res.status(400).json({ error: 'Invalid user action' });
   try {
+    const before = await pool.query(
+      `SELECT account_status, force_password_reset, force_logout_at FROM hotel_admin_users WHERE id = $1 AND hotel_id = $2 AND deleted_at IS NULL`,
+      [req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!before.rows.length) return res.status(404).json({ error: 'User not found' });
+    const prev = before.rows[0];
+
     const keys = Object.keys(patch);
     const setSql = keys.map((key, i) => `${key} = $${i + 1}`).join(', ');
     const values = keys.map(key => patch[key]);
     const result = await pool.query(
       `UPDATE hotel_admin_users SET ${setSql}, updated_at = NOW()
        WHERE id = $${values.length + 1} AND hotel_id = $${values.length + 2} AND deleted_at IS NULL
-       RETURNING id, account_status, force_password_reset`,
+       RETURNING id, account_status, force_password_reset, force_logout_at`,
       [...values, req.params.id, req.hotelAdmin.hotel_id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, req.body.action, 'user', req.params.id, req);
-    res.json(result.rows[0]);
+
+    const next = result.rows[0];
+    const changes = {};
+    if (prev.account_status !== next.account_status) changes.accountStatus = { previous: prev.account_status, next: next.account_status };
+    if (prev.force_password_reset !== next.force_password_reset) changes.forcePasswordReset = { previous: prev.force_password_reset, next: next.force_password_reset };
+
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, req.body.action, 'user', req.params.id, req, { changes });
+    res.json(next);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update account' });
   }

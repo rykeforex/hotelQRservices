@@ -459,10 +459,11 @@
         <td><div class="flex gap-2 flex-wrap">
           <button class="btn" onclick="showUserProfile(${user.id})" title="View profile"><i class="fas fa-eye"></i></button>
           <button class="btn" onclick="showUserForm(${user.id})" title="Edit user"><i class="fas fa-pen"></i></button>
-          <button class="btn" onclick="userAction(${user.id}, '${user.accountStatus === 'locked' ? 'unlock' : 'lock'}')" title="${user.accountStatus === 'locked' ? 'Unlock' : 'Lock'} account"><i class="fas ${user.accountStatus === 'locked' ? 'fa-lock-open' : 'fa-lock'}"></i></button>
-          <button class="btn" onclick="userAction(${user.id}, '${user.accountStatus === 'suspended' ? 'activate' : 'suspend'}')" title="${user.accountStatus === 'suspended' ? 'Activate' : 'Suspend'}"><i class="fas ${user.accountStatus === 'suspended' ? 'fa-user-check' : 'fa-user-slash'}"></i></button>
-          <button class="btn" onclick="userAction(${user.id}, 'force_password_reset')" title="Force password reset"><i class="fas fa-key"></i></button>
-          <button class="btn danger-btn" onclick="deleteUser(${user.id})" title="Delete user"><i class="fas fa-trash"></i></button>
+          <button class="btn" onclick="userAction(${user.id}, '${user.accountStatus === 'locked' ? 'unlock' : 'lock'}', this)" title="${user.accountStatus === 'locked' ? 'Unlock' : 'Lock'} account"><i class="fas ${user.accountStatus === 'locked' ? 'fa-lock-open' : 'fa-lock'}"></i></button>
+          <button class="btn" onclick="userAction(${user.id}, '${user.accountStatus === 'suspended' ? 'activate' : 'suspend'}', this)" title="${user.accountStatus === 'suspended' ? 'Activate' : 'Suspend'}"><i class="fas ${user.accountStatus === 'suspended' ? 'fa-user-check' : 'fa-user-slash'}"></i></button>
+          <button class="btn" onclick="userAction(${user.id}, 'force_password_reset', this)" title="Force password reset"><i class="fas fa-key"></i></button>
+          <button class="btn" onclick="userAction(${user.id}, 'terminate_sessions', this)" title="Force logout everywhere"><i class="fas fa-right-from-bracket"></i></button>
+          <button class="btn danger-btn" onclick="deleteUser(${user.id}, this)" title="Delete user"><i class="fas fa-trash"></i></button>
         </div></td>
       </tr>`).join('')}
     </tbody></table></div>
@@ -534,15 +535,35 @@
       ${data.activity.length ? `<div class="space-y-3">${data.activity.map(renderActivity).join('')}</div>` : emptyState('No user activity', 'This profile has no recorded audit events yet.')}`);
   }
 
-  async function userAction(id, action) {
-    await api(`/api/hotel-admin/users/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) });
-    loadUsers();
+  async function userAction(id, action, btn) {
+    const labels = {
+      lock: 'Account locked', unlock: 'Account unlocked', suspend: 'Account suspended',
+      activate: 'Account activated', force_password_reset: 'Password reset forced on next login',
+      terminate_sessions: 'All sessions terminated for this user'
+    };
+    window.LuxeUI?.loading(btn, true);
+    try {
+      await api(`/api/hotel-admin/users/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) });
+      window.LuxeUI?.toast('success', labels[action] || 'Account updated', '');
+      loadUsers();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Action failed', err.message);
+    } finally {
+      window.LuxeUI?.loading(btn, false);
+    }
   }
 
-  async function deleteUser(id) {
+  async function deleteUser(id, btn) {
     if (!confirm('Delete this user account?')) return;
-    await api(`/api/hotel-admin/users/${id}`, { method: 'DELETE' });
-    loadUsers();
+    window.LuxeUI?.loading(btn, true);
+    try {
+      await api(`/api/hotel-admin/users/${id}`, { method: 'DELETE' });
+      window.LuxeUI?.toast('success', 'User deleted', '');
+      loadUsers();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Delete failed', err.message);
+      window.LuxeUI?.loading(btn, false);
+    }
   }
 
   async function loadRoles() {
@@ -706,9 +727,24 @@
     setSectionLoading('section-audit');
     try {
       const data = await api(`/api/hotel-admin/audit-logs?page=${state.auditPage}&limit=25`);
-      section.innerHTML = data.logs.length ? `<div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>IP Address</th><th>Device</th></tr></thead><tbody>
-        ${data.logs.map(log => `<tr><td>${fmt(log.created_at)}</td><td>${esc(log.user_name || 'System')}</td><td>${esc(log.action.replaceAll('_',' '))}</td><td>${esc(log.ip_address || '')}</td><td>${esc(log.device || '')}</td></tr>`).join('')}
-      </tbody></table></div>` : emptyState('No audit logs', 'Security and administration events will appear here.');
+      section.innerHTML = data.logs.length ? `<div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Details</th><th>IP Address</th><th>Device</th></tr></thead><tbody>
+        ${data.logs.map(log => {
+          const changes = (log.metadata && log.metadata.changes) || {};
+          const changeKeys = Object.keys(changes);
+          const details = changeKeys.length
+            ? `<details><summary class="gold" style="cursor:pointer;">${changeKeys.length} field${changeKeys.length === 1 ? '' : 's'} changed</summary>
+                <div class="text-xs mt-2 space-y-1" style="color:var(--muted);">
+                  ${changeKeys.map(k => `<div><strong style="color:var(--fg);">${esc(k.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()))}:</strong> ${esc(changes[k]?.previous ?? '—')} → ${esc(changes[k]?.next ?? '—')}</div>`).join('')}
+                </div></details>`
+            : '—';
+          return `<tr><td>${fmt(log.created_at)}</td><td>${esc(log.user_name || 'System')}</td><td>${esc(log.action.replaceAll('_', ' '))}</td><td>${details}</td><td>${esc(log.ip_address || '')}</td><td>${esc(log.device || '')}</td></tr>`;
+        }).join('')}
+      </tbody></table></div>
+      <div class="flex items-center justify-between mt-4">
+        <button class="btn" ${state.auditPage <= 1 ? 'disabled' : ''} onclick="state.auditPage--; loadAudit();"><i class="fas fa-chevron-left"></i> Previous</button>
+        <span class="text-xs" style="color:var(--muted);">Page ${state.auditPage}</span>
+        <button class="btn" ${data.logs.length < 25 ? 'disabled' : ''} onclick="state.auditPage++; loadAudit();">Next <i class="fas fa-chevron-right"></i></button>
+      </div>` : emptyState('No audit logs', 'Security and administration events will appear here.');
     } catch (err) { section.innerHTML = errorState(err.message, 'loadAudit()'); }
   }
 
@@ -1028,13 +1064,21 @@
       $('settingsForm').addEventListener('submit', async event => {
         event.preventDefault();
         const form = event.currentTarget;
+        const submitBtn = form.querySelector('button[type="submit"]');
         const payload = Object.fromEntries(new FormData(form).entries());
         payload.brandColors = { primary: payload.primaryColor };
         payload.emailSettings = { enabled: form.emailEnabled.checked };
         payload.notificationPreferences = { push: form.pushEnabled.checked };
         delete payload.primaryColor; delete payload.emailEnabled; delete payload.pushEnabled;
-        await api('/api/hotel-admin/settings', { method: 'PUT', body: JSON.stringify(payload) });
-        loadSettings();
+        window.LuxeUI?.loading(submitBtn, true, 'Saving…');
+        try {
+          await api('/api/hotel-admin/settings', { method: 'PUT', body: JSON.stringify(payload) });
+          window.LuxeUI?.toast('success', 'Settings saved', '');
+          loadSettings();
+        } catch (err) {
+          window.LuxeUI?.toast('error', 'Save failed', err.message);
+          window.LuxeUI?.loading(submitBtn, false);
+        }
       });
     } catch (err) { section.innerHTML = errorState(err.message, 'loadSettings()'); }
   }
@@ -1049,6 +1093,13 @@
           <div class="card p-5"><i class="fas fa-triangle-exclamation gold"></i><div class="text-3xl mt-3">${data.failedLoginAttempts}</div><div class="text-xs uppercase" style="color:var(--muted);">Failed Login Attempts</div></div>
           <div class="card p-5"><i class="fas fa-lock gold"></i><div class="text-3xl mt-3">${data.lockedAccounts.length}</div><div class="text-xs uppercase" style="color:var(--muted);">Locked Accounts</div></div>
         </div>
+        <div class="card p-5 mb-5 flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h3 class="serif text-2xl">Session Control</h3>
+            <p class="text-sm mt-1" style="color:var(--muted);">Sign out of every device where you're currently logged in, including this one. You'll need to sign in again afterward. To force-logout a specific staff member, use the <i class="fas fa-right-from-bracket"></i> action on their row in User Management.</p>
+          </div>
+          <button class="btn danger-btn" id="terminateMySessionsBtn"><i class="fas fa-right-from-bracket"></i> Sign Out Everywhere</button>
+        </div>
         <div class="grid gap-5" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">
           ${securityPanel('Locked Accounts', data.lockedAccounts.map(u => `${u.full_name} · ${u.email}`))}
           ${securityPanel('Recent Password Changes', data.recentPasswordChanges.map(x => `${x.full_name || 'System'} · ${fmt(x.created_at)}`))}
@@ -1056,6 +1107,20 @@
           ${securityPanel('Recent Devices', data.recentDevices.map(x => `${x.device} · ${x.events} events`))}
           ${securityPanel('Recent IP Addresses', data.recentIpAddresses.map(x => `${x.ip_address} · ${x.events} events`))}
         </div>`;
+
+      $('terminateMySessionsBtn').addEventListener('click', async event => {
+        if (!confirm('Sign out of all sessions, including this one? You will need to log in again.')) return;
+        const btn = event.currentTarget;
+        window.LuxeUI?.loading(btn, true, 'Signing out…');
+        try {
+          await api(`/api/hotel-admin/users/${state.user.id}/action`, { method: 'POST', body: JSON.stringify({ action: 'terminate_sessions' }) });
+          window.LuxeUI?.toast('success', 'Signed out everywhere', 'Redirecting to sign in…');
+          setTimeout(() => clearSession(), 900);
+        } catch (err) {
+          window.LuxeUI?.toast('error', 'Action failed', err.message);
+          window.LuxeUI?.loading(btn, false);
+        }
+      });
     } catch (err) { section.innerHTML = errorState(err.message, 'loadSecurity()'); }
   }
 
