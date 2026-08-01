@@ -233,6 +233,7 @@
 
   const navItems = [
     ['dashboard', 'fa-gauge-high', 'Dashboard'],
+    ['branding', 'fa-palette', 'Branding Center'],
     ['users', 'fa-users-gear', 'User Management'],
     ['roles', 'fa-user-shield', 'Role Management'],
     ['departments', 'fa-building-user', 'Departments'],
@@ -753,6 +754,185 @@
     window.location.href = `${API_BASE_URL}/api/hotel-admin/reports/export?type=${encodeURIComponent(type)}&format=${encodeURIComponent(format)}&token=${encodeURIComponent(state.token || '')}`;
   }
 
+  function brandingPreviewMarkup(v) {
+    const primary = v.primary || '#c9a227';
+    const secondary = v.secondary || '#1b1b24';
+    const accent = v.accent || '#c9a227';
+    return `
+      <div class="rounded-[22px] overflow-hidden" style="border:1px solid var(--line);">
+        <div style="height:150px;background:${secondary} url('${esc(v.coverImageUrl || '')}') center/cover no-repeat;position:relative;">
+          <div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(0,0,0,0.05), rgba(0,0,0,0.55));"></div>
+          <div style="position:absolute;left:16px;bottom:14px;display:flex;align-items:center;gap:10px;">
+            <div style="height:44px;width:44px;border-radius:12px;background:#fff;display:grid;place-items:center;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,0.25);">
+              ${v.logoUrl ? `<img src="${esc(v.logoUrl)}" alt="" style="height:100%;width:100%;object-fit:cover;" onerror="this.style.display='none'">` : `<i class="fas fa-hotel" style="color:${primary};"></i>`}
+            </div>
+            <div style="color:#fff;">
+              <div style="font-family:'Playfair Display',serif;font-size:1.25rem;line-height:1.1;">${esc(v.hotelName || 'Your Hotel')}</div>
+              <div style="font-size:0.7rem;letter-spacing:0.14em;text-transform:uppercase;opacity:0.85;">${esc(v.motto || 'Hotel motto appears here')}</div>
+            </div>
+          </div>
+        </div>
+        <div class="p-4" style="background:var(--surface);">
+          <p class="text-sm" style="color:var(--muted);">${esc(v.welcomeMessage || 'A warm welcome message for your guests will appear here.')}</p>
+          <div class="flex flex-wrap gap-2 mt-3">
+            <span class="badge" style="background:${primary}22;color:${primary};border-color:${primary}55;">Check-in ${esc(v.checkinTime || '—')}</span>
+            <span class="badge" style="background:${primary}22;color:${primary};border-color:${primary}55;">Check-out ${esc(v.checkoutTime || '—')}</span>
+          </div>
+          <div class="text-xs mt-3 space-y-1" style="color:var(--muted);">
+            ${v.receptionNumber ? `<div><i class="fas fa-phone gold mr-2"></i>${esc(v.receptionNumber)}</div>` : ''}
+            ${v.contactEmail ? `<div><i class="fas fa-envelope gold mr-2"></i>${esc(v.contactEmail)}</div>` : ''}
+            ${v.website ? `<div><i class="fas fa-globe gold mr-2"></i>${esc(v.website)}</div>` : ''}
+          </div>
+          <button type="button" class="btn gold-btn w-full mt-4" style="background:${primary};border-color:${primary};pointer-events:none;">Request a Service</button>
+        </div>
+      </div>`;
+  }
+
+  async function loadBranding() {
+    const section = $('section-branding');
+    setSectionLoading('section-branding');
+    try {
+      const b = await api('/api/hotel-admin/branding');
+      const social = b.socialLinks || {};
+      const colors = b.brandColors || {};
+      section.innerHTML = `
+        <div class="grid gap-5" style="grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr);align-items:start;">
+          <form id="brandingForm" class="space-y-5">
+            <div class="card p-5">
+              <h3 class="serif text-2xl mb-1">Identity</h3>
+              <p class="text-sm mb-4" style="color:var(--muted);">What guests and staff see across every page.</p>
+              <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+                <input name="hotelName" class="input" placeholder="Hotel Name" value="${esc(b.hotelName || '')}">
+                <input name="motto" class="input" placeholder="Hotel Motto" value="${esc(b.motto || '')}">
+              </div>
+              <textarea name="welcomeMessage" class="input mt-4" rows="3" placeholder="Welcome message shown to guests">${esc(b.welcomeMessage || '')}</textarea>
+            </div>
+
+            <div class="card p-5">
+              <h3 class="serif text-2xl mb-1">Media</h3>
+              <p class="text-sm mb-4" style="color:var(--muted);">Logo, cover image and favicon URLs (hosted images).</p>
+              <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+                <input name="logoUrl" class="input" placeholder="Logo URL" value="${esc(b.logoUrl || '')}">
+                <input name="coverImageUrl" class="input" placeholder="Cover Image URL" value="${esc(b.coverImageUrl || '')}">
+                <input name="faviconUrl" class="input" placeholder="Favicon URL" value="${esc(b.faviconUrl || '')}">
+              </div>
+            </div>
+
+            <div class="card p-5">
+              <h3 class="serif text-2xl mb-1">Contact &amp; Location</h3>
+              <div class="grid gap-4 mt-4" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+                <input name="address" class="input" placeholder="Hotel Address" value="${esc(b.address || '')}">
+                <input name="website" class="input" placeholder="Website URL" value="${esc(b.website || '')}">
+                <input name="contactEmail" class="input" type="email" placeholder="Hotel Email" value="${esc(b.contactEmail || '')}">
+                <input name="contactPhone" class="input" placeholder="Hotel Phone" value="${esc(b.contactPhone || '')}">
+                <input name="receptionNumber" class="input" placeholder="Reception Number" value="${esc(b.receptionNumber || '')}">
+                <input name="emergencyContact" class="input" placeholder="Emergency Contact" value="${esc(b.emergencyContact || '')}">
+              </div>
+            </div>
+
+            <div class="card p-5">
+              <h3 class="serif text-2xl mb-1">Social Links</h3>
+              <div class="grid gap-4 mt-4" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+                <input name="social_facebook" class="input" placeholder="Facebook URL" value="${esc(social.facebook || '')}">
+                <input name="social_instagram" class="input" placeholder="Instagram URL" value="${esc(social.instagram || '')}">
+                <input name="social_twitter" class="input" placeholder="X / Twitter URL" value="${esc(social.twitter || '')}">
+                <input name="social_linkedin" class="input" placeholder="LinkedIn URL" value="${esc(social.linkedin || '')}">
+              </div>
+            </div>
+
+            <div class="card p-5">
+              <h3 class="serif text-2xl mb-1">Guest Hours &amp; Theme</h3>
+              <div class="grid gap-4 mt-4" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+                <label class="text-xs uppercase" style="color:var(--muted);">Check-in Time
+                  <input name="checkinTime" class="input mt-1" type="time" value="${esc(b.checkinTime || '')}">
+                </label>
+                <label class="text-xs uppercase" style="color:var(--muted);">Check-out Time
+                  <input name="checkoutTime" class="input mt-1" type="time" value="${esc(b.checkoutTime || '')}">
+                </label>
+                <label class="text-xs uppercase" style="color:var(--muted);">Portal Theme
+                  <select name="themeMode" class="mt-1">
+                    <option value="auto" ${b.themeMode === 'auto' ? 'selected' : ''}>Auto (guest device)</option>
+                    <option value="light" ${b.themeMode === 'light' ? 'selected' : ''}>Always Light</option>
+                    <option value="dark" ${b.themeMode === 'dark' ? 'selected' : ''}>Always Dark</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="card p-5">
+              <h3 class="serif text-2xl mb-1">Brand Colors</h3>
+              <div class="grid gap-4 mt-4" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
+                <label class="text-xs uppercase" style="color:var(--muted);">Primary
+                  <input name="primary" class="input mt-1" type="color" value="${esc(colors.primary || '#c9a227')}">
+                </label>
+                <label class="text-xs uppercase" style="color:var(--muted);">Secondary
+                  <input name="secondary" class="input mt-1" type="color" value="${esc(colors.secondary || '#1b1b24')}">
+                </label>
+                <label class="text-xs uppercase" style="color:var(--muted);">Accent
+                  <input name="accent" class="input mt-1" type="color" value="${esc(colors.accent || '#c9a227')}">
+                </label>
+              </div>
+            </div>
+
+            <div class="flex justify-end gap-2">
+              <span id="brandingSavedNote" class="text-sm self-center hidden" style="color:var(--muted);"><i class="fas fa-circle-check gold"></i> Saved</span>
+              <button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save Branding</button>
+            </div>
+          </form>
+
+          <div style="position:sticky;top:1.5rem;">
+            <p class="text-xs uppercase tracking-[0.2em] gold font-bold mb-2">Guest Portal Preview</p>
+            <div id="brandingPreview">${brandingPreviewMarkup({
+              hotelName: b.hotelName, motto: b.motto, welcomeMessage: b.welcomeMessage,
+              logoUrl: b.logoUrl, coverImageUrl: b.coverImageUrl, checkinTime: b.checkinTime,
+              checkoutTime: b.checkoutTime, receptionNumber: b.receptionNumber, contactEmail: b.contactEmail,
+              website: b.website, primary: colors.primary, secondary: colors.secondary, accent: colors.accent
+            })}</div>
+          </div>
+        </div>`;
+
+      const form = $('brandingForm');
+      const refreshPreview = () => {
+        const fd = new FormData(form);
+        $('brandingPreview').innerHTML = brandingPreviewMarkup({
+          hotelName: fd.get('hotelName'), motto: fd.get('motto'), welcomeMessage: fd.get('welcomeMessage'),
+          logoUrl: fd.get('logoUrl'), coverImageUrl: fd.get('coverImageUrl'), checkinTime: fd.get('checkinTime'),
+          checkoutTime: fd.get('checkoutTime'), receptionNumber: fd.get('receptionNumber'), contactEmail: fd.get('contactEmail'),
+          website: fd.get('website'), primary: fd.get('primary'), secondary: fd.get('secondary'), accent: fd.get('accent')
+        });
+      };
+      form.addEventListener('input', debounce(refreshPreview, 150));
+
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        const fd = new FormData(form);
+        const payload = {
+          hotelName: fd.get('hotelName'), motto: fd.get('motto'), welcomeMessage: fd.get('welcomeMessage'),
+          logoUrl: fd.get('logoUrl'), coverImageUrl: fd.get('coverImageUrl'), faviconUrl: fd.get('faviconUrl'),
+          address: fd.get('address'), website: fd.get('website'), contactEmail: fd.get('contactEmail'),
+          contactPhone: fd.get('contactPhone'), receptionNumber: fd.get('receptionNumber'), emergencyContact: fd.get('emergencyContact'),
+          checkinTime: fd.get('checkinTime'), checkoutTime: fd.get('checkoutTime'), themeMode: fd.get('themeMode'),
+          socialLinks: {
+            facebook: fd.get('social_facebook') || '', instagram: fd.get('social_instagram') || '',
+            twitter: fd.get('social_twitter') || '', linkedin: fd.get('social_linkedin') || ''
+          },
+          brandColors: { primary: fd.get('primary'), secondary: fd.get('secondary'), accent: fd.get('accent') }
+        };
+        const btn = form.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        try {
+          await api('/api/hotel-admin/branding', { method: 'PUT', body: JSON.stringify(payload) });
+          $('brandingSavedNote').classList.remove('hidden');
+          setTimeout(() => $('brandingSavedNote')?.classList.add('hidden'), 2500);
+        } catch (err) {
+          alert(err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadBranding()'); }
+  }
+
   async function loadSettings() {
     const section = $('section-settings');
     setSectionLoading('section-settings');
@@ -810,7 +990,7 @@
     return `<div class="card p-5"><h3 class="serif text-2xl mb-3">${esc(title)}</h3>${rows.length ? `<div class="space-y-2">${rows.map(row => `<div class="card p-3 text-sm">${esc(row)}</div>`).join('')}</div>` : emptyState(`No ${title.toLowerCase()}`, 'Nothing has been recorded for this category.')}</div>`;
   }
 
-  const loaders = { dashboard: loadDashboard, users: loadUsers, roles: loadRoles, departments: loadDepartments, performance: loadPerformance, shifts: loadShifts, audit: loadAudit, notifications: loadNotifications, reports: loadReports, settings: loadSettings, security: loadSecurity };
+  const loaders = { dashboard: loadDashboard, branding: loadBranding, users: loadUsers, roles: loadRoles, departments: loadDepartments, performance: loadPerformance, shifts: loadShifts, audit: loadAudit, notifications: loadNotifications, reports: loadReports, settings: loadSettings, security: loadSecurity };
 
   function debounce(fn, delay) {
     let timer;

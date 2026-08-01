@@ -2282,6 +2282,143 @@ app.put('/api/hotel-admin/settings', requireHotelAdmin, async (req, res) => {
   }
 });
 
+// ============================================================
+// Hotel Branding Center
+// ============================================================
+function mapBrandingRow(row) {
+  return {
+    hotelName: row.name,
+    logoUrl: row.logo_url,
+    coverImageUrl: row.cover_image_url,
+    faviconUrl: row.favicon_url,
+    welcomeMessage: row.welcome_message,
+    motto: row.motto,
+    address: row.address,
+    contactEmail: row.contact_email,
+    contactPhone: row.contact_phone,
+    receptionNumber: row.reception_number,
+    emergencyContact: row.emergency_contact,
+    website: row.website,
+    socialLinks: row.social_links || {},
+    checkinTime: row.checkin_time,
+    checkoutTime: row.checkout_time,
+    brandColors: row.brand_colors || {},
+    themeMode: row.theme_mode || 'auto',
+    updatedAt: row.updated_at
+  };
+}
+
+app.get('/api/hotel-admin/branding', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM hotels WHERE id = $1', [req.hotelAdmin.hotel_id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Hotel not found' });
+    res.json(mapBrandingRow(result.rows[0]));
+  } catch (err) {
+    console.error('Load branding failed:', err.message);
+    res.status(500).json({ error: 'Failed to load branding' });
+  }
+});
+
+app.put('/api/hotel-admin/branding', requireHotelAdmin, async (req, res) => {
+  const {
+    hotelName, logoUrl, coverImageUrl, faviconUrl, welcomeMessage, motto, address,
+    contactEmail, contactPhone, receptionNumber, emergencyContact, website,
+    socialLinks, checkinTime, checkoutTime, brandColors, themeMode
+  } = req.body;
+  try {
+    const before = await pool.query('SELECT * FROM hotels WHERE id = $1', [req.hotelAdmin.hotel_id]);
+    if (!before.rows.length) return res.status(404).json({ error: 'Hotel not found' });
+    const prev = mapBrandingRow(before.rows[0]);
+
+    const result = await pool.query(
+      `UPDATE hotels SET
+        name = COALESCE($1, name),
+        logo_url = $2,
+        cover_image_url = $3,
+        favicon_url = $4,
+        welcome_message = $5,
+        motto = $6,
+        address = $7,
+        contact_email = $8,
+        contact_phone = $9,
+        reception_number = $10,
+        emergency_contact = $11,
+        website = $12,
+        social_links = COALESCE($13, social_links),
+        checkin_time = $14,
+        checkout_time = $15,
+        brand_colors = COALESCE($16, brand_colors),
+        theme_mode = COALESCE($17, theme_mode),
+        updated_at = NOW()
+       WHERE id = $18 RETURNING *`,
+      [
+        hotelName || null, logoUrl || null, coverImageUrl || null, faviconUrl || null,
+        welcomeMessage || null, motto || null, address || null, contactEmail || null,
+        contactPhone || null, receptionNumber || null, emergencyContact || null, website || null,
+        socialLinks || null, checkinTime || null, checkoutTime || null, brandColors || null,
+        themeMode || null, req.hotelAdmin.hotel_id
+      ]
+    );
+
+    const next = mapBrandingRow(result.rows[0]);
+    const changes = {};
+    Object.keys(next).forEach(key => {
+      if (key === 'updatedAt') return;
+      const beforeVal = JSON.stringify(prev[key]);
+      const afterVal = JSON.stringify(next[key]);
+      if (beforeVal !== afterVal) changes[key] = { previous: prev[key], next: next[key] };
+    });
+
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'branding_updated', 'hotel', req.hotelAdmin.hotel_id, req, { changes });
+    res.json(next);
+  } catch (err) {
+    console.error('Update branding failed:', err.message);
+    res.status(500).json({ error: 'Failed to update branding' });
+  }
+});
+
+// Public branding read — no auth. Powers logo/colors/motto/contact info on
+// guest-facing and staff login pages before anyone is authenticated.
+app.get('/api/branding/public', async (req, res) => {
+  if (!requireDatabase(res)) return;
+  const hotelId = parseInt(req.query.hotelId, 10);
+  if (!hotelId) return res.status(400).json({ error: 'hotelId is required' });
+  try {
+    const result = await pool.query(
+      `SELECT name, logo_url, cover_image_url, favicon_url, welcome_message, motto,
+              address, contact_email, contact_phone, reception_number, emergency_contact,
+              website, social_links, checkin_time, checkout_time, brand_colors, theme_mode
+       FROM hotels WHERE id = $1`,
+      [hotelId]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Hotel not found' });
+    const row = result.rows[0];
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({
+      hotelName: row.name,
+      logoUrl: row.logo_url,
+      coverImageUrl: row.cover_image_url,
+      faviconUrl: row.favicon_url,
+      welcomeMessage: row.welcome_message,
+      motto: row.motto,
+      address: row.address,
+      contactEmail: row.contact_email,
+      contactPhone: row.contact_phone,
+      receptionNumber: row.reception_number,
+      emergencyContact: row.emergency_contact,
+      website: row.website,
+      socialLinks: row.social_links || {},
+      checkinTime: row.checkin_time,
+      checkoutTime: row.checkout_time,
+      brandColors: row.brand_colors || {},
+      themeMode: row.theme_mode || 'auto'
+    });
+  } catch (err) {
+    console.error('Public branding lookup failed:', err.message);
+    res.status(500).json({ error: 'Failed to load branding' });
+  }
+});
+
 app.get('/api/hotel-admin/security', requireHotelAdmin, async (req, res) => {
   try {
     const [failed, locked, passwordChanges, suspicious, devices, ips] = await Promise.all([
