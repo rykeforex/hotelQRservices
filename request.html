@@ -359,7 +359,7 @@
     </div>
 
     <!-- main service grid (9 buttons now) -->
-    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+    <div id="serviceGrid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
       <!-- each button triggers modal with service data -->
       <button class="service-card gold-glow" data-service="housekeeping"><i class="fas fa-broom"></i><span>Housekeeping</span></button>
       <button class="service-card gold-glow" data-service="maintenance"><i class="fas fa-tools"></i><span>Maintenance</span></button>
@@ -919,6 +919,50 @@
           openModal(srv);
         });
       });
+
+      // ── Dynamic departments (created in the Hotel Admin Portal) ──
+      // Purely additive: never touches the 9 built-in categories above.
+      // A department created as "Spa" or "Valet" etc. appears here
+      // automatically as a guest request destination. Fails silently
+      // if hotelId is missing or the request can't be reached.
+      (async function loadDynamicDepartments() {
+        if (!HOTEL_ID) return;
+        try {
+          const res = await fetch(API_BASE_URL + '/api/departments/public?hotelId=' + HOTEL_ID);
+          if (!res.ok) return;
+          const departments = await res.json();
+          const grid = document.getElementById('serviceGrid');
+          if (!grid || !Array.isArray(departments)) return;
+
+          departments.forEach(dept => {
+            const key = dept.serviceKey;
+            if (!key || services[key]) return; // skip built-ins and duplicates
+
+            const safeName = String(dept.name || 'Department').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+            services[key] = {
+              name: safeName,
+              options: [`General ${safeName} request`, 'Other']
+            };
+
+            const btn = document.createElement('button');
+            btn.className = 'service-card gold-glow';
+            btn.dataset.service = key;
+            const color = /^#[0-9a-fA-F]{6}$/.test(dept.color || '') ? dept.color : '#d4af37';
+            const safeIcon = /^fa-[a-z0-9-]+$/.test(dept.icon || '') ? dept.icon : 'fa-building';
+            const icon = document.createElement('i');
+            icon.className = `fas ${safeIcon}`;
+            icon.style.color = color;
+            const label = document.createElement('span');
+            label.textContent = dept.name;
+            btn.appendChild(icon);
+            btn.appendChild(label);
+            btn.addEventListener('click', (e) => openModal(e.currentTarget.dataset.service));
+            grid.appendChild(btn);
+          });
+        } catch (err) {
+          console.warn('Dynamic departments unavailable:', err.message);
+        }
+      })();
 
       // send request with backend + socket and optional voice file
       async function submitRequest() {

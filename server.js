@@ -1413,6 +1413,13 @@ function mapRoleRow(row) {
   };
 }
 
+function slugifyServiceKey(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 40) || 'department';
+}
+
 function mapDepartmentRow(row) {
   return {
     id: row.id,
@@ -1424,6 +1431,17 @@ function mapDepartmentRow(row) {
     pendingRequests: Number(row.pending_requests || 0),
     completedToday: Number(row.completed_today || 0),
     averageCompletionMinutes: Number(row.average_completion_minutes || 0),
+    icon: row.icon || 'fa-building',
+    color: row.color || '#c9a227',
+    description: row.description,
+    email: row.email,
+    phone: row.phone,
+    location: row.location,
+    floor: row.floor,
+    building: row.building,
+    operatingHours: row.operating_hours || {},
+    permissions: row.permissions || {},
+    serviceKey: row.service_key,
     createdAt: row.created_at
   };
 }
@@ -2026,54 +2044,142 @@ app.delete('/api/hotel-admin/roles/:id', requireHotelAdmin, async (req, res) => 
 app.get('/api/hotel-admin/departments', requireHotelAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT d.*, m.full_name AS manager_name, COUNT(u.id)::int AS staff,
-              0::int AS pending_requests, 0::int AS completed_today, 0::int AS average_completion_minutes
+      `SELECT d.*, m.full_name AS manager_name, COUNT(DISTINCT u.id)::int AS staff,
+              COALESCE(r.pending, 0)::int AS pending_requests,
+              COALESCE(r.completed_today, 0)::int AS completed_today,
+              COALESCE(r.avg_minutes, 0)::int AS average_completion_minutes
        FROM hotel_admin_departments d
        LEFT JOIN hotel_admin_users m ON m.id = d.manager_id
        LEFT JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*) FILTER (WHERE req.status IN ('pending','in-progress')) AS pending,
+           COUNT(*) FILTER (WHERE req.status = 'completed' AND req.updated_at::date = CURRENT_DATE) AS completed_today,
+           ROUND(AVG(EXTRACT(EPOCH FROM (req.updated_at - req.created_at)) / 60) FILTER (WHERE req.status = 'completed')) AS avg_minutes
+         FROM requests req
+         WHERE req.hotel_id = d.hotel_id AND LOWER(regexp_replace(req.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
+       ) r ON TRUE
        WHERE d.hotel_id = $1
-       GROUP BY d.id, m.full_name
+       GROUP BY d.id, m.full_name, r.pending, r.completed_today, r.avg_minutes
        ORDER BY d.name`,
       [req.hotelAdmin.hotel_id]
     );
-    res.json(result.rows.map(mapDepartmentRow));
+
+    const deptIds = result.rows.map(r => r.id);
+    let secondaryByDept = {};
+    if (deptIds.length) {
+      const secondary = await pool.query(
+        `SELECT ud.department_id, u.id, u.full_name
+         FROM hotel_admin_user_departments ud
+         JOIN hotel_admin_users u ON u.id = ud.user_id AND u.deleted_at IS NULL
+         WHERE ud.hotel_id = $1 AND ud.department_id = ANY($2::int[])`,
+        [req.hotelAdmin.hotel_id, deptIds]
+      );
+      secondaryByDept = secondary.rows.reduce((acc, row) => {
+        (acc[row.department_id] = acc[row.department_id] || []).push({ id: row.id, fullName: row.full_name });
+        return acc;
+      }, {});
+    }
+
+    res.json(result.rows.map(row => ({ ...mapDepartmentRow(row), secondaryStaff: secondaryByDept[row.id] || [] })));
   } catch (err) {
+    console.error('Load departments failed:', err);
     res.status(500).json({ error: 'Failed to load departments' });
   }
 });
 
 app.post('/api/hotel-admin/departments', requireHotelAdmin, async (req, res) => {
-  const { name, managerId } = req.body;
+  const {
+    name, managerId, icon, color, description, email, phone,
+    location, floor, building, operatingHours, permissions
+  } = req.body;
   if (!name) return res.status(400).json({ error: 'Department name required' });
   try {
+    const baseKey = slugifyServiceKey(name);
+    let serviceKey = baseKey;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const clash = await pool.query(
+        `SELECT 1 FROM hotel_admin_departments WHERE hotel_id = $1 AND service_key = $2`,
+        [req.hotelAdmin.hotel_id, serviceKey]
+      );
+      if (!clash.rows.length) break;
+      serviceKey = `${baseKey}${attempt + 1}`;
+    }
+
     const result = await pool.query(
-      `INSERT INTO hotel_admin_departments (hotel_id, name, manager_id, status, created_at, updated_at)
-       VALUES ($1,$2,$3,'active',NOW(),NOW()) RETURNING *`,
-      [req.hotelAdmin.hotel_id, name, managerId || null]
+      `INSERT INTO hotel_admin_departments
+        (hotel_id, name, manager_id, status, icon, color, description, email, phone, location, floor, building, operating_hours, permissions, service_key, created_at, updated_at)
+       VALUES ($1,$2,$3,'active',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW()) RETURNING *`,
+      [
+        req.hotelAdmin.hotel_id, name, managerId || null, icon || 'fa-building', color || '#c9a227',
+        description || null, email || null, phone || null, location || null, floor || null, building || null,
+        operatingHours || {}, permissions || {}, serviceKey
+      ]
     );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_created', 'department', result.rows[0].id, req);
-    res.status(201).json(result.rows[0]);
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_created', 'department', result.rows[0].id, req, { name, serviceKey });
+    res.status(201).json(mapDepartmentRow(result.rows[0]));
   } catch (err) {
+    console.error('Create department failed:', err);
     res.status(500).json({ error: 'Failed to create department' });
   }
 });
 
 app.put('/api/hotel-admin/departments/:id', requireHotelAdmin, async (req, res) => {
-  const { name, managerId, status } = req.body;
+  const {
+    name, managerId, status, icon, color, description, email, phone,
+    location, floor, building, operatingHours, permissions
+  } = req.body;
   try {
+    const before = await pool.query(`SELECT * FROM hotel_admin_departments WHERE id = $1 AND hotel_id = $2`, [req.params.id, req.hotelAdmin.hotel_id]);
+    if (!before.rows.length) return res.status(404).json({ error: 'Department not found' });
+    const prev = mapDepartmentRow(before.rows[0]);
+
     const result = await pool.query(
-      `UPDATE hotel_admin_departments SET name = COALESCE($1,name), manager_id = $2, status = COALESCE($3,status), updated_at = NOW()
-       WHERE id = $4 AND hotel_id = $5 RETURNING *`,
-      [name || null, managerId || null, status || null, req.params.id, req.hotelAdmin.hotel_id]
+      `UPDATE hotel_admin_departments SET
+        name = COALESCE($1,name), manager_id = $2, status = COALESCE($3,status),
+        icon = COALESCE($4, icon), color = COALESCE($5, color), description = $6, email = $7, phone = $8,
+        location = $9, floor = $10, building = $11,
+        operating_hours = COALESCE($12, operating_hours), permissions = COALESCE($13, permissions),
+        updated_at = NOW()
+       WHERE id = $14 AND hotel_id = $15 RETURNING *`,
+      [
+        name || null, managerId || null, status || null, icon || null, color || null,
+        description || null, email || null, phone || null, location || null, floor || null, building || null,
+        operatingHours || null, permissions || null, req.params.id, req.hotelAdmin.hotel_id
+      ]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Department not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_updated', 'department', req.params.id, req);
-    res.json(result.rows[0]);
+    const next = mapDepartmentRow(result.rows[0]);
+
+    const changes = {};
+    ['name', 'managerId', 'status', 'icon', 'color', 'description', 'email', 'phone', 'location', 'floor', 'building'].forEach(key => {
+      if (JSON.stringify(prev[key] ?? null) !== JSON.stringify(next[key] ?? null)) changes[key] = { previous: prev[key], next: next[key] };
+    });
+    const action = prev.managerId !== next.managerId ? 'department_manager_assigned' : 'department_updated';
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, action, 'department', req.params.id, req, { changes });
+    res.json(next);
   } catch (err) {
+    console.error('Update department failed:', err);
     res.status(500).json({ error: 'Failed to update department' });
   }
 });
 
+app.delete('/api/hotel-admin/departments/:id', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM hotel_admin_departments WHERE id = $1 AND hotel_id = $2 RETURNING name`,
+      [req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Department not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_deleted', 'department', req.params.id, req, { name: result.rows[0].name });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Delete department failed:', err);
+    res.status(500).json({ error: 'Failed to delete department' });
+  }
+});
+
+// Sets each listed user's PRIMARY department (one per user).
 app.post('/api/hotel-admin/departments/:id/staff', requireHotelAdmin, async (req, res) => {
   const staffIds = Array.isArray(req.body.staffIds) ? req.body.staffIds : [];
   try {
@@ -2086,6 +2192,56 @@ app.post('/api/hotel-admin/departments/:id/staff', requireHotelAdmin, async (req
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to assign staff' });
+  }
+});
+
+// Adds/removes SECONDARY department membership — lets one employee belong
+// to more than one department without changing their primary assignment.
+app.post('/api/hotel-admin/departments/:id/staff/:userId/secondary', requireHotelAdmin, async (req, res) => {
+  try {
+    const userCheck = await pool.query(`SELECT id FROM hotel_admin_users WHERE id = $1 AND hotel_id = $2 AND deleted_at IS NULL`, [req.params.userId, req.hotelAdmin.hotel_id]);
+    if (!userCheck.rows.length) return res.status(404).json({ error: 'User not found' });
+    await pool.query(
+      `INSERT INTO hotel_admin_user_departments (user_id, department_id, hotel_id)
+       VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+      [req.params.userId, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_staff_assigned', 'department', req.params.id, req, { userId: Number(req.params.userId), secondary: true });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to add staff to department' });
+  }
+});
+
+app.delete('/api/hotel-admin/departments/:id/staff/:userId/secondary', requireHotelAdmin, async (req, res) => {
+  try {
+    await pool.query(
+      `DELETE FROM hotel_admin_user_departments WHERE department_id = $1 AND user_id = $2 AND hotel_id = $3`,
+      [req.params.id, req.params.userId, req.hotelAdmin.hotel_id]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_staff_removed', 'department', req.params.id, req, { userId: Number(req.params.userId), secondary: true });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to remove staff from department' });
+  }
+});
+
+// Public, no-auth: powers the guest request page's service picker so newly
+// created departments become request destinations automatically.
+app.get('/api/departments/public', async (req, res) => {
+  if (!requireDatabase(res)) return;
+  const hotelId = parseInt(req.query.hotelId, 10);
+  if (!hotelId) return res.status(400).json({ error: 'hotelId is required' });
+  try {
+    const result = await pool.query(
+      `SELECT name, icon, color, service_key FROM hotel_admin_departments
+       WHERE hotel_id = $1 AND status = 'active' ORDER BY name`,
+      [hotelId]
+    );
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json(result.rows.map(row => ({ name: row.name, icon: row.icon || 'fa-building', color: row.color || '#c9a227', serviceKey: row.service_key })));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load departments' });
   }
 });
 

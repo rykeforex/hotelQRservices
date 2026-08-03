@@ -610,6 +610,17 @@
     loadRoles();
   }
 
+  const DEPARTMENT_ICONS = [
+    'fa-broom', 'fa-tools', 'fa-utensils', 'fa-bell-concierge', 'fa-shirt', 'fa-spa', 'fa-car', 'fa-champagne-glasses',
+    'fa-golf-ball-tee', 'fa-shuttle-van', 'fa-shield-halved', 'fa-briefcase-medical', 'fa-seedling', 'fa-child-reaching',
+    'fa-building', 'fa-dumbbell', 'fa-umbrella-beach', 'fa-swimming-pool', 'fa-wifi', 'fa-parking'
+  ];
+  const DEPARTMENT_PERMISSIONS = [
+    ['receiveRequests', 'Receive Requests'], ['assignRequests', 'Assign Requests'], ['closeRequests', 'Close Requests'],
+    ['exportReports', 'Export Reports'], ['viewAnalytics', 'View Analytics'], ['manageStaff', 'Manage Staff'],
+    ['viewLogs', 'View Logs'], ['manageNotifications', 'Manage Notifications']
+  ];
+
   async function loadDepartments() {
     const section = $('section-departments');
     setSectionLoading('section-departments');
@@ -617,41 +628,118 @@
       await loadReferenceData();
       const departments = state.cache.departments;
       section.innerHTML = `
-        <div class="toolbar flex items-center justify-between mb-4"><p style="color:var(--muted);">Manage hotel departments, managers, staff assignment and status.</p><button class="btn gold-btn" onclick="showDepartmentForm()"><i class="fas fa-plus"></i> Create Department</button></div>
-        ${departments.length ? `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">${departments.map(dept => `<div class="card p-5">
-          <div class="flex justify-between gap-3"><h3 class="serif text-2xl">${esc(dept.name)}</h3>${badge(dept.status)}</div>
-          <p class="text-sm mt-2" style="color:var(--muted);">Manager: ${esc(dept.manager || 'Unassigned')}</p>
+        <div class="toolbar flex items-center justify-between mb-4"><p style="color:var(--muted);">Unlimited custom departments — each one automatically becomes a guest request destination.</p><button class="btn gold-btn" onclick="showDepartmentForm()"><i class="fas fa-plus"></i> Create Department</button></div>
+        ${departments.length ? `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">${departments.map(dept => `<div class="card p-5">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <div class="h-11 w-11 rounded-xl grid place-items-center flex-shrink-0" style="background:${esc(dept.color)}22;color:${esc(dept.color)};"><i class="fas ${esc(dept.icon)} text-lg"></i></div>
+              <div><h3 class="serif text-xl leading-tight">${esc(dept.name)}</h3><p class="text-xs" style="color:var(--muted);">${esc(dept.serviceKey || '')}</p></div>
+            </div>
+            ${badge(dept.status)}
+          </div>
+          ${dept.description ? `<p class="text-sm mt-3" style="color:var(--muted);">${esc(dept.description)}</p>` : ''}
+          <div class="text-xs mt-3 space-y-1" style="color:var(--muted);">
+            ${dept.manager ? `<div><i class="fas fa-user-tie gold mr-2"></i>${esc(dept.manager)}</div>` : ''}
+            ${dept.email ? `<div><i class="fas fa-envelope gold mr-2"></i>${esc(dept.email)}</div>` : ''}
+            ${dept.phone ? `<div><i class="fas fa-phone gold mr-2"></i>${esc(dept.phone)}</div>` : ''}
+            ${(dept.building || dept.floor || dept.location) ? `<div><i class="fas fa-location-dot gold mr-2"></i>${[dept.building, dept.floor ? `Floor ${dept.floor}` : '', dept.location].filter(Boolean).map(esc).join(' · ')}</div>` : ''}
+            ${(dept.operatingHours?.start || dept.operatingHours?.end) ? `<div><i class="fas fa-clock gold mr-2"></i>${esc(dept.operatingHours.start || '—')} – ${esc(dept.operatingHours.end || '—')}</div>` : ''}
+          </div>
           <div class="grid grid-cols-3 gap-2 mt-4 text-center">
-            <div class="card p-3"><div class="font-bold">${dept.staff}</div><div class="text-xs" style="color:var(--muted);">Staff</div></div>
+            <div class="card p-3"><div class="font-bold">${dept.staff}${dept.secondaryStaff?.length ? ` +${dept.secondaryStaff.length}` : ''}</div><div class="text-xs" style="color:var(--muted);">Staff</div></div>
             <div class="card p-3"><div class="font-bold">${dept.pendingRequests}</div><div class="text-xs" style="color:var(--muted);">Pending</div></div>
             <div class="card p-3"><div class="font-bold">${dept.completedToday}</div><div class="text-xs" style="color:var(--muted);">Today</div></div>
           </div>
-          <div class="flex gap-2 mt-5 flex-wrap"><button class="btn" onclick="showDepartmentForm(${dept.id})"><i class="fas fa-pen"></i> Edit</button><button class="btn" onclick="assignDepartmentStaff(${dept.id})"><i class="fas fa-users"></i> Assign Staff</button></div>
+          <div class="flex flex-wrap gap-1 mt-3">${DEPARTMENT_PERMISSIONS.filter(([key]) => dept.permissions?.[key]).map(([,label]) => `<span class="badge status-active">${esc(label)}</span>`).join('') || ''}</div>
+          <div class="flex gap-2 mt-5 flex-wrap">
+            <button class="btn" onclick="showDepartmentForm(${dept.id})" title="Edit"><i class="fas fa-pen"></i></button>
+            <button class="btn" onclick="assignDepartmentStaff(${dept.id})" title="Set primary staff"><i class="fas fa-users"></i></button>
+            <button class="btn" onclick="manageSecondaryStaff(${dept.id})" title="Add staff from other departments"><i class="fas fa-user-plus"></i></button>
+            <button class="btn danger-btn" onclick="deleteDepartment(${dept.id}, this)" title="Delete"><i class="fas fa-trash"></i></button>
+          </div>
         </div>`).join('')}</div>` : emptyState('No departments found', 'Create departments to organize hotel operations.')}`;
     } catch (err) { section.innerHTML = errorState(err.message, 'loadDepartments()'); }
   }
 
   function showDepartmentForm(id) {
     const dept = id ? state.cache.departments.find(item => item.id === id) : {};
+    const hours = dept?.operatingHours || {};
+    const perms = dept?.permissions || {};
     openModal('Department Management', id ? 'Edit Department' : 'Create Department', `
-      <form id="departmentForm" class="space-y-4">
-        <input name="name" class="input" placeholder="Department name" value="${esc(dept?.name || '')}" required>
-        <select name="managerId">${optionList(state.cache.users, dept?.managerId, 'fullName')}</select>
-        <select name="status"><option value="active" ${dept?.status === 'active' ? 'selected' : ''}>active</option><option value="inactive" ${dept?.status === 'inactive' ? 'selected' : ''}>inactive</option></select>
+      <form id="departmentForm" class="space-y-5">
+        <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+          <input name="name" class="input" placeholder="Department name (e.g. Spa)" value="${esc(dept?.name || '')}" required>
+          <select name="icon">${DEPARTMENT_ICONS.map(icon => `<option value="${icon}" ${dept?.icon === icon ? 'selected' : ''}>${icon.replace('fa-', '').replace(/-/g, ' ')}</option>`).join('')}</select>
+          <input name="color" class="input" type="color" value="${esc(dept?.color || '#c9a227')}">
+        </div>
+        <textarea name="description" class="input" rows="2" placeholder="Description">${esc(dept?.description || '')}</textarea>
+        <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+          <input name="email" class="input" type="email" placeholder="Department email" value="${esc(dept?.email || '')}">
+          <input name="phone" class="input" placeholder="Phone number" value="${esc(dept?.phone || '')}">
+          <input name="building" class="input" placeholder="Building" value="${esc(dept?.building || '')}">
+          <input name="floor" class="input" placeholder="Floor" value="${esc(dept?.floor || '')}">
+          <input name="location" class="input" placeholder="Location / room" value="${esc(dept?.location || '')}">
+          <select name="managerId">${optionList(state.cache.users, dept?.managerId, 'fullName')}</select>
+        </div>
+        <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
+          <label class="text-xs uppercase" style="color:var(--muted);">Opens
+            <input name="hoursStart" class="input mt-1" type="time" value="${esc(hours.start || '')}">
+          </label>
+          <label class="text-xs uppercase" style="color:var(--muted);">Closes
+            <input name="hoursEnd" class="input mt-1" type="time" value="${esc(hours.end || '')}">
+          </label>
+          <select name="status"><option value="active" ${dept?.status === 'active' ? 'selected' : ''}>active</option><option value="inactive" ${dept?.status === 'inactive' ? 'selected' : ''}>inactive</option></select>
+        </div>
+        <div>
+          <p class="text-xs uppercase tracking-[0.2em] gold font-bold mb-2">Permissions</p>
+          <div class="grid gap-2" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+            ${DEPARTMENT_PERMISSIONS.map(([key, label]) => `<label class="card p-3 flex items-center gap-2 text-sm"><input type="checkbox" name="perm_${key}" ${perms[key] ? 'checked' : ''}> ${esc(label)}</label>`).join('')}
+          </div>
+        </div>
         <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save</button></div>
       </form>`);
     $('departmentForm').addEventListener('submit', async event => {
       event.preventDefault();
-      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
-      payload.managerId = payload.managerId ? Number(payload.managerId) : null;
-      await api(id ? `/api/hotel-admin/departments/${id}` : '/api/hotel-admin/departments', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-      closeModal(); loadDepartments();
+      const form = event.currentTarget;
+      const submitBtn = form.querySelector('button[type="submit"]');
+      const fd = new FormData(form);
+      const payload = {
+        name: fd.get('name'), icon: fd.get('icon'), color: fd.get('color'), description: fd.get('description'),
+        email: fd.get('email'), phone: fd.get('phone'), building: fd.get('building'), floor: fd.get('floor'),
+        location: fd.get('location'), managerId: fd.get('managerId') ? Number(fd.get('managerId')) : null,
+        status: fd.get('status'), operatingHours: { start: fd.get('hoursStart') || '', end: fd.get('hoursEnd') || '' },
+        permissions: Object.fromEntries(DEPARTMENT_PERMISSIONS.map(([key]) => [key, form.querySelector(`[name="perm_${key}"]`).checked]))
+      };
+      window.LuxeUI?.loading(submitBtn, true, id ? 'Saving…' : 'Creating…');
+      try {
+        await api(id ? `/api/hotel-admin/departments/${id}` : '/api/hotel-admin/departments', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+        window.LuxeUI?.toast('success', id ? 'Department updated' : 'Department created', id ? '' : `${payload.name} is now available for guest requests.`);
+        closeModal();
+        loadDepartments();
+      } catch (err) {
+        window.LuxeUI?.toast('error', id ? 'Update failed' : 'Creation failed', err.message);
+        window.LuxeUI?.loading(submitBtn, false);
+      }
     });
+  }
+
+  async function deleteDepartment(id, btn) {
+    if (!confirm('Delete this department? Staff assigned to it will become unassigned.')) return;
+    window.LuxeUI?.loading(btn, true);
+    try {
+      await api(`/api/hotel-admin/departments/${id}`, { method: 'DELETE' });
+      window.LuxeUI?.toast('success', 'Department deleted', '');
+      loadDepartments();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Delete failed', err.message);
+      window.LuxeUI?.loading(btn, false);
+    }
   }
 
   function assignDepartmentStaff(id) {
     const assigned = state.cache.users.filter(user => Number(user.departmentId) === Number(id)).map(user => user.id);
-    openModal('Department Management', 'Assign Staff', `
+    openModal('Department Management', 'Set Primary Department Staff', `
+      <p class="text-sm mb-3" style="color:var(--muted);">Each staff member has one primary department. To add someone without changing their primary department, use "Add staff from other departments" instead.</p>
       <form id="assignStaffForm" class="space-y-4">
         <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
           ${state.cache.users.map(user => `<label class="card p-3 flex gap-2"><input type="checkbox" name="staff" value="${user.id}" ${assigned.includes(user.id) ? 'checked' : ''}> ${esc(user.fullName)}</label>`).join('') || emptyState('No staff available', 'Create users before assigning staff.')}
@@ -660,9 +748,49 @@
       </form>`);
     $('assignStaffForm').addEventListener('submit', async event => {
       event.preventDefault();
+      const submitBtn = event.currentTarget.querySelector('button[type="submit"]');
       const staffIds = [...event.currentTarget.querySelectorAll('[name="staff"]:checked')].map(input => Number(input.value));
-      await api(`/api/hotel-admin/departments/${id}/staff`, { method: 'POST', body: JSON.stringify({ staffIds }) });
-      closeModal(); loadDepartments();
+      window.LuxeUI?.loading(submitBtn, true, 'Saving…');
+      try {
+        await api(`/api/hotel-admin/departments/${id}/staff`, { method: 'POST', body: JSON.stringify({ staffIds }) });
+        window.LuxeUI?.toast('success', 'Staff updated', '');
+        closeModal(); loadDepartments();
+      } catch (err) {
+        window.LuxeUI?.toast('error', 'Update failed', err.message);
+        window.LuxeUI?.loading(submitBtn, false);
+      }
+    });
+  }
+
+  function manageSecondaryStaff(id) {
+    const dept = state.cache.departments.find(item => item.id === id);
+    const secondaryIds = (dept?.secondaryStaff || []).map(u => u.id);
+    openModal('Department Management', 'Additional Staff', `
+      <p class="text-sm mb-3" style="color:var(--muted);">Add staff to ${esc(dept?.name || 'this department')} without changing their primary department assignment.</p>
+      <form id="secondaryStaffForm" class="space-y-4">
+        <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+          ${state.cache.users.map(user => `<label class="card p-3 flex gap-2"><input type="checkbox" name="secondary" value="${user.id}" ${secondaryIds.includes(user.id) ? 'checked' : ''}> ${esc(user.fullName)} <span class="text-xs" style="color:var(--muted);">(${esc(user.department || 'Unassigned')})</span></label>`).join('') || emptyState('No staff available', 'Create users first.')}
+        </div>
+        <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save</button></div>
+      </form>`);
+    $('secondaryStaffForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const submitBtn = event.currentTarget.querySelector('button[type="submit"]');
+      const checkedIds = [...event.currentTarget.querySelectorAll('[name="secondary"]:checked')].map(input => Number(input.value));
+      const toAdd = checkedIds.filter(uid => !secondaryIds.includes(uid));
+      const toRemove = secondaryIds.filter(uid => !checkedIds.includes(uid));
+      window.LuxeUI?.loading(submitBtn, true, 'Saving…');
+      try {
+        await Promise.all([
+          ...toAdd.map(uid => api(`/api/hotel-admin/departments/${id}/staff/${uid}/secondary`, { method: 'POST' })),
+          ...toRemove.map(uid => api(`/api/hotel-admin/departments/${id}/staff/${uid}/secondary`, { method: 'DELETE' }))
+        ]);
+        window.LuxeUI?.toast('success', 'Staff updated', '');
+        closeModal(); loadDepartments();
+      } catch (err) {
+        window.LuxeUI?.toast('error', 'Update failed', err.message);
+        window.LuxeUI?.loading(submitBtn, false);
+      }
     });
   }
 
