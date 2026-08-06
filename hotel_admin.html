@@ -229,6 +229,9 @@
     page: 'dashboard',
     usersPage: 1,
     auditPage: 1,
+    previewSurface: 'guestPage',
+    previewDevice: 'desktop',
+    previewTheme: 'light',
     cache: { users: [], roles: [], departments: [], shifts: [] }
   };
 
@@ -238,7 +241,7 @@
     ['users', 'fa-users-gear', 'User Management'],
     ['roles', 'fa-user-shield', 'Role Management'],
     ['departments', 'fa-building-user', 'Departments'],
-    ['performance', 'fa-chart-line', 'Staff Performance'],
+    ['performance', 'fa-chart-line', 'Workforce Dashboard'],
     ['shifts', 'fa-business-time', 'Shifts'],
     ['audit', 'fa-clipboard-list', 'Audit Logs'],
     ['notifications', 'fa-bell', 'Notifications'],
@@ -253,6 +256,7 @@
   ];
 
   const $ = id => document.getElementById(id);
+  const $$ = selector => Array.from(document.querySelectorAll(selector));
   const esc = value => String(value ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   const fmt = value => value ? new Date(value).toLocaleString() : 'Never';
   const badge = value => `<span class="badge status-${esc(String(value || '').toLowerCase())}">${esc(value || 'Unknown')}</span>`;
@@ -798,21 +802,76 @@
     const section = $('section-performance');
     setSectionLoading('section-performance');
     try {
-      const rows = await api('/api/hotel-admin/performance');
-      section.innerHTML = rows.length ? `<div class="grid gap-4">${rows.map(row => {
-        const score = Math.min(100, Number(row.completed_requests || 0) * 5);
-        return `<div class="card p-5">
-          <div class="flex flex-wrap items-center justify-between gap-3 mb-3"><div><h3 class="serif text-2xl">${esc(row.full_name)}</h3><p class="text-sm" style="color:var(--muted);">${esc(row.department_name || 'Unassigned')} · ${esc(row.attendance_status)}</p></div><span class="badge status-active">${esc(row.performance_rating)}</span></div>
-          <div class="chart-bar mb-4"><span style="width:${score}%"></span></div>
-          <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
-            ${[
-              ['Completed Requests', row.completed_requests], ['Avg Completion', `${row.average_completion_time || 0} min`], ['Escalated Requests', row.escalated_requests],
-              ['CSAT', row.customer_satisfaction_score ?? 'Not recorded'], ['Late Requests', row.late_requests], ['Attendance', row.attendance_status]
-            ].map(([k,v]) => `<div class="card p-3"><div class="font-bold">${esc(v)}</div><div class="text-xs" style="color:var(--muted);">${esc(k)}</div></div>`).join('')}
-          </div>
-        </div>`;
-      }).join('')}</div>` : emptyState('No performance data', 'Staff performance appears once users and activity exist.');
+      const [dash, perf] = await Promise.all([
+        api('/api/hotel-admin/workforce/dashboard'),
+        api('/api/hotel-admin/performance')
+      ]);
+      const kpis = [
+        ['Total Employees', dash.totalEmployees], ['Online', dash.employeesOnline], ['Offline', dash.employeesOffline],
+        ['On Leave', dash.employeesOnLeave], ['On Shift Now', dash.employeesOnShift], ['Departments Covered', dash.departmentsCovered],
+        ['Active Shifts', dash.activeShifts], ['Pending Requests', dash.pendingRequests], ['Completed Today', dash.completedRequestsToday],
+        ['Avg Response (min)', dash.avgResponseMinutes], ['Completion Rate (30d)', `${dash.completionRate30d}%`], ['Hotel Performance Score', dash.overallHotelPerformanceScore]
+      ];
+      section.innerHTML = `
+        <div class="grid gap-3 mb-5" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+          ${kpis.map(([label, value]) => `<div class="card p-4"><div class="text-2xl font-bold gold">${esc(value)}</div><div class="text-xs uppercase mt-1" style="color:var(--muted);">${esc(label)}</div></div>`).join('')}
+        </div>
+        <div class="card p-3 mb-5 text-xs flex gap-2" style="color:var(--muted);"><i class="fas fa-circle-info gold mt-0.5"></i><span>${esc(dash.note)}</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Shift</th><th>Status</th><th>Tenure</th><th>Portal Activity (30d)</th><th>Dept. Completion Rate</th><th>Score</th></tr></thead><tbody>
+          ${perf.employees.map(emp => `<tr style="cursor:pointer;" onclick="showEmployeeProfile(${emp.id})">
+            <td>${esc(emp.fullName)}</td>
+            <td>${esc(emp.departmentName || 'Unassigned')}</td>
+            <td>${esc(emp.shiftName || '—')}</td>
+            <td>${badge(emp.isOnline ? 'active' : 'offline')}</td>
+            <td>${emp.tenureDays}d</td>
+            <td>${emp.adminActions30d}</td>
+            <td>${emp.departmentCompletionRate}%</td>
+            <td><span class="badge status-active">${emp.performanceScore}</span></td>
+          </tr>`).join('') || `<tr><td colspan="8">${emptyState('No staff yet', 'Create staff accounts to see workforce data.')}</td></tr>`}
+        </tbody></table></div>`;
     } catch (err) { section.innerHTML = errorState(err.message, 'loadPerformance()'); }
+  }
+
+  async function showEmployeeProfile(id) {
+    openModal('Employee Profile', 'Loading…', `<div class="p-6 text-center" style="color:var(--muted);"><i class="fas fa-circle-notch fa-spin"></i> Loading profile…</div>`);
+    try {
+      const p = await api(`/api/hotel-admin/employees/${id}/profile`);
+      const maxActions = Math.max(1, ...p.adminPortalActivity.monthlyActivity.map(m => m.actions));
+      openModal('Employee Profile', p.fullName, `
+        <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+          <div class="card p-3"><div class="font-bold">${esc(p.department || 'Unassigned')}</div><div class="text-xs" style="color:var(--muted);">Department</div></div>
+          <div class="card p-3"><div class="font-bold">${esc(p.role || '—')}</div><div class="text-xs" style="color:var(--muted);">Role</div></div>
+          <div class="card p-3"><div class="font-bold">${esc(p.shift || '—')}</div><div class="text-xs" style="color:var(--muted);">${esc(p.shiftHours || 'Shift')}</div></div>
+          <div class="card p-3"><div class="font-bold">${p.tenureDays}d</div><div class="text-xs" style="color:var(--muted);">Tenure</div></div>
+        </div>
+        <div class="text-sm mt-4 space-y-1" style="color:var(--muted);">
+          <div><i class="fas fa-envelope gold mr-2"></i>${esc(p.email)}</div>
+          ${p.phone ? `<div><i class="fas fa-phone gold mr-2"></i>${esc(p.phone)}</div>` : ''}
+          <div><i class="fas fa-circle gold mr-2" style="font-size:.5rem;"></i>${p.isOnline ? 'Online now' : 'Offline'} · ${badge(p.accountStatus)} · ${esc(p.employmentStatus)}</div>
+          <div><i class="fas fa-clock gold mr-2"></i>Last login: ${p.lastLogin ? fmt(p.lastLogin) : 'Never'}</div>
+        </div>
+
+        <h4 class="serif text-xl mt-5 mb-2">Department Context <span class="text-xs font-normal" style="color:var(--muted);">(30 days, department-level)</span></h4>
+        <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));">
+          <div class="card p-3"><div class="font-bold">${p.departmentContext.requests30d}</div><div class="text-xs" style="color:var(--muted);">Requests</div></div>
+          <div class="card p-3"><div class="font-bold">${p.departmentContext.completed30d}</div><div class="text-xs" style="color:var(--muted);">Completed</div></div>
+          <div class="card p-3"><div class="font-bold">${p.departmentContext.completionRate}%</div><div class="text-xs" style="color:var(--muted);">Completion Rate</div></div>
+          <div class="card p-3"><div class="font-bold">${p.departmentContext.avgResponseMinutes}m</div><div class="text-xs" style="color:var(--muted);">Avg Response</div></div>
+        </div>
+
+        <h4 class="serif text-xl mt-5 mb-2">Admin Portal Activity <span class="text-xs font-normal" style="color:var(--muted);">(individual, real)</span></h4>
+        <div class="flex items-end gap-2" style="height:80px;">
+          ${p.adminPortalActivity.monthlyActivity.length ? p.adminPortalActivity.monthlyActivity.map(m => `<div class="flex-1 flex flex-col items-center justify-end h-full"><div style="width:100%;background:var(--gold);border-radius:4px 4px 0 0;height:${Math.max(4, (m.actions / maxActions) * 100)}%;"></div><div class="text-xs mt-1" style="color:var(--muted);">${new Date(m.month).toLocaleDateString('en-US',{month:'short'})}</div></div>`).join('') : `<p class="text-sm" style="color:var(--muted);">No admin portal activity recorded yet.</p>`}
+        </div>
+
+        <h4 class="serif text-xl mt-5 mb-2">Activity Timeline</h4>
+        <div class="space-y-2" style="max-height:220px;overflow-y:auto;">
+          ${p.adminPortalActivity.timeline.length ? p.adminPortalActivity.timeline.map(t => `<div class="text-xs flex justify-between gap-2 py-1.5" style="border-bottom:1px solid var(--line);"><span>${esc(t.action.replaceAll('_',' '))}</span><span style="color:var(--muted);">${fmt(t.created_at)}</span></div>`).join('') : `<p class="text-sm" style="color:var(--muted);">No recent activity.</p>`}
+        </div>
+        <div class="flex justify-end mt-5"><button class="btn" onclick="closeModal()">Close</button></div>`);
+    } catch (err) {
+      openModal('Employee Profile', 'Error', `<p style="color:#c0524f;">${esc(err.message)}</p>`);
+    }
   }
 
   async function loadShifts() {
@@ -821,15 +880,170 @@
     try {
       await loadReferenceData();
       const shifts = state.cache.shifts;
+      if (!state.calendarYear) { const now = new Date(); state.calendarYear = now.getFullYear(); state.calendarMonth = now.getMonth(); }
       section.innerHTML = `
-        <div class="toolbar flex items-center justify-between mb-4"><p style="color:var(--muted);">Assign staff and monitor current shift coverage.</p><button class="btn gold-btn" onclick="showShiftForm()"><i class="fas fa-plus"></i> Custom Shift</button></div>
-        ${shifts.length ? `<div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">${shifts.map(shift => `<div class="card p-5">
+        <div class="toolbar flex items-center justify-between mb-4"><p style="color:var(--muted);">Shift templates, recurring schedules and coverage calendar.</p><button class="btn gold-btn" onclick="showShiftForm()"><i class="fas fa-plus"></i> Custom Shift</button></div>
+        ${shifts.length ? `<div class="grid gap-4 mb-6" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">${shifts.map(shift => `<div class="card p-5">
           <div class="flex justify-between"><h3 class="serif text-2xl">${esc(shift.name)}</h3>${badge(shift.status)}</div>
           <p class="text-sm mt-2" style="color:var(--muted);">${esc(shift.start_time || 'Open')} - ${esc(shift.end_time || 'Open')}</p>
           <div class="text-3xl mt-4">${shift.staff_count || 0}</div><div class="text-xs uppercase" style="color:var(--muted);">Assigned staff</div>
-          <button class="btn mt-4" onclick="showShiftForm(${shift.id})"><i class="fas fa-pen"></i> Manage</button>
-        </div>`).join('')}</div>` : emptyState('No shifts found', 'Create Morning, Afternoon, Night, or custom shifts.')}`;
+          <div class="flex gap-2 mt-4"><button class="btn" onclick="showShiftForm(${shift.id})"><i class="fas fa-pen"></i> Manage</button><button class="btn danger-btn" onclick="deleteShift(${shift.id}, this)"><i class="fas fa-trash"></i></button></div>
+        </div>`).join('')}</div>` : emptyState('No shifts found', 'Create Morning, Afternoon, Night, or custom shifts.')}
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="serif text-2xl">Shift Calendar</h3>
+            <div class="flex items-center gap-2">
+              <button class="btn" onclick="shiftCalendarMonth(-1)"><i class="fas fa-chevron-left"></i></button>
+              <span id="calendarLabel" class="text-sm w-32 text-center"></span>
+              <button class="btn" onclick="shiftCalendarMonth(1)"><i class="fas fa-chevron-right"></i></button>
+            </div>
+          </div>
+          <div id="calendarGrid"></div>
+        </div>`;
+      await renderCalendarMonth();
     } catch (err) { section.innerHTML = errorState(err.message, 'loadShifts()'); }
+  }
+
+  async function shiftCalendarMonth(delta) {
+    state.calendarMonth += delta;
+    if (state.calendarMonth > 11) { state.calendarMonth = 0; state.calendarYear++; }
+    if (state.calendarMonth < 0) { state.calendarMonth = 11; state.calendarYear--; }
+    await renderCalendarMonth();
+  }
+
+  async function renderCalendarMonth() {
+    const grid = $('calendarGrid');
+    const label = $('calendarLabel');
+    const year = state.calendarYear, month = state.calendarMonth;
+    label.textContent = new Date(year, month, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    grid.innerHTML = `<p class="text-sm" style="color:var(--muted);"><i class="fas fa-circle-notch fa-spin"></i> Loading…</p>`;
+
+    const firstDay = new Date(Date.UTC(year, month, 1));
+    const lastDay = new Date(Date.UTC(year, month + 1, 0));
+    const startStr = firstDay.toISOString().slice(0, 10);
+    const endStr = lastDay.toISOString().slice(0, 10);
+
+    try {
+      const [schedule, conflicts] = await Promise.all([
+        api(`/api/hotel-admin/shift-schedule?start=${startStr}&end=${endStr}`),
+        api(`/api/hotel-admin/shift-schedule/conflicts?start=${startStr}&end=${endStr}`)
+      ]);
+      const byDate = {};
+      schedule.forEach(row => { const key = row.shift_date.slice(0, 10); (byDate[key] = byDate[key] || []).push(row); });
+      const conflictDates = new Set(conflicts.map(c => c.shift_date.slice(0, 10)));
+
+      const leadDays = firstDay.getUTCDay();
+      const totalDays = lastDay.getUTCDate();
+      const cells = [];
+      for (let i = 0; i < leadDays; i++) cells.push(null);
+      for (let d = 1; d <= totalDays; d++) cells.push(d);
+      while (cells.length % 7 !== 0) cells.push(null);
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      grid.innerHTML = `
+        <div class="grid grid-cols-7 gap-1 text-center text-xs uppercase mb-1" style="color:var(--muted);">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div>${d}</div>`).join('')}</div>
+        <div class="grid grid-cols-7 gap-1">
+          ${cells.map(d => {
+            if (!d) return `<div></div>`;
+            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const entries = byDate[dateStr] || [];
+            const hasConflict = conflictDates.has(dateStr);
+            const isToday = dateStr === todayStr;
+            return `<button type="button" onclick="showDayDetail('${dateStr}')" class="card p-2 text-left" style="min-height:64px;${isToday ? `border-color:var(--gold);` : ''}">
+              <div class="text-xs font-bold ${isToday ? 'gold' : ''}">${d}</div>
+              ${entries.length ? `<div class="text-xs mt-1">${entries.length} scheduled</div>` : ''}
+              ${hasConflict ? `<div class="text-xs mt-1" style="color:#c0524f;"><i class="fas fa-triangle-exclamation"></i> conflict</div>` : ''}
+            </button>`;
+          }).join('')}
+        </div>`;
+    } catch (err) {
+      grid.innerHTML = errorState(err.message, 'renderCalendarMonth()');
+    }
+  }
+
+  async function showDayDetail(dateStr) {
+    openModal('Shift Calendar', dateStr, `<div class="p-6 text-center" style="color:var(--muted);"><i class="fas fa-circle-notch fa-spin"></i> Loading…</div>`);
+    try {
+      const [schedule, vacant] = await Promise.all([
+        api(`/api/hotel-admin/shift-schedule?start=${dateStr}&end=${dateStr}`),
+        api(`/api/hotel-admin/shift-schedule/vacant?date=${dateStr}`)
+      ]);
+      openModal('Shift Calendar', new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }), `
+        <h4 class="serif text-xl mb-2">Scheduled Staff (${schedule.length})</h4>
+        <div class="space-y-2 mb-5">
+          ${schedule.length ? schedule.map(row => `<div class="card p-3 flex items-center justify-between"><div><strong>${esc(row.full_name)}</strong> <span class="text-xs" style="color:var(--muted);">${esc(row.department_name || 'Unassigned')} · ${esc(row.shift_name)} (${esc(row.start_time || '—')}-${esc(row.end_time || '—')})</span></div><button class="btn" onclick="removeShiftSchedule(${row.id}, '${dateStr}')"><i class="fas fa-xmark"></i></button></div>`).join('') : `<p class="text-sm" style="color:var(--muted);">Nobody scheduled yet.</p>`}
+        </div>
+        ${vacant.length ? `<h4 class="serif text-xl mb-2">Vacant Shifts</h4><div class="flex flex-wrap gap-2 mb-5">${vacant.map(v => `<span class="badge status-pending">${esc(v.name)} (${esc(v.start_time || '—')}-${esc(v.end_time || '—')})</span>`).join('')}</div>` : ''}
+        <h4 class="serif text-xl mb-2">Schedule Staff</h4>
+        <form id="scheduleForm" class="space-y-3">
+          <input type="hidden" name="startDate" value="${dateStr}">
+          <select name="shiftId" required>${optionList(state.cache.shifts, null, 'name')}</select>
+          <select name="userId" required>${optionList(state.cache.users, null, 'fullName')}</select>
+          <select name="recurrence">
+            <option value="none">This date only</option>
+            <option value="daily">Repeat daily</option>
+            <option value="weekly">Repeat weekly</option>
+          </select>
+          <div id="recurrenceOptions" class="hidden space-y-2">
+            <input type="date" name="endDate" class="input" min="${dateStr}">
+            <div class="flex flex-wrap gap-2" id="daysOfWeek">
+              ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d, i) => `<label class="text-xs flex items-center gap-1"><input type="checkbox" name="dow" value="${i}"> ${d}</label>`).join('')}
+            </div>
+          </div>
+          <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-calendar-plus"></i> Schedule</button></div>
+        </form>`);
+
+      const recurrenceSelect = document.querySelector('[name="recurrence"]');
+      recurrenceSelect.addEventListener('change', () => $('recurrenceOptions').classList.toggle('hidden', recurrenceSelect.value === 'none'));
+
+      $('scheduleForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const submitBtn = form.querySelector('button[type="submit"]');
+        const fd = new FormData(form);
+        const payload = {
+          shiftId: Number(fd.get('shiftId')), userId: Number(fd.get('userId')), startDate: fd.get('startDate'),
+          recurrence: fd.get('recurrence'), endDate: fd.get('endDate') || null,
+          daysOfWeek: [...form.querySelectorAll('[name="dow"]:checked')].map(el => Number(el.value))
+        };
+        window.LuxeUI?.loading(submitBtn, true, 'Scheduling…');
+        try {
+          const result = await api('/api/hotel-admin/shift-schedule', { method: 'POST', body: JSON.stringify(payload) });
+          window.LuxeUI?.toast('success', 'Shift scheduled', `${result.created} of ${result.requested} date(s) added.`);
+          closeModal();
+          renderCalendarMonth();
+        } catch (err) {
+          window.LuxeUI?.toast('error', 'Scheduling failed', err.message);
+          window.LuxeUI?.loading(submitBtn, false);
+        }
+      });
+    } catch (err) {
+      openModal('Shift Calendar', 'Error', `<p style="color:#c0524f;">${esc(err.message)}</p>`);
+    }
+  }
+
+  async function removeShiftSchedule(id, dateStr) {
+    try {
+      await api(`/api/hotel-admin/shift-schedule/${id}`, { method: 'DELETE' });
+      window.LuxeUI?.toast('success', 'Removed from schedule', '');
+      showDayDetail(dateStr);
+      renderCalendarMonth();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Failed to remove', err.message);
+    }
+  }
+
+  async function deleteShift(id, btn) {
+    if (!confirm('Delete this shift template? Any staff assigned to it will become unassigned.')) return;
+    window.LuxeUI?.loading(btn, true);
+    try {
+      await api(`/api/hotel-admin/shifts/${id}`, { method: 'DELETE' });
+      window.LuxeUI?.toast('success', 'Shift deleted', '');
+      loadShifts();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Delete failed', err.message);
+      window.LuxeUI?.loading(btn, false);
+    }
   }
 
   function showShiftForm(id) {
@@ -837,16 +1051,26 @@
     openModal('Shift Management', id ? 'Manage Shift' : 'Create Shift', `
       <form id="shiftForm" class="space-y-4">
         <input name="name" class="input" placeholder="Morning Shift, Afternoon Shift, Night Shift" value="${esc(shift?.name || '')}" required>
-        <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));"><input name="startTime" class="input" type="time" value="${esc(shift?.start_time || '')}"><input name="endTime" class="input" type="time" value="${esc(shift?.end_time || '')}"><select name="status"><option>active</option><option>inactive</option></select></div>
+        <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));"><input name="startTime" class="input" type="time" value="${esc(shift?.start_time || '')}"><input name="endTime" class="input" type="time" value="${esc(shift?.end_time || '')}"><select name="status"><option ${shift?.status !== 'inactive' ? 'selected' : ''}>active</option><option ${shift?.status === 'inactive' ? 'selected' : ''}>inactive</option></select></div>
+        <p class="text-xs uppercase" style="color:var(--muted);">Primary staff (sets each person's default shift)</p>
         <div class="grid gap-3" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">${state.cache.users.map(user => `<label class="card p-3 flex gap-2"><input type="checkbox" name="staff" value="${user.id}" ${Number(user.shiftId) === Number(id) ? 'checked' : ''}> ${esc(user.fullName)}</label>`).join('')}</div>
         <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save</button></div>
       </form>`);
     $('shiftForm').addEventListener('submit', async event => {
       event.preventDefault();
-      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
-      payload.staffIds = [...event.currentTarget.querySelectorAll('[name="staff"]:checked')].map(input => Number(input.value));
-      await api(id ? `/api/hotel-admin/shifts/${id}` : '/api/hotel-admin/shifts', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-      closeModal(); loadShifts();
+      const form = event.currentTarget;
+      const submitBtn = form.querySelector('button[type="submit"]');
+      const payload = Object.fromEntries(new FormData(form).entries());
+      payload.staffIds = [...form.querySelectorAll('[name="staff"]:checked')].map(input => Number(input.value));
+      window.LuxeUI?.loading(submitBtn, true, id ? 'Saving…' : 'Creating…');
+      try {
+        await api(id ? `/api/hotel-admin/shifts/${id}` : '/api/hotel-admin/shifts', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+        window.LuxeUI?.toast('success', id ? 'Shift updated' : 'Shift created', '');
+        closeModal(); loadShifts();
+      } catch (err) {
+        window.LuxeUI?.toast('error', id ? 'Update failed' : 'Creation failed', err.message);
+        window.LuxeUI?.loading(submitBtn, false);
+      }
     });
   }
 
@@ -990,38 +1214,148 @@
     window.location.href = `${API_BASE_URL}/api/hotel-admin/reports/export?type=${encodeURIComponent(type)}&format=${encodeURIComponent(format)}&period=${period}&token=${encodeURIComponent(state.token || '')}`;
   }
 
-  function brandingPreviewMarkup(v) {
-    const primary = v.primary || '#c9a227';
-    const secondary = v.secondary || '#1b1b24';
-    const accent = v.accent || '#c9a227';
+  const PREVIEW_SURFACES = [
+    ['guestPage', 'fa-mobile-screen-button', 'Guest Page'],
+    ['login', 'fa-right-to-bracket', 'Login'],
+    ['dashboard', 'fa-table-columns', 'Dashboard'],
+    ['pdfCover', 'fa-file-pdf', 'PDF Cover'],
+    ['email', 'fa-envelope', 'Email'],
+    ['notification', 'fa-bell', 'Notification']
+  ];
+  const DEVICE_WIDTHS = { desktop: '100%', tablet: '380px', mobile: '300px' };
+
+  function deviceFrame(device, inner) {
+    const radius = device === 'mobile' ? '30px' : device === 'tablet' ? '18px' : '14px';
+    return `<div style="max-width:${DEVICE_WIDTHS[device]};margin:0 auto;transition:max-width .25s ease;">
+      <div style="border-radius:${radius};overflow:hidden;border:1px solid var(--line);box-shadow:0 24px 60px -24px rgba(0,0,0,0.4);">${inner}</div>
+    </div>`;
+  }
+
+  function previewGuestPage(v, theme) {
+    const bg = theme === 'dark' ? '#1b1810' : '#ffffff';
+    const fg = theme === 'dark' ? '#f4efe3' : '#1b1810';
+    const muted = theme === 'dark' ? '#b9b0a0' : '#8a8070';
     return `
-      <div class="rounded-[22px] overflow-hidden" style="border:1px solid var(--line);">
-        <div style="height:150px;background:${secondary} url('${esc(v.coverImageUrl || '')}') center/cover no-repeat;position:relative;">
-          <div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(0,0,0,0.05), rgba(0,0,0,0.55));"></div>
-          <div style="position:absolute;left:16px;bottom:14px;display:flex;align-items:center;gap:10px;">
-            <div style="height:44px;width:44px;border-radius:12px;background:#fff;display:grid;place-items:center;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,0.25);">
-              ${v.logoUrl ? `<img src="${esc(v.logoUrl)}" alt="" style="height:100%;width:100%;object-fit:cover;" onerror="this.style.display='none'">` : `<i class="fas fa-hotel" style="color:${primary};"></i>`}
-            </div>
-            <div style="color:#fff;">
-              <div style="font-family:'Playfair Display',serif;font-size:1.25rem;line-height:1.1;">${esc(v.hotelName || 'Your Hotel')}</div>
-              <div style="font-size:0.7rem;letter-spacing:0.14em;text-transform:uppercase;opacity:0.85;">${esc(v.motto || 'Hotel motto appears here')}</div>
-            </div>
+      <div style="height:150px;background:${esc(v.secondary)} url('${esc(v.coverImageUrl || '')}') center/cover no-repeat;position:relative;">
+        <div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(0,0,0,0.05), rgba(0,0,0,0.55));"></div>
+        <div style="position:absolute;left:16px;bottom:14px;display:flex;align-items:center;gap:10px;">
+          <div style="height:44px;width:44px;border-radius:12px;background:#fff;display:grid;place-items:center;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,0.25);">
+            ${v.logoUrl ? `<img src="${esc(v.logoUrl)}" alt="" style="height:100%;width:100%;object-fit:cover;" onerror="this.style.display='none'">` : `<i class="fas fa-hotel" style="color:${esc(v.primary)};"></i>`}
+          </div>
+          <div style="color:#fff;">
+            <div style="font-family:'Playfair Display',serif;font-size:1.25rem;line-height:1.1;">${esc(v.hotelName || 'Your Hotel')}</div>
+            <div style="font-size:0.7rem;letter-spacing:0.14em;text-transform:uppercase;opacity:0.85;">${esc(v.motto || 'Hotel motto appears here')}</div>
           </div>
         </div>
-        <div class="p-4" style="background:var(--surface);">
-          <p class="text-sm" style="color:var(--muted);">${esc(v.welcomeMessage || 'A warm welcome message for your guests will appear here.')}</p>
-          <div class="flex flex-wrap gap-2 mt-3">
-            <span class="badge" style="background:${primary}22;color:${primary};border-color:${primary}55;">Check-in ${esc(v.checkinTime || '—')}</span>
-            <span class="badge" style="background:${primary}22;color:${primary};border-color:${primary}55;">Check-out ${esc(v.checkoutTime || '—')}</span>
-          </div>
-          <div class="text-xs mt-3 space-y-1" style="color:var(--muted);">
-            ${v.receptionNumber ? `<div><i class="fas fa-phone gold mr-2"></i>${esc(v.receptionNumber)}</div>` : ''}
-            ${v.contactEmail ? `<div><i class="fas fa-envelope gold mr-2"></i>${esc(v.contactEmail)}</div>` : ''}
-            ${v.website ? `<div><i class="fas fa-globe gold mr-2"></i>${esc(v.website)}</div>` : ''}
-          </div>
-          <button type="button" class="btn gold-btn w-full mt-4" style="background:${primary};border-color:${primary};pointer-events:none;">Request a Service</button>
+      </div>
+      <div style="padding:16px;background:${bg};">
+        <p style="font-size:.8rem;color:${muted};">${esc(v.welcomeMessage || 'A warm welcome message for your guests will appear here.')}</p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+          <span class="badge" style="background:${esc(v.primary)}22;color:${esc(v.primary)};border-color:${esc(v.primary)}55;">Check-in ${esc(v.checkinTime || '—')}</span>
+          <span class="badge" style="background:${esc(v.primary)}22;color:${esc(v.primary)};border-color:${esc(v.primary)}55;">Check-out ${esc(v.checkoutTime || '—')}</span>
         </div>
+        <div style="font-size:.7rem;margin-top:12px;color:${muted};line-height:1.7;">
+          ${v.receptionNumber ? `<div><i class="fas fa-phone gold mr-2"></i>${esc(v.receptionNumber)}</div>` : ''}
+          ${v.contactEmail ? `<div><i class="fas fa-envelope gold mr-2"></i>${esc(v.contactEmail)}</div>` : ''}
+          ${v.website ? `<div><i class="fas fa-globe gold mr-2"></i>${esc(v.website)}</div>` : ''}
+        </div>
+        <button type="button" style="pointer-events:none;width:100%;margin-top:16px;padding:10px;border-radius:10px;border:1px solid ${esc(v.primary)};background:${esc(v.primary)};color:#fff;font-weight:600;font-size:.8rem;">Request a Service</button>
       </div>`;
+  }
+
+  function previewLogin(v, theme) {
+    const bg = theme === 'dark' ? '#15130f' : '#faf7ef';
+    const fg = theme === 'dark' ? '#f4efe3' : '#1b1810';
+    const muted = theme === 'dark' ? '#8a8070' : '#8a8070';
+    const line = theme === 'dark' ? '#33302a' : '#e7dfc8';
+    return `<div style="background:${bg};padding:44px 24px;text-align:center;">
+      <div style="height:52px;width:52px;border-radius:50%;background:${esc(v.primary)};margin:0 auto;display:grid;place-items:center;overflow:hidden;">
+        ${v.logoUrl ? `<img src="${esc(v.logoUrl)}" style="height:100%;width:100%;object-fit:cover;" onerror="this.style.display='none'">` : `<span style="color:${bg};font-family:'Playfair Display',serif;font-weight:700;font-size:1.3rem;">${esc((v.hotelName || 'H').charAt(0).toUpperCase())}</span>`}
+      </div>
+      <div style="font-family:'Playfair Display',serif;font-size:1.3rem;margin-top:14px;color:${fg};">${esc(v.hotelName || 'Your Hotel')}</div>
+      <div style="font-size:.65rem;letter-spacing:.16em;text-transform:uppercase;margin-top:2px;color:${esc(v.primary)};">Staff Portal</div>
+      <div style="margin-top:26px;text-align:left;">
+        <div style="height:38px;border-radius:10px;border:1px solid ${line};margin-bottom:10px;display:flex;align-items:center;padding:0 12px;font-size:.72rem;color:${muted};">Email address</div>
+        <div style="height:38px;border-radius:10px;border:1px solid ${line};display:flex;align-items:center;padding:0 12px;font-size:.72rem;color:${muted};">Password</div>
+      </div>
+      <button style="pointer-events:none;margin-top:18px;width:100%;padding:10px;border-radius:10px;background:${esc(v.primary)};color:#fff;border:none;font-weight:600;font-size:.8rem;">Sign In</button>
+    </div>`;
+  }
+
+  function previewDashboard(v, theme) {
+    const bg = theme === 'dark' ? '#15130f' : '#ffffff';
+    const sidebarBg = theme === 'dark' ? '#1b1810' : '#faf7ef';
+    const cardBg = theme === 'dark' ? '#211e18' : '#faf7ef';
+    const fg = theme === 'dark' ? '#f4efe3' : '#1b1810';
+    const muted = theme === 'dark' ? '#8a8070' : '#8a8070';
+    const line = theme === 'dark' ? '#33302a' : '#e7dfc8';
+    const icons = ['fa-gauge-high', 'fa-users', 'fa-building', 'fa-chart-line', 'fa-gear'];
+    return `<div style="display:flex;min-height:230px;background:${bg};">
+      <div style="width:64px;background:${sidebarBg};border-right:1px solid ${line};padding:14px 8px;flex-shrink:0;">
+        <div style="height:26px;width:26px;border-radius:8px;background:${esc(v.primary)};margin:0 auto 16px;"></div>
+        ${icons.map((ic, i) => `<div style="height:26px;width:26px;border-radius:8px;display:grid;place-items:center;margin:0 auto 10px;background:${i === 0 ? esc(v.primary) + '22' : 'transparent'};color:${i === 0 ? esc(v.primary) : muted};"><i class="fas ${ic}" style="font-size:.65rem;"></i></div>`).join('')}
+      </div>
+      <div style="flex:1;padding:16px;">
+        <div style="font-family:'Playfair Display',serif;font-size:1rem;color:${fg};">${esc(v.hotelName || 'Your Hotel')} <span style="color:${muted};font-size:.7rem;">Admin</span></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px;">
+          ${[1, 2, 3].map(() => `<div style="height:52px;border-radius:8px;background:${cardBg};border:1px solid ${line};"></div>`).join('')}
+        </div>
+        <div style="height:64px;border-radius:8px;background:${cardBg};border:1px solid ${line};margin-top:10px;"></div>
+      </div>
+    </div>`;
+  }
+
+  function previewPdfCover(v) {
+    const initial = esc((v.hotelName || 'H').charAt(0).toUpperCase());
+    return `<div style="background:${esc(v.secondary)};padding:40px 20px;text-align:center;position:relative;overflow:hidden;min-height:270px;">
+      <div style="position:absolute;top:0;right:0;width:65%;height:75%;background:${esc(v.primary)};opacity:.08;clip-path:polygon(30% 0,100% 0,100% 100%);"></div>
+      <div style="height:58px;width:58px;border-radius:50%;background:${esc(v.primary)};margin:0 auto;display:grid;place-items:center;color:${esc(v.secondary)};font-family:'Playfair Display',serif;font-size:1.5rem;font-weight:700;position:relative;">${initial}</div>
+      <div style="color:#f4efe3;font-size:.62rem;letter-spacing:.22em;text-transform:uppercase;margin-top:16px;position:relative;">${esc(v.hotelName || 'Your Hotel')}</div>
+      <div style="width:36px;height:1px;background:${esc(v.primary)};margin:14px auto;position:relative;"></div>
+      <div style="color:#fff;font-family:'Playfair Display',serif;font-weight:700;font-size:1.25rem;position:relative;">Executive Summary</div>
+      <div style="color:${esc(v.primary)};font-size:.68rem;margin-top:8px;position:relative;">Full operational overview</div>
+      <div style="color:#8a8070;font-size:.55rem;position:absolute;bottom:14px;left:0;right:0;">© Peerloom Technologies Limited</div>
+    </div>`;
+  }
+
+  function previewEmail(v) {
+    return `<div style="background:#f0eee8;padding:24px 16px;">
+      <div style="max-width:320px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.08);">
+        <div style="background:${esc(v.secondary)};padding:22px;text-align:center;">
+          <div style="height:36px;width:36px;border-radius:9px;background:${esc(v.primary)};margin:0 auto 8px;display:grid;place-items:center;color:${esc(v.secondary)};font-weight:700;font-family:'Playfair Display',serif;">${esc((v.hotelName || 'H').charAt(0).toUpperCase())}</div>
+          <div style="color:#fff;font-family:'Playfair Display',serif;font-size:.95rem;">${esc(v.hotelName || 'Your Hotel')}</div>
+        </div>
+        <div style="padding:18px;font-size:.75rem;color:#3a3630;line-height:1.6;">
+          <p>Dear Guest,</p>
+          <p style="margin-top:8px;">${esc(v.welcomeMessage || 'Thank you for choosing us for your stay.')}</p>
+          <div style="margin-top:14px;padding:9px 14px;background:${esc(v.primary)};color:#fff;border-radius:8px;text-align:center;font-size:.72rem;">View Your Reservation</div>
+        </div>
+        <div style="padding:10px 18px;background:#faf7ef;font-size:.58rem;color:#8a8070;text-align:center;">© Peerloom Technologies Limited · Powered by QUORVA</div>
+      </div>
+    </div>`;
+  }
+
+  function previewNotification(v, theme) {
+    return `<div style="padding:34px 20px;background:${theme === 'dark' ? '#0f0e0c' : '#f4f0e6'};min-height:150px;">
+      <div style="max-width:280px;margin:0 auto;background:linear-gradient(150deg, rgba(24,22,18,.96), rgba(15,14,12,.98));border:1px solid ${esc(v.primary)}55;border-radius:16px;padding:14px 16px;display:flex;gap:10px;position:relative;overflow:hidden;">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:${esc(v.primary)};"></div>
+        <div style="height:24px;width:24px;border-radius:50%;background:${esc(v.primary)}22;color:${esc(v.primary)};display:grid;place-items:center;flex-shrink:0;"><i class="fas fa-bell" style="font-size:.65rem;"></i></div>
+        <div><div style="color:#f4efe3;font-size:.78rem;font-weight:600;">New request assigned</div><div style="color:#b9b0a0;font-size:.68rem;margin-top:2px;">Room 402 · Housekeeping</div></div>
+      </div>
+    </div>`;
+  }
+
+  function renderStudioSurface(surface, device, theme, v) {
+    const renderers = {
+      guestPage: () => previewGuestPage(v, theme),
+      login: () => previewLogin(v, theme),
+      dashboard: () => previewDashboard(v, theme),
+      pdfCover: () => previewPdfCover(v),
+      email: () => previewEmail(v),
+      notification: () => previewNotification(v, theme)
+    };
+    const inner = (renderers[surface] || renderers.guestPage)();
+    return deviceFrame(device, inner);
   }
 
   async function loadBranding() {
@@ -1031,8 +1365,10 @@
       const b = await api('/api/hotel-admin/branding');
       const social = b.socialLinks || {};
       const colors = b.brandColors || {};
+      state.brandingOriginal = { ...b, socialLinks: { ...social }, brandColors: { ...colors } };
+
       section.innerHTML = `
-        <div class="grid gap-5" style="grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr);align-items:start;">
+        <div class="grid gap-5" style="grid-template-columns:minmax(0,1.5fr) minmax(300px,1fr);align-items:start;">
           <form id="brandingForm" class="space-y-5">
             <div class="card p-5">
               <h3 class="serif text-2xl mb-1">Identity</h3>
@@ -1112,32 +1448,85 @@
 
             <div class="flex justify-end gap-2">
               <span id="brandingSavedNote" class="text-sm self-center hidden" style="color:var(--muted);"><i class="fas fa-circle-check gold"></i> Saved</span>
+              <button type="button" class="btn" id="revertBrandingBtn"><i class="fas fa-rotate-left"></i> Revert Changes</button>
               <button class="btn gold-btn" type="submit"><i class="fas fa-save"></i> Save Branding</button>
             </div>
           </form>
 
           <div style="position:sticky;top:1.5rem;">
-            <p class="text-xs uppercase tracking-[0.2em] gold font-bold mb-2">Guest Portal Preview</p>
-            <div id="brandingPreview">${brandingPreviewMarkup({
-              hotelName: b.hotelName, motto: b.motto, welcomeMessage: b.welcomeMessage,
-              logoUrl: b.logoUrl, coverImageUrl: b.coverImageUrl, checkinTime: b.checkinTime,
-              checkoutTime: b.checkoutTime, receptionNumber: b.receptionNumber, contactEmail: b.contactEmail,
-              website: b.website, primary: colors.primary, secondary: colors.secondary, accent: colors.accent
-            })}</div>
+            <div class="card p-4 mb-4">
+              <p class="text-xs uppercase tracking-[0.2em] gold font-bold mb-3">Brand Preview Studio</p>
+              <div class="flex flex-wrap gap-1.5 mb-3" id="previewSurfaceTabs">
+                ${PREVIEW_SURFACES.map(([key, icon, label]) => `<button type="button" class="btn ${state.previewSurface === key ? 'gold-btn' : ''}" data-surface="${key}" style="font-size:.7rem;padding:6px 10px;"><i class="fas ${icon}"></i> ${label}</button>`).join('')}
+              </div>
+              <div class="flex items-center justify-between">
+                <div class="flex gap-1" id="previewDeviceToggle">
+                  ${[['desktop', 'fa-desktop'], ['tablet', 'fa-tablet-screen-button'], ['mobile', 'fa-mobile-screen-button']].map(([key, icon]) => `<button type="button" class="btn ${state.previewDevice === key ? 'gold-btn' : ''}" data-device="${key}" title="${key}"><i class="fas ${icon}"></i></button>`).join('')}
+                </div>
+                <div class="flex gap-1" id="previewThemeToggle">
+                  ${[['light', 'fa-sun'], ['dark', 'fa-moon']].map(([key, icon]) => `<button type="button" class="btn ${state.previewTheme === key ? 'gold-btn' : ''}" data-theme="${key}" title="${key}"><i class="fas ${icon}"></i></button>`).join('')}
+                </div>
+              </div>
+            </div>
+            <div id="brandingPreview"></div>
           </div>
         </div>`;
 
       const form = $('brandingForm');
-      const refreshPreview = () => {
+      const currentPreviewValues = () => {
         const fd = new FormData(form);
-        $('brandingPreview').innerHTML = brandingPreviewMarkup({
+        return {
           hotelName: fd.get('hotelName'), motto: fd.get('motto'), welcomeMessage: fd.get('welcomeMessage'),
           logoUrl: fd.get('logoUrl'), coverImageUrl: fd.get('coverImageUrl'), checkinTime: fd.get('checkinTime'),
           checkoutTime: fd.get('checkoutTime'), receptionNumber: fd.get('receptionNumber'), contactEmail: fd.get('contactEmail'),
-          website: fd.get('website'), primary: fd.get('primary'), secondary: fd.get('secondary'), accent: fd.get('accent')
-        });
+          website: fd.get('website'),
+          primary: fd.get('primary') || '#c9a227', secondary: fd.get('secondary') || '#1b1b24', accent: fd.get('accent') || '#c9a227'
+        };
       };
+      const refreshPreview = () => {
+        $('brandingPreview').innerHTML = renderStudioSurface(state.previewSurface, state.previewDevice, state.previewTheme, currentPreviewValues());
+      };
+      refreshPreview();
       form.addEventListener('input', debounce(refreshPreview, 150));
+
+      $('previewSurfaceTabs').addEventListener('click', event => {
+        const btn = event.target.closest('[data-surface]');
+        if (!btn) return;
+        state.previewSurface = btn.dataset.surface;
+        $$('#previewSurfaceTabs [data-surface]').forEach(b => b.classList.toggle('gold-btn', b === btn));
+        refreshPreview();
+      });
+      $('previewDeviceToggle').addEventListener('click', event => {
+        const btn = event.target.closest('[data-device]');
+        if (!btn) return;
+        state.previewDevice = btn.dataset.device;
+        $$('#previewDeviceToggle [data-device]').forEach(b => b.classList.toggle('gold-btn', b === btn));
+        refreshPreview();
+      });
+      $('previewThemeToggle').addEventListener('click', event => {
+        const btn = event.target.closest('[data-theme]');
+        if (!btn) return;
+        state.previewTheme = btn.dataset.theme;
+        $$('#previewThemeToggle [data-theme]').forEach(b => b.classList.toggle('gold-btn', b === btn));
+        refreshPreview();
+      });
+
+      $('revertBrandingBtn').addEventListener('click', () => {
+        const orig = state.brandingOriginal;
+        const origSocial = orig.socialLinks || {};
+        const origColors = orig.brandColors || {};
+        const setVal = (name, value) => { const el = form.elements[name]; if (el) el.value = value || ''; };
+        setVal('hotelName', orig.hotelName); setVal('motto', orig.motto); setVal('welcomeMessage', orig.welcomeMessage);
+        setVal('logoUrl', orig.logoUrl); setVal('coverImageUrl', orig.coverImageUrl); setVal('faviconUrl', orig.faviconUrl);
+        setVal('address', orig.address); setVal('website', orig.website); setVal('contactEmail', orig.contactEmail);
+        setVal('contactPhone', orig.contactPhone); setVal('receptionNumber', orig.receptionNumber); setVal('emergencyContact', orig.emergencyContact);
+        setVal('checkinTime', orig.checkinTime); setVal('checkoutTime', orig.checkoutTime); setVal('themeMode', orig.themeMode || 'auto');
+        setVal('social_facebook', origSocial.facebook); setVal('social_instagram', origSocial.instagram);
+        setVal('social_twitter', origSocial.twitter); setVal('social_linkedin', origSocial.linkedin);
+        setVal('primary', origColors.primary || '#c9a227'); setVal('secondary', origColors.secondary || '#1b1b24'); setVal('accent', origColors.accent || '#c9a227');
+        refreshPreview();
+        window.LuxeUI?.toast('info', 'Changes reverted', 'Unsaved edits have been discarded.');
+      });
 
       form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -1155,16 +1544,17 @@
           brandColors: { primary: fd.get('primary'), secondary: fd.get('secondary'), accent: fd.get('accent') }
         };
         const btn = form.querySelector('button[type="submit"]');
-        btn.disabled = true;
+        window.LuxeUI?.loading(btn, true, 'Saving…');
         try {
           await api('/api/hotel-admin/branding', { method: 'PUT', body: JSON.stringify(payload) });
           $('brandingSavedNote').classList.remove('hidden');
           window.LuxeUI?.toast('success', 'Branding saved', 'Your changes are now live across the system.');
+          state.brandingOriginal = { ...payload, hotelName: payload.hotelName || state.brandingOriginal.hotelName };
           setTimeout(() => $('brandingSavedNote')?.classList.add('hidden'), 2500);
         } catch (err) {
           window.LuxeUI?.toast('error', 'Save failed', err.message);
         } finally {
-          btn.disabled = false;
+          window.LuxeUI?.loading(btn, false);
         }
       });
     } catch (err) { section.innerHTML = errorState(err.message, 'loadBranding()'); }

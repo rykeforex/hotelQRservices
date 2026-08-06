@@ -2245,32 +2245,224 @@ app.get('/api/departments/public', async (req, res) => {
   }
 });
 
+// ============================================================
+// Workforce Management — Executive Dashboard, Employee Profiles,
+// Performance Engine
+// ============================================================
+function computePerformanceScore({ completionRate, avgResponseMinutes }) {
+  const completionComponent = Math.max(0, Math.min(100, completionRate));
+  const responseComponent = Math.max(0, Math.min(100, 100 - avgResponseMinutes));
+  return Math.round((completionComponent + responseComponent) / 2);
+}
+
+app.get('/api/hotel-admin/workforce/dashboard', requireHotelAdmin, async (req, res) => {
+  try {
+    const hotelId = req.hotelAdmin.hotel_id;
+    const [hotelRes, staffRes, deptRes, shiftRes, reqRes, onShiftRes] = await Promise.all([
+      pool.query(`SELECT timezone FROM hotels WHERE id = $1`, [hotelId]),
+      pool.query(
+        `SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE is_online = TRUE)::int AS online,
+                COUNT(*) FILTER (WHERE employment_status = 'leave')::int AS on_leave
+         FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT COUNT(DISTINCT d.id)::int AS covered
+         FROM hotel_admin_departments d JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
+         WHERE d.hotel_id = $1 AND d.status = 'active'`,
+        [hotelId]
+      ),
+      pool.query(`SELECT COUNT(*)::int AS active FROM hotel_admin_shifts WHERE hotel_id = $1 AND status = 'active'`, [hotelId]),
+      pool.query(
+        `SELECT COUNT(*) FILTER (WHERE status IN ('pending','in-progress'))::int AS pending,
+                COUNT(*) FILTER (WHERE status = 'completed' AND updated_at::date = CURRENT_DATE)::int AS completed_today,
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')::int AS total_30d,
+                COUNT(*) FILTER (WHERE status = 'completed' AND created_at >= NOW() - INTERVAL '30 days')::int AS completed_30d,
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed' AND created_at >= NOW() - INTERVAL '30 days')), 0)::int AS avg_minutes
+         FROM requests WHERE hotel_id = $1`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT COUNT(DISTINCT u.id)::int AS on_shift
+         FROM hotel_admin_users u
+         JOIN hotel_admin_shifts s ON s.id = u.shift_id AND s.status = 'active'
+         CROSS JOIN LATERAL (SELECT COALESCE((SELECT timezone FROM hotels WHERE id = $1), 'UTC') AS tz) h
+         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL AND s.start_time IS NOT NULL AND s.end_time IS NOT NULL
+         AND (
+           (s.start_time <= s.end_time AND (NOW() AT TIME ZONE h.tz)::time BETWEEN s.start_time AND s.end_time)
+           OR (s.start_time > s.end_time AND ((NOW() AT TIME ZONE h.tz)::time >= s.start_time OR (NOW() AT TIME ZONE h.tz)::time <= s.end_time))
+         )`,
+        [hotelId]
+      )
+    ]);
+
+    const staff = staffRes.rows[0] || {};
+    const req30 = reqRes.rows[0] || {};
+    const completionRate = req30.total_30d > 0 ? Math.round((req30.completed_30d / req30.total_30d) * 100) : 0;
+    const hotelPerformanceScore = computePerformanceScore({ completionRate, avgResponseMinutes: req30.avg_minutes });
+
+    res.json({
+      totalEmployees: staff.total || 0,
+      employeesOnline: staff.online || 0,
+      employeesOffline: (staff.total || 0) - (staff.online || 0),
+      employeesOnLeave: staff.on_leave || 0,
+      employeesOnShift: onShiftRes.rows[0]?.on_shift || 0,
+      departmentsCovered: deptRes.rows[0]?.covered || 0,
+      activeShifts: shiftRes.rows[0]?.active || 0,
+      pendingRequests: req30.pending || 0,
+      completedRequestsToday: req30.completed_today || 0,
+      avgResponseMinutes: req30.avg_minutes || 0,
+      completionRate30d: completionRate,
+      overallHotelPerformanceScore: hotelPerformanceScore,
+      note: 'Per-employee request completion cannot be individually attributed because department dashboards authenticate with a shared department password rather than individual staff logins. Metrics above reflect real department- and hotel-level activity.'
+    });
+  } catch (err) {
+    console.error('Workforce dashboard failed:', err);
+    res.status(500).json({ error: 'Failed to load workforce dashboard' });
+  }
+});
+
+app.get('/api/hotel-admin/employees/:id/profile', requireHotelAdmin, async (req, res) => {
+  try {
+    const hotelId = req.hotelAdmin.hotel_id;
+    const userRes = await pool.query(
+      `SELECT u.*, d.name AS department_name, d.service_key, r.name AS role_name, s.name AS shift_name, s.start_time, s.end_time
+       FROM hotel_admin_users u
+       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+       LEFT JOIN hotel_admin_roles r ON r.id = u.role_id
+       LEFT JOIN hotel_admin_shifts s ON s.id = u.shift_id
+       WHERE u.id = $1 AND u.hotel_id = $2 AND u.deleted_at IS NULL`,
+      [req.params.id, hotelId]
+    );
+    if (!userRes.rows.length) return res.status(404).json({ error: 'Employee not found' });
+    const user = userRes.rows[0];
+
+    const [deptStatsRes, timelineRes, monthlyRes, tenureRes] = await Promise.all([
+      user.service_key
+        ? pool.query(
+            `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+                    COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_minutes
+             FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
+             AND LOWER(regexp_replace(service, '[^a-zA-Z0-9]+', '', 'g')) = $2`,
+            [hotelId, user.service_key]
+          )
+        : Promise.resolve({ rows: [{ total: 0, completed: 0, avg_minutes: 0 }] }),
+      pool.query(
+        `SELECT created_at, action, target_type, ip_address, device
+         FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND (actor_user_id = $2 OR (target_type = 'user' AND target_id = $2::text))
+         ORDER BY created_at DESC LIMIT 20`,
+        [hotelId, req.params.id]
+      ),
+      pool.query(
+        `SELECT date_trunc('month', created_at)::date AS month, COUNT(*)::int AS actions
+         FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND actor_user_id = $2 AND created_at >= NOW() - INTERVAL '6 months'
+         GROUP BY month ORDER BY month`,
+        [hotelId, req.params.id]
+      ),
+      pool.query(`SELECT EXTRACT(DAY FROM NOW() - created_at)::int AS tenure_days FROM hotel_admin_users WHERE id = $1`, [req.params.id])
+    ]);
+
+    const deptStats = deptStatsRes.rows[0] || { total: 0, completed: 0, avg_minutes: 0 };
+    const completionRate = deptStats.total > 0 ? Math.round((deptStats.completed / deptStats.total) * 100) : 0;
+
+    res.json({
+      id: user.id,
+      fullName: user.full_name,
+      employeeId: user.employee_id,
+      department: user.department_name,
+      role: user.role_name,
+      email: user.email,
+      phone: user.phone,
+      shift: user.shift_name,
+      shiftHours: user.start_time && user.end_time ? `${user.start_time} – ${user.end_time}` : null,
+      employmentStatus: user.employment_status,
+      accountStatus: user.account_status,
+      isOnline: user.is_online,
+      lastLogin: user.last_login_at,
+      lastSeen: user.last_seen_at,
+      createdDate: user.created_at,
+      tenureDays: tenureRes.rows[0]?.tenure_days || 0,
+      profilePhotoUrl: user.profile_photo_url,
+      departmentContext: {
+        requests30d: deptStats.total,
+        completed30d: deptStats.completed,
+        completionRate,
+        avgResponseMinutes: deptStats.avg_minutes
+      },
+      adminPortalActivity: {
+        totalActions: timelineRes.rows.length,
+        timeline: timelineRes.rows,
+        monthlyActivity: monthlyRes.rows
+      }
+    });
+  } catch (err) {
+    console.error('Employee profile failed:', err);
+    res.status(500).json({ error: 'Failed to load employee profile' });
+  }
+});
+
 app.get('/api/hotel-admin/performance', requireHotelAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.full_name, d.name AS department_name, u.is_online,
-              COUNT(a.id) FILTER (WHERE a.action IN ('request_completed','complete_requests'))::int AS completed_requests,
-              0::int AS average_completion_time,
-              COUNT(a.id) FILTER (WHERE a.action ILIKE '%escalat%')::int AS escalated_requests,
-              NULL::numeric AS customer_satisfaction_score,
-              0::int AS late_requests,
-              CASE WHEN u.is_online THEN 'Present' ELSE 'Offline' END AS attendance_status,
-              CASE
-                WHEN COUNT(a.id) FILTER (WHERE a.action IN ('request_completed','complete_requests')) >= 20 THEN 'Excellent'
-                WHEN COUNT(a.id) FILTER (WHERE a.action IN ('request_completed','complete_requests')) >= 10 THEN 'Strong'
-                WHEN u.is_online THEN 'Active'
-                ELSE 'Unrated'
-              END AS performance_rating
+      `SELECT u.id, u.full_name, u.employment_status, u.account_status, u.is_online, u.last_login_at, u.created_at,
+              d.name AS department_name, d.service_key, s.name AS shift_name,
+              COUNT(a.id)::int AS admin_actions_30d,
+              EXTRACT(DAY FROM NOW() - u.created_at)::int AS tenure_days
        FROM hotel_admin_users u
        LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+       LEFT JOIN hotel_admin_shifts s ON s.id = u.shift_id
        LEFT JOIN hotel_admin_audit_logs a ON a.actor_user_id = u.id AND a.created_at >= NOW() - INTERVAL '30 days'
        WHERE u.hotel_id = $1 AND u.deleted_at IS NULL
-       GROUP BY u.id, d.name
-       ORDER BY completed_requests DESC, u.full_name`,
+       GROUP BY u.id, d.name, d.service_key, s.name
+       ORDER BY u.full_name`,
       [req.hotelAdmin.hotel_id]
     );
-    res.json(result.rows);
+
+    // Real department-level request stats, computed once per distinct
+    // service_key and attached to each employee's department as context —
+    // this is genuine data, unlike a fabricated per-person request count.
+    const serviceKeys = [...new Set(result.rows.map(r => r.service_key).filter(Boolean))];
+    let deptStatsByKey = {};
+    if (serviceKeys.length) {
+      const deptStats = await pool.query(
+        `SELECT LOWER(regexp_replace(service, '[^a-zA-Z0-9]+', '', 'g')) AS service_key,
+                COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_minutes
+         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
+         GROUP BY service_key`,
+        [req.hotelAdmin.hotel_id]
+      );
+      deptStatsByKey = deptStats.rows.reduce((acc, row) => { acc[row.service_key] = row; return acc; }, {});
+    }
+
+    const rows = result.rows.map(row => {
+      const dept = deptStatsByKey[row.service_key] || { total: 0, completed: 0, avg_minutes: 0 };
+      const completionRate = dept.total > 0 ? Math.round((dept.completed / dept.total) * 100) : 0;
+      return {
+        id: row.id,
+        fullName: row.full_name,
+        departmentName: row.department_name,
+        shiftName: row.shift_name,
+        employmentStatus: row.employment_status,
+        accountStatus: row.account_status,
+        isOnline: row.is_online,
+        lastLogin: row.last_login_at,
+        tenureDays: row.tenure_days,
+        adminActions30d: row.admin_actions_30d,
+        departmentRequests30d: dept.total,
+        departmentCompletionRate: completionRate,
+        departmentAvgResponseMinutes: dept.avg_minutes,
+        performanceScore: computePerformanceScore({ completionRate, avgResponseMinutes: dept.avg_minutes })
+      };
+    }).sort((a, b) => b.performanceScore - a.performanceScore);
+
+    res.json({
+      employees: rows,
+      note: 'Completion rate and response time reflect the employee\'s department as a whole — individual guest-request attribution is not possible under the current department-password login model.'
+    });
   } catch (err) {
+    console.error('Performance query failed:', err);
     res.status(500).json({ error: 'Failed to load performance' });
   }
 });
@@ -2328,6 +2520,127 @@ app.put('/api/hotel-admin/shifts/:id', requireHotelAdmin, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update shift' });
+  }
+});
+
+app.delete('/api/hotel-admin/shifts/:id', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`DELETE FROM hotel_admin_shifts WHERE id = $1 AND hotel_id = $2 RETURNING name`, [req.params.id, req.hotelAdmin.hotel_id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Shift not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'shift_deleted', 'shift', req.params.id, req, { name: result.rows[0].name });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete shift' });
+  }
+});
+
+// ── Shift Calendar ──────────────────────────────────────────
+app.get('/api/hotel-admin/shift-schedule', requireHotelAdmin, async (req, res) => {
+  const start = req.query.start || new Date().toISOString().slice(0, 10);
+  const end = req.query.end || start;
+  try {
+    const result = await pool.query(
+      `SELECT sc.id, sc.shift_date, sc.status, sc.shift_id, sc.user_id,
+              s.name AS shift_name, s.start_time, s.end_time,
+              u.full_name, d.name AS department_name
+       FROM hotel_admin_shift_schedule sc
+       JOIN hotel_admin_shifts s ON s.id = sc.shift_id
+       JOIN hotel_admin_users u ON u.id = sc.user_id AND u.deleted_at IS NULL
+       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+       WHERE sc.hotel_id = $1 AND sc.shift_date BETWEEN $2 AND $3
+       ORDER BY sc.shift_date, s.start_time NULLS LAST`,
+      [req.hotelAdmin.hotel_id, start, end]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Load shift schedule failed:', err);
+    res.status(500).json({ error: 'Failed to load shift schedule' });
+  }
+});
+
+app.post('/api/hotel-admin/shift-schedule', requireHotelAdmin, async (req, res) => {
+  const { shiftId, userId, startDate, recurrence, endDate, daysOfWeek } = req.body;
+  if (!shiftId || !userId || !startDate) return res.status(400).json({ error: 'shiftId, userId and startDate are required' });
+  try {
+    const dates = [];
+    const start = new Date(startDate + 'T00:00:00Z');
+    if (!recurrence || recurrence === 'none') {
+      dates.push(startDate);
+    } else {
+      const end = endDate ? new Date(endDate + 'T00:00:00Z') : new Date(start.getTime() + 27 * 86400000);
+      const allowedDays = Array.isArray(daysOfWeek) && daysOfWeek.length ? daysOfWeek.map(Number) : null;
+      for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+        if (recurrence === 'weekly' && allowedDays && !allowedDays.includes(d.getUTCDay())) continue;
+        dates.push(d.toISOString().slice(0, 10));
+        if (dates.length >= 180) break; // sane cap
+      }
+    }
+
+    let created = 0;
+    for (const date of dates) {
+      const result = await pool.query(
+        `INSERT INTO hotel_admin_shift_schedule (hotel_id, shift_id, user_id, shift_date)
+         VALUES ($1,$2,$3,$4) ON CONFLICT (user_id, shift_date, shift_id) DO NOTHING RETURNING id`,
+        [req.hotelAdmin.hotel_id, shiftId, userId, date]
+      );
+      if (result.rows.length) created++;
+    }
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'shift_scheduled', 'shift_schedule', shiftId, req, { userId, dates: dates.length, created });
+    res.status(201).json({ ok: true, requested: dates.length, created });
+  } catch (err) {
+    console.error('Create shift schedule failed:', err);
+    res.status(500).json({ error: 'Failed to schedule shift' });
+  }
+});
+
+app.delete('/api/hotel-admin/shift-schedule/:id', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`DELETE FROM hotel_admin_shift_schedule WHERE id = $1 AND hotel_id = $2 RETURNING id`, [req.params.id, req.hotelAdmin.hotel_id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Scheduled shift not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'shift_schedule_removed', 'shift_schedule', req.params.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to remove scheduled shift' });
+  }
+});
+
+// A person scheduled to more than one shift template on the same date —
+// a real, simple, robust conflict signal without fragile hour-overlap math.
+app.get('/api/hotel-admin/shift-schedule/conflicts', requireHotelAdmin, async (req, res) => {
+  const start = req.query.start || new Date().toISOString().slice(0, 10);
+  const end = req.query.end || start;
+  try {
+    const result = await pool.query(
+      `SELECT sc.shift_date, sc.user_id, u.full_name, array_agg(DISTINCT s.name) AS shift_names, COUNT(DISTINCT sc.shift_id)::int AS shift_count
+       FROM hotel_admin_shift_schedule sc
+       JOIN hotel_admin_shifts s ON s.id = sc.shift_id
+       JOIN hotel_admin_users u ON u.id = sc.user_id AND u.deleted_at IS NULL
+       WHERE sc.hotel_id = $1 AND sc.shift_date BETWEEN $2 AND $3
+       GROUP BY sc.shift_date, sc.user_id, u.full_name
+       HAVING COUNT(DISTINCT sc.shift_id) > 1
+       ORDER BY sc.shift_date`,
+      [req.hotelAdmin.hotel_id, start, end]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to check conflicts' });
+  }
+});
+
+app.get('/api/hotel-admin/shift-schedule/vacant', requireHotelAdmin, async (req, res) => {
+  const date = req.query.date || new Date().toISOString().slice(0, 10);
+  try {
+    const result = await pool.query(
+      `SELECT s.id, s.name, s.start_time, s.end_time
+       FROM hotel_admin_shifts s
+       WHERE s.hotel_id = $1 AND s.status = 'active'
+       AND NOT EXISTS (SELECT 1 FROM hotel_admin_shift_schedule sc WHERE sc.shift_id = s.id AND sc.shift_date = $2)
+       ORDER BY s.start_time NULLS LAST`,
+      [req.hotelAdmin.hotel_id, date]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load vacant shifts' });
   }
 });
 
