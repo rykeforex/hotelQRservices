@@ -2861,6 +2861,209 @@ app.get('/api/hotel-admin/leave/balance/:userId', requireHotelAdmin, async (req,
   }
 });
 
+// ============================================================
+// Request Assignment
+// Individual accountability layered on top of the existing
+// department-password request queue — assignment is tracked
+// here in the admin portal; the department dashboard itself is
+// untouched.
+// ============================================================
+app.get('/api/hotel-admin/requests', requireHotelAdmin, async (req, res) => {
+  const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 100);
+  const filters = ['r.hotel_id = $1'];
+  const params = [req.hotelAdmin.hotel_id];
+  if (req.query.status) { params.push(req.query.status); filters.push(`r.status = $${params.length}`); }
+  if (req.query.priority) { params.push(req.query.priority); filters.push(`r.priority = $${params.length}`); }
+  if (req.query.service) { params.push(req.query.service); filters.push(`r.service = $${params.length}`); }
+  if (req.query.assigned === 'unassigned') filters.push('r.assigned_user_id IS NULL');
+  if (req.query.assigned === 'assigned') filters.push('r.assigned_user_id IS NOT NULL');
+  try {
+    params.push(limit, (page - 1) * limit);
+    const result = await pool.query(
+      `SELECT r.*, u.full_name AS assigned_name, COUNT(*) OVER()::int AS total_count
+       FROM requests r
+       LEFT JOIN hotel_admin_users u ON u.id = r.assigned_user_id
+       WHERE ${filters.join(' AND ')}
+       ORDER BY CASE r.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, r.created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    res.json({ requests: result.rows, total: result.rows[0]?.total_count || 0, page, limit });
+  } catch (err) {
+    console.error('Load requests failed:', err);
+    res.status(500).json({ error: 'Failed to load requests' });
+  }
+});
+
+app.post('/api/hotel-admin/requests/:id/assign', requireHotelAdmin, async (req, res) => {
+  const { userId } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE requests SET assigned_user_id = $1, assigned_by = $2, assigned_at = NOW(), updated_at = NOW()
+       WHERE id = $3 AND hotel_id = $4 RETURNING *`,
+      [userId || null, req.hotelAdmin.id, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, userId ? 'request_assigned' : 'request_unassigned', 'request', req.params.id, req, { userId });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to assign request' });
+  }
+});
+
+app.post('/api/hotel-admin/requests/bulk-assign', requireHotelAdmin, async (req, res) => {
+  const { requestIds, userId } = req.body;
+  if (!Array.isArray(requestIds) || !requestIds.length || !userId) return res.status(400).json({ error: 'requestIds and userId are required' });
+  try {
+    const result = await pool.query(
+      `UPDATE requests SET assigned_user_id = $1, assigned_by = $2, assigned_at = NOW(), updated_at = NOW()
+       WHERE id = ANY($3::int[]) AND hotel_id = $4 RETURNING id`,
+      [userId, req.hotelAdmin.id, requestIds, req.hotelAdmin.hotel_id]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_bulk_assigned', 'request', null, req, { requestIds, userId, count: result.rows.length });
+    res.json({ ok: true, updated: result.rows.length });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to bulk assign requests' });
+  }
+});
+
+app.post('/api/hotel-admin/requests/:id/escalate', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE requests SET escalated = TRUE, escalated_at = NOW(), priority = 'urgent', updated_at = NOW()
+       WHERE id = $1 AND hotel_id = $2 RETURNING *`,
+      [req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_escalated', 'request', req.params.id, req);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to escalate request' });
+  }
+});
+
+app.put('/api/hotel-admin/requests/:id/priority', requireHotelAdmin, async (req, res) => {
+  const priority = ['low', 'normal', 'high', 'urgent'].includes(req.body.priority) ? req.body.priority : null;
+  if (!priority) return res.status(400).json({ error: 'Invalid priority' });
+  try {
+    const result = await pool.query(
+      `UPDATE requests SET priority = $1, updated_at = NOW() WHERE id = $2 AND hotel_id = $3 RETURNING *`,
+      [priority, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_priority_changed', 'request', req.params.id, req, { priority });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update priority' });
+  }
+});
+
+app.post('/api/hotel-admin/requests/:id/transfer', requireHotelAdmin, async (req, res) => {
+  const { service } = req.body;
+  if (!service) return res.status(400).json({ error: 'service is required' });
+  try {
+    const result = await pool.query(
+      `UPDATE requests SET service = $1, assigned_user_id = NULL, assigned_by = NULL, assigned_at = NULL, updated_at = NOW()
+       WHERE id = $2 AND hotel_id = $3 RETURNING *`,
+      [service, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_transferred', 'request', req.params.id, req, { service });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to transfer request' });
+  }
+});
+
+// ============================================================
+// Workload Balancing
+// Every figure here is a real, deterministic computation over
+// live data — no "AI suggestion" black box. The suggested
+// reassignment pairing is a documented rule: the oldest
+// unassigned request in a department is paired with that
+// department's least-loaded active staff member.
+// ============================================================
+app.get('/api/hotel-admin/workload', requireHotelAdmin, async (req, res) => {
+  try {
+    const hotelId = req.hotelAdmin.hotel_id;
+    const [staffLoadRes, deptLoadRes, heatmapRes, unassignedRes] = await Promise.all([
+      pool.query(
+        `SELECT u.id, u.full_name, d.name AS department_name, d.service_key,
+                COUNT(r.id)::int AS current_load
+         FROM hotel_admin_users u
+         LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+         LEFT JOIN requests r ON r.assigned_user_id = u.id AND r.status IN ('pending','in-progress')
+         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL AND u.employment_status = 'active'
+         GROUP BY u.id, d.name, d.service_key
+         ORDER BY current_load DESC`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT d.id, d.name, COUNT(DISTINCT u.id)::int AS staff_count,
+                COALESCE(rc.pending, 0)::int AS pending
+         FROM hotel_admin_departments d
+         LEFT JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
+         LEFT JOIN LATERAL (
+           SELECT COUNT(*) AS pending FROM requests req
+           WHERE req.hotel_id = d.hotel_id AND req.status IN ('pending','in-progress')
+           AND LOWER(regexp_replace(req.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
+         ) rc ON TRUE
+         WHERE d.hotel_id = $1 AND d.status = 'active'
+         GROUP BY d.id, rc.pending
+         ORDER BY pending DESC`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT service, EXTRACT(HOUR FROM created_at)::int AS hour, COUNT(*)::int AS volume
+         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
+         GROUP BY service, hour ORDER BY service, hour`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT r.id, r.room_number, r.service, r.created_at
+         FROM requests r WHERE r.hotel_id = $1 AND r.assigned_user_id IS NULL AND r.status IN ('pending','in-progress')
+         ORDER BY r.created_at ASC`,
+        [hotelId]
+      )
+    ]);
+
+    const staffLoad = staffLoadRes.rows;
+    const busiest = [...staffLoad].sort((a, b) => b.current_load - a.current_load).slice(0, 5);
+    const leastBusy = [...staffLoad].filter(s => s.department_name).sort((a, b) => a.current_load - b.current_load).slice(0, 5);
+
+    // Suggested reassignment: oldest unassigned request per department,
+    // paired with that department's least-loaded staff member.
+    const suggestions = [];
+    const seenDept = new Set();
+    for (const reqRow of unassignedRes.rows) {
+      const key = reqRow.service.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      if (seenDept.has(key)) continue;
+      const candidates = staffLoad.filter(s => s.service_key === key).sort((a, b) => a.current_load - b.current_load);
+      if (!candidates.length) continue;
+      seenDept.add(key);
+      suggestions.push({
+        requestId: reqRow.id, roomNumber: reqRow.room_number, service: reqRow.service, waitingSince: reqRow.created_at,
+        suggestedUserId: candidates[0].id, suggestedUserName: candidates[0].full_name, suggestedUserCurrentLoad: candidates[0].current_load
+      });
+    }
+
+    res.json({
+      staffLoad,
+      busiest,
+      leastBusy,
+      departmentWorkload: deptLoadRes.rows,
+      heatmap: heatmapRes.rows,
+      unassignedCount: unassignedRes.rows.length,
+      suggestions,
+      methodologyNote: 'Suggestions pair the oldest unassigned request in each department with that department\'s least-loaded active staff member — a deterministic rule, not a predictive model.'
+    });
+  } catch (err) {
+    console.error('Workload query failed:', err);
+    res.status(500).json({ error: 'Failed to load workload data' });
+  }
+});
+
 app.get('/api/hotel-admin/audit-logs', requireHotelAdmin, async (req, res) => {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 100);
