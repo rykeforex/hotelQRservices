@@ -2644,6 +2644,223 @@ app.get('/api/hotel-admin/shift-schedule/vacant', requireHotelAdmin, async (req,
   }
 });
 
+// ============================================================
+// Attendance Management
+// Admin-operated: the Hotel Admin or a manager records clock
+// in/out and attendance status on behalf of staff, since staff
+// don't have a separate self-service login. Late detection is
+// computed against the employee's assigned shift start time.
+// ============================================================
+const LATE_GRACE_MINUTES = 10;
+const LEAVE_ALLOWANCES = { annual: 21, sick: 10, emergency: 5, maternity: 90, paternity: 14, compassionate: 5, custom: 0 };
+
+app.post('/api/hotel-admin/attendance/clock-in', requireHotelAdmin, async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  try {
+    const userRes = await pool.query(
+      `SELECT u.id, s.start_time FROM hotel_admin_users u LEFT JOIN hotel_admin_shifts s ON s.id = u.shift_id
+       WHERE u.id = $1 AND u.hotel_id = $2 AND u.deleted_at IS NULL`,
+      [userId, req.hotelAdmin.hotel_id]
+    );
+    if (!userRes.rows.length) return res.status(404).json({ error: 'Employee not found' });
+    const shiftStart = userRes.rows[0].start_time;
+
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    let status = 'present';
+    if (shiftStart) {
+      const [h, m] = shiftStart.split(':').map(Number);
+      const shiftStartMinutes = h * 60 + m;
+      const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+      if (nowMinutes > shiftStartMinutes + LATE_GRACE_MINUTES) status = 'late';
+    }
+
+    const result = await pool.query(
+      `INSERT INTO hotel_admin_attendance (hotel_id, user_id, attendance_date, clock_in, status, recorded_by)
+       VALUES ($1,$2,$3,NOW(),$4,$5)
+       ON CONFLICT (user_id, attendance_date) DO UPDATE SET clock_in = NOW(), status = $4, updated_at = NOW()
+       RETURNING *`,
+      [req.hotelAdmin.hotel_id, userId, today, status, req.hotelAdmin.id]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'attendance_clock_in', 'user', userId, req, { status });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Clock in failed:', err);
+    res.status(500).json({ error: 'Failed to clock in' });
+  }
+});
+
+app.post('/api/hotel-admin/attendance/clock-out', requireHotelAdmin, async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId is required' });
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const result = await pool.query(
+      `UPDATE hotel_admin_attendance SET clock_out = NOW(), updated_at = NOW()
+       WHERE user_id = $1 AND hotel_id = $2 AND attendance_date = $3 RETURNING *`,
+      [userId, req.hotelAdmin.hotel_id, today]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'No clock-in record found for today' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'attendance_clock_out', 'user', userId, req);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clock out' });
+  }
+});
+
+app.post('/api/hotel-admin/attendance/mark', requireHotelAdmin, async (req, res) => {
+  const { userId, date, status, notes } = req.body;
+  if (!userId || !date || !status) return res.status(400).json({ error: 'userId, date and status are required' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO hotel_admin_attendance (hotel_id, user_id, attendance_date, status, notes, recorded_by)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (user_id, attendance_date) DO UPDATE SET status = $4, notes = $5, updated_at = NOW()
+       RETURNING *`,
+      [req.hotelAdmin.hotel_id, userId, date, status, notes || null, req.hotelAdmin.id]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'attendance_marked', 'user', userId, req, { date, status });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to mark attendance' });
+  }
+});
+
+app.get('/api/hotel-admin/attendance', requireHotelAdmin, async (req, res) => {
+  const start = req.query.start || new Date().toISOString().slice(0, 10);
+  const end = req.query.end || start;
+  try {
+    const result = await pool.query(
+      `SELECT a.*, u.full_name, d.name AS department_name
+       FROM hotel_admin_attendance a
+       JOIN hotel_admin_users u ON u.id = a.user_id AND u.deleted_at IS NULL
+       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+       WHERE a.hotel_id = $1 AND a.attendance_date BETWEEN $2 AND $3
+       ${req.query.userId ? 'AND a.user_id = $4' : ''}
+       ORDER BY a.attendance_date DESC, u.full_name`,
+      req.query.userId ? [req.hotelAdmin.hotel_id, start, end, req.query.userId] : [req.hotelAdmin.hotel_id, start, end]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load attendance' });
+  }
+});
+
+app.get('/api/hotel-admin/attendance/analytics', requireHotelAdmin, async (req, res) => {
+  const start = req.query.start || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  const end = req.query.end || new Date().toISOString().slice(0, 10);
+  try {
+    const [summary, perEmployee] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) FILTER (WHERE status = 'present')::int AS present,
+                COUNT(*) FILTER (WHERE status = 'late')::int AS late,
+                COUNT(*) FILTER (WHERE status = 'absent')::int AS absent,
+                COUNT(*) FILTER (WHERE status = 'half-day')::int AS half_day,
+                COUNT(*)::int AS total_records,
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (clock_out - clock_in)) / 3600) FILTER (WHERE clock_in IS NOT NULL AND clock_out IS NOT NULL), 1), 0) AS avg_hours
+         FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date BETWEEN $2 AND $3`,
+        [req.hotelAdmin.hotel_id, start, end]
+      ),
+      pool.query(
+        `SELECT u.id, u.full_name,
+                COUNT(*) FILTER (WHERE a.status = 'present')::int AS present,
+                COUNT(*) FILTER (WHERE a.status = 'late')::int AS late,
+                COUNT(*) FILTER (WHERE a.status = 'absent')::int AS absent,
+                COUNT(*)::int AS total_records
+         FROM hotel_admin_users u
+         JOIN hotel_admin_attendance a ON a.user_id = u.id AND a.attendance_date BETWEEN $2 AND $3
+         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL
+         GROUP BY u.id ORDER BY late DESC, absent DESC`,
+        [req.hotelAdmin.hotel_id, start, end]
+      )
+    ]);
+    const s = summary.rows[0] || {};
+    const attendanceRate = s.total_records > 0 ? Math.round(((s.present + s.late + s.half_day) / s.total_records) * 100) : 0;
+    res.json({ ...s, attendanceRate, perEmployee: perEmployee.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load attendance analytics' });
+  }
+});
+
+// ============================================================
+// Leave Management
+// ============================================================
+app.get('/api/hotel-admin/leave', requireHotelAdmin, async (req, res) => {
+  try {
+    const filters = ['l.hotel_id = $1'];
+    const params = [req.hotelAdmin.hotel_id];
+    if (req.query.status) { params.push(req.query.status); filters.push(`l.status = $${params.length}`); }
+    if (req.query.userId) { params.push(req.query.userId); filters.push(`l.user_id = $${params.length}`); }
+    const result = await pool.query(
+      `SELECT l.*, u.full_name, d.name AS department_name, r.full_name AS reviewed_by_name
+       FROM hotel_admin_leave_requests l
+       JOIN hotel_admin_users u ON u.id = l.user_id
+       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+       LEFT JOIN hotel_admin_users r ON r.id = l.reviewed_by
+       WHERE ${filters.join(' AND ')}
+       ORDER BY l.created_at DESC`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load leave requests' });
+  }
+});
+
+app.post('/api/hotel-admin/leave', requireHotelAdmin, async (req, res) => {
+  const { userId, leaveType, customTypeLabel, startDate, endDate, reason } = req.body;
+  if (!userId || !leaveType || !startDate || !endDate) return res.status(400).json({ error: 'userId, leaveType, startDate and endDate are required' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO hotel_admin_leave_requests (hotel_id, user_id, leave_type, custom_type_label, start_date, end_date, reason)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [req.hotelAdmin.hotel_id, userId, leaveType, customTypeLabel || null, startDate, endDate, reason || null]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'leave_requested', 'leave', result.rows[0].id, req, { userId, leaveType, startDate, endDate });
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create leave request' });
+  }
+});
+
+app.post('/api/hotel-admin/leave/:id/review', requireHotelAdmin, async (req, res) => {
+  const decision = req.body.decision === 'approved' ? 'approved' : req.body.decision === 'rejected' ? 'rejected' : null;
+  if (!decision) return res.status(400).json({ error: 'decision must be approved or rejected' });
+  try {
+    const result = await pool.query(
+      `UPDATE hotel_admin_leave_requests SET status = $1, reviewed_by = $2, reviewed_at = NOW()
+       WHERE id = $3 AND hotel_id = $4 RETURNING *`,
+      [decision, req.hotelAdmin.id, req.params.id, req.hotelAdmin.hotel_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Leave request not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, `leave_${decision}`, 'leave', req.params.id, req);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to review leave request' });
+  }
+});
+
+app.get('/api/hotel-admin/leave/balance/:userId', requireHotelAdmin, async (req, res) => {
+  const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+  try {
+    const result = await pool.query(
+      `SELECT leave_type, SUM((end_date - start_date) + 1)::int AS days_used
+       FROM hotel_admin_leave_requests
+       WHERE hotel_id = $1 AND user_id = $2 AND status = 'approved' AND EXTRACT(YEAR FROM start_date) = $3
+       GROUP BY leave_type`,
+      [req.hotelAdmin.hotel_id, req.params.userId, year]
+    );
+    const used = result.rows.reduce((acc, row) => { acc[row.leave_type] = row.days_used; return acc; }, {});
+    const balance = Object.keys(LEAVE_ALLOWANCES).map(type => ({
+      type, allowance: LEAVE_ALLOWANCES[type], used: used[type] || 0, remaining: Math.max(0, LEAVE_ALLOWANCES[type] - (used[type] || 0))
+    }));
+    res.json({ year, balance, policyNote: `Default allowances shown (${Object.entries(LEAVE_ALLOWANCES).map(([k,v]) => `${k}: ${v}d`).join(', ')}) — adjust in code if your hotel's policy differs.` });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load leave balance' });
+  }
+});
+
 app.get('/api/hotel-admin/audit-logs', requireHotelAdmin, async (req, res) => {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 100);

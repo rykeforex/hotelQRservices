@@ -115,9 +115,9 @@
       background: var(--panel-strong);
       white-space: nowrap;
     }
-    .status-active, .status-delivered, .status-sent { color: var(--success); background: rgba(18,128,92,0.12); }
-    .status-locked, .status-suspended, .status-failed { color: var(--danger); background: rgba(180,35,24,0.12); }
-    .status-queued, .status-pending { color: #a15c00; background: rgba(201,162,39,0.14); }
+    .status-active, .status-delivered, .status-sent, .status-present, .status-approved { color: var(--success); background: rgba(18,128,92,0.12); }
+    .status-locked, .status-suspended, .status-failed, .status-absent, .status-rejected { color: var(--danger); background: rgba(180,35,24,0.12); }
+    .status-queued, .status-pending, .status-late, .status-half-day { color: #a15c00; background: rgba(201,162,39,0.14); }
     .table-wrap { overflow-x: auto; border-radius: 16px; border: 1px solid var(--line); }
     table { width: 100%; border-collapse: collapse; min-width: 760px; }
     th, td { padding: 0.9rem; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -242,6 +242,7 @@
     ['roles', 'fa-user-shield', 'Role Management'],
     ['departments', 'fa-building-user', 'Departments'],
     ['performance', 'fa-chart-line', 'Workforce Dashboard'],
+    ['attendance', 'fa-calendar-check', 'Attendance & Leave'],
     ['shifts', 'fa-business-time', 'Shifts'],
     ['audit', 'fa-clipboard-list', 'Audit Logs'],
     ['notifications', 'fa-bell', 'Notifications'],
@@ -871,6 +872,168 @@
         <div class="flex justify-end mt-5"><button class="btn" onclick="closeModal()">Close</button></div>`);
     } catch (err) {
       openModal('Employee Profile', 'Error', `<p style="color:#c0524f;">${esc(err.message)}</p>`);
+    }
+  }
+
+  async function loadAttendance() {
+    const section = $('section-attendance');
+    setSectionLoading('section-attendance');
+    if (!state.attendanceTab) state.attendanceTab = 'attendance';
+    if (!state.attendanceDate) state.attendanceDate = new Date().toISOString().slice(0, 10);
+    if (!state.leaveFilter) state.leaveFilter = 'pending';
+    try {
+      await loadReferenceData();
+      section.innerHTML = `
+        <div class="flex gap-2 mb-5">
+          <button class="btn ${state.attendanceTab === 'attendance' ? 'gold-btn' : ''}" onclick="switchAttendanceTab('attendance')"><i class="fas fa-clock"></i> Attendance</button>
+          <button class="btn ${state.attendanceTab === 'leave' ? 'gold-btn' : ''}" onclick="switchAttendanceTab('leave')"><i class="fas fa-plane-departure"></i> Leave</button>
+        </div>
+        <div id="attendanceTabContent"></div>`;
+      await renderAttendanceTab();
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadAttendance()'); }
+  }
+
+  async function switchAttendanceTab(tab) {
+    state.attendanceTab = tab;
+    $$('#section-attendance > .flex.gap-2 > button').forEach((btn, i) => btn.classList.toggle('gold-btn', (i === 0) === (tab === 'attendance')));
+    await renderAttendanceTab();
+  }
+
+  async function renderAttendanceTab() {
+    const wrap = $('attendanceTabContent');
+    wrap.innerHTML = `<p style="color:var(--muted);"><i class="fas fa-circle-notch fa-spin"></i> Loading…</p>`;
+    if (state.attendanceTab === 'leave') return renderLeaveTab();
+
+    try {
+      const rangeStart = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+      const rangeEnd = new Date().toISOString().slice(0, 10);
+      const [dayRecords, analytics] = await Promise.all([
+        api(`/api/hotel-admin/attendance?start=${state.attendanceDate}&end=${state.attendanceDate}`),
+        api(`/api/hotel-admin/attendance/analytics?start=${rangeStart}&end=${rangeEnd}`)
+      ]);
+      const byUser = dayRecords.reduce((acc, r) => { acc[r.user_id] = r; return acc; }, {});
+
+      wrap.innerHTML = `
+        <div class="grid gap-3 mb-5" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));">
+          ${[['Attendance Rate (30d)', `${analytics.attendanceRate}%`], ['Present', analytics.present], ['Late', analytics.late], ['Absent', analytics.absent], ['Half-day', analytics.half_day], ['Avg Hours', analytics.avg_hours]].map(([l,v]) => `<div class="card p-4"><div class="text-2xl font-bold gold">${esc(v)}</div><div class="text-xs uppercase mt-1" style="color:var(--muted);">${esc(l)}</div></div>`).join('')}
+        </div>
+        <div class="flex items-center gap-3 mb-4">
+          <input type="date" class="input" value="${state.attendanceDate}" onchange="state.attendanceDate=this.value; renderAttendanceTab();" style="width:auto;">
+          <p class="text-sm" style="color:var(--muted);">Mark attendance for this date</p>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Actions</th></tr></thead><tbody>
+          ${state.cache.users.map(user => {
+            const rec = byUser[user.id];
+            return `<tr>
+              <td>${esc(user.fullName)}</td>
+              <td>${esc(user.department || 'Unassigned')}</td>
+              <td>${rec ? badge(rec.status) : '<span class="badge">not recorded</span>'}</td>
+              <td>${rec?.clock_in ? fmt(rec.clock_in) : '—'}</td>
+              <td>${rec?.clock_out ? fmt(rec.clock_out) : '—'}</td>
+              <td><div class="flex gap-1 flex-wrap">
+                <button class="btn" onclick="clockAction('${user.id}','clock-in',this)" title="Clock in"><i class="fas fa-right-to-bracket"></i></button>
+                <button class="btn" onclick="clockAction('${user.id}','clock-out',this)" title="Clock out"><i class="fas fa-right-from-bracket"></i></button>
+                <button class="btn" onclick="markAttendance(${user.id},'absent')" title="Mark absent"><i class="fas fa-user-xmark"></i></button>
+                <button class="btn" onclick="markAttendance(${user.id},'half-day')" title="Mark half-day"><i class="fas fa-clock"></i></button>
+              </div></td>
+            </tr>`;
+          }).join('')}
+        </tbody></table></div>`;
+    } catch (err) { wrap.innerHTML = errorState(err.message, 'renderAttendanceTab()'); }
+  }
+
+  async function clockAction(userId, action, btn) {
+    window.LuxeUI?.loading(btn, true);
+    try {
+      await api(`/api/hotel-admin/attendance/${action}`, { method: 'POST', body: JSON.stringify({ userId: Number(userId) }) });
+      window.LuxeUI?.toast('success', action === 'clock-in' ? 'Clocked in' : 'Clocked out', '');
+      renderAttendanceTab();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Action failed', err.message);
+      window.LuxeUI?.loading(btn, false);
+    }
+  }
+
+  async function markAttendance(userId, status) {
+    try {
+      await api('/api/hotel-admin/attendance/mark', { method: 'POST', body: JSON.stringify({ userId, date: state.attendanceDate, status }) });
+      window.LuxeUI?.toast('success', `Marked ${status}`, '');
+      renderAttendanceTab();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Failed to mark attendance', err.message);
+    }
+  }
+
+  const LEAVE_TYPE_LABELS = { annual: 'Annual Leave', sick: 'Sick Leave', emergency: 'Emergency Leave', maternity: 'Maternity Leave', paternity: 'Paternity Leave', compassionate: 'Compassionate Leave', custom: 'Custom' };
+
+  async function renderLeaveTab() {
+    const wrap = $('attendanceTabContent');
+    try {
+      const requests = await api(`/api/hotel-admin/leave?status=${state.leaveFilter === 'all' ? '' : state.leaveFilter}`);
+      wrap.innerHTML = `
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div class="flex gap-1">
+            ${['pending','approved','rejected','all'].map(f => `<button class="btn ${state.leaveFilter === f ? 'gold-btn' : ''}" onclick="state.leaveFilter='${f}'; renderLeaveTab();" style="font-size:.75rem;text-transform:capitalize;">${f}</button>`).join('')}
+          </div>
+          <button class="btn gold-btn" onclick="showLeaveForm()"><i class="fas fa-plus"></i> Request Leave</button>
+        </div>
+        <div class="grid gap-4">
+          ${requests.length ? requests.map(l => `<div class="card p-4">
+            <div class="flex justify-between items-start flex-wrap gap-2">
+              <div><strong>${esc(l.full_name)}</strong> <span class="text-xs" style="color:var(--muted);">${esc(l.department_name || 'Unassigned')}</span>
+                <div class="text-sm mt-1">${esc(l.custom_type_label || LEAVE_TYPE_LABELS[l.leave_type])} · ${esc(l.start_date.slice(0,10))} → ${esc(l.end_date.slice(0,10))}</div>
+                ${l.reason ? `<div class="text-xs mt-1" style="color:var(--muted);">${esc(l.reason)}</div>` : ''}
+              </div>
+              <div class="text-right">${badge(l.status)}
+                ${l.status === 'pending' ? `<div class="flex gap-1 mt-2"><button class="btn" onclick="reviewLeave(${l.id},'approved',this)"><i class="fas fa-check"></i></button><button class="btn danger-btn" onclick="reviewLeave(${l.id},'rejected',this)"><i class="fas fa-xmark"></i></button></div>` : (l.reviewed_by_name ? `<div class="text-xs mt-1" style="color:var(--muted);">by ${esc(l.reviewed_by_name)}</div>` : '')}
+              </div>
+            </div>
+          </div>`).join('') : emptyState('No leave requests', 'Leave requests will appear here.')}
+        </div>`;
+    } catch (err) { wrap.innerHTML = errorState(err.message, 'renderLeaveTab()'); }
+  }
+
+  function showLeaveForm() {
+    openModal('Leave Management', 'Request Leave', `
+      <form id="leaveForm" class="space-y-4">
+        <select name="userId" required>${optionList(state.cache.users, null, 'fullName')}</select>
+        <select name="leaveType" id="leaveTypeSelect">${Object.entries(LEAVE_TYPE_LABELS).map(([k,v]) => `<option value="${k}">${v}</option>`).join('')}</select>
+        <input name="customTypeLabel" id="customTypeLabel" class="input hidden" placeholder="Custom leave type name">
+        <div class="grid gap-3" style="grid-template-columns:1fr 1fr;">
+          <input name="startDate" class="input" type="date" required>
+          <input name="endDate" class="input" type="date" required>
+        </div>
+        <textarea name="reason" class="input" rows="2" placeholder="Reason (optional)"></textarea>
+        <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-paper-plane"></i> Submit</button></div>
+      </form>`);
+    $('leaveTypeSelect').addEventListener('change', e => $('customTypeLabel').classList.toggle('hidden', e.target.value !== 'custom'));
+    $('leaveForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const submitBtn = form.querySelector('button[type="submit"]');
+      const payload = Object.fromEntries(new FormData(form).entries());
+      payload.userId = Number(payload.userId);
+      window.LuxeUI?.loading(submitBtn, true, 'Submitting…');
+      try {
+        await api('/api/hotel-admin/leave', { method: 'POST', body: JSON.stringify(payload) });
+        window.LuxeUI?.toast('success', 'Leave request submitted', '');
+        closeModal(); renderLeaveTab();
+      } catch (err) {
+        window.LuxeUI?.toast('error', 'Submission failed', err.message);
+        window.LuxeUI?.loading(submitBtn, false);
+      }
+    });
+  }
+
+  async function reviewLeave(id, decision, btn) {
+    window.LuxeUI?.loading(btn, true);
+    try {
+      await api(`/api/hotel-admin/leave/${id}/review`, { method: 'POST', body: JSON.stringify({ decision }) });
+      window.LuxeUI?.toast('success', `Leave ${decision}`, '');
+      renderLeaveTab();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Review failed', err.message);
+      window.LuxeUI?.loading(btn, false);
     }
   }
 
@@ -1646,7 +1809,7 @@
     return `<div class="card p-5"><h3 class="serif text-2xl mb-3">${esc(title)}</h3>${rows.length ? `<div class="space-y-2">${rows.map(row => `<div class="card p-3 text-sm">${esc(row)}</div>`).join('')}</div>` : emptyState(`No ${title.toLowerCase()}`, 'Nothing has been recorded for this category.')}</div>`;
   }
 
-  const loaders = { dashboard: loadDashboard, branding: loadBranding, users: loadUsers, roles: loadRoles, departments: loadDepartments, performance: loadPerformance, shifts: loadShifts, audit: loadAudit, notifications: loadNotifications, reports: loadReports, settings: loadSettings, security: loadSecurity };
+  const loaders = { dashboard: loadDashboard, branding: loadBranding, users: loadUsers, roles: loadRoles, departments: loadDepartments, performance: loadPerformance, attendance: loadAttendance, shifts: loadShifts, audit: loadAudit, notifications: loadNotifications, reports: loadReports, settings: loadSettings, security: loadSecurity };
 
   function debounce(fn, delay) {
     let timer;
