@@ -1534,6 +1534,7 @@ app.post('/api/auth/hotel-admin', async (req, res) => {
     }
 
     await writeHotelAudit(user.hotel_id, user.id, 'login', 'user', user.id, req);
+    io.to(`hotel_${user.hotel_id}`).emit('staffOnline', { userId: user.id, fullName: user.full_name, hotelId: user.hotel_id });
 
     const token = jwt.sign(
       { type: 'hotel_admin', userId: user.id, hotelId: user.hotel_id },
@@ -1634,6 +1635,7 @@ app.post('/api/auth/login', async (req, res) => {
         }
       }
       await writeHotelAudit(admin.hotel_id, admin.id, 'login', 'user', admin.id, req);
+      io.to(`hotel_${admin.hotel_id}`).emit('staffOnline', { userId: admin.id, fullName: admin.full_name, hotelId: admin.hotel_id });
 
       const token = jwt.sign(
         { type: 'hotel_admin', userId: admin.id, hotelId: admin.hotel_id },
@@ -1686,6 +1688,7 @@ app.post('/api/auth/hotel-admin/logout', requireHotelAdmin, async (req, res) => 
   try {
     await pool.query('UPDATE hotel_admin_users SET is_online = FALSE, last_seen_at = NOW() WHERE id = $1', [req.hotelAdmin.id]);
     await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'logout', 'user', req.hotelAdmin.id, req);
+    io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('staffOffline', { userId: req.hotelAdmin.id, fullName: req.hotelAdmin.full_name, hotelId: req.hotelAdmin.hotel_id });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Logout failed' });
@@ -2254,6 +2257,42 @@ function computePerformanceScore({ completionRate, avgResponseMinutes }) {
   const responseComponent = Math.max(0, Math.min(100, 100 - avgResponseMinutes));
   return Math.round((completionComponent + responseComponent) / 2);
 }
+
+app.get('/api/hotel-admin/realtime/snapshot', requireHotelAdmin, async (req, res) => {
+  try {
+    const hotelId = req.hotelAdmin.hotel_id;
+    const [onlineRes, pendingRes, deptActivityRes, recentAssignedRes] = await Promise.all([
+      pool.query(
+        `SELECT u.id, u.full_name, d.name AS department_name, u.last_seen_at
+         FROM hotel_admin_users u LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL AND u.is_online = TRUE ORDER BY u.full_name`,
+        [hotelId]
+      ),
+      pool.query(`SELECT COUNT(*)::int AS count FROM requests WHERE hotel_id = $1 AND status IN ('pending','in-progress')`, [hotelId]),
+      pool.query(
+        `SELECT service, COUNT(*)::int AS count FROM requests
+         WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '1 hour' GROUP BY service ORDER BY count DESC`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT r.id, r.room_number, r.service, r.status, r.assigned_at, u.full_name AS assigned_name
+         FROM requests r JOIN hotel_admin_users u ON u.id = r.assigned_user_id
+         WHERE r.hotel_id = $1 AND r.assigned_at IS NOT NULL
+         ORDER BY r.assigned_at DESC LIMIT 10`,
+        [hotelId]
+      )
+    ]);
+    res.json({
+      onlineStaff: onlineRes.rows,
+      requestsWaiting: pendingRes.rows[0]?.count || 0,
+      departmentActivity: deptActivityRes.rows,
+      recentAssignments: recentAssignedRes.rows
+    });
+  } catch (err) {
+    console.error('Realtime snapshot failed:', err);
+    res.status(500).json({ error: 'Failed to load real-time snapshot' });
+  }
+});
 
 app.get('/api/hotel-admin/workforce/dashboard', requireHotelAdmin, async (req, res) => {
   try {
@@ -2906,6 +2945,12 @@ app.post('/api/hotel-admin/requests/:id/assign', requireHotelAdmin, async (req, 
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
     await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, userId ? 'request_assigned' : 'request_unassigned', 'request', req.params.id, req, { userId });
+    if (userId) {
+      const userRow = await pool.query('SELECT full_name FROM hotel_admin_users WHERE id = $1', [userId]);
+      io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('requestAssigned', {
+        requestId: Number(req.params.id), userId, userName: userRow.rows[0]?.full_name || 'Staff', hotelId: req.hotelAdmin.hotel_id
+      });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to assign request' });
@@ -2922,6 +2967,10 @@ app.post('/api/hotel-admin/requests/bulk-assign', requireHotelAdmin, async (req,
       [userId, req.hotelAdmin.id, requestIds, req.hotelAdmin.hotel_id]
     );
     await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_bulk_assigned', 'request', null, req, { requestIds, userId, count: result.rows.length });
+    const userRow = await pool.query('SELECT full_name FROM hotel_admin_users WHERE id = $1', [userId]);
+    io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('requestAssigned', {
+      requestId: null, count: result.rows.length, userId, userName: userRow.rows[0]?.full_name || 'Staff', hotelId: req.hotelAdmin.hotel_id
+    });
     res.json({ ok: true, updated: result.rows.length });
   } catch (err) {
     res.status(500).json({ error: 'Failed to bulk assign requests' });
@@ -2937,6 +2986,9 @@ app.post('/api/hotel-admin/requests/:id/escalate', requireHotelAdmin, async (req
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
     await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_escalated', 'request', req.params.id, req);
+    io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('requestEscalated', {
+      requestId: Number(req.params.id), roomNumber: result.rows[0].room_number, service: result.rows[0].service, hotelId: req.hotelAdmin.hotel_id
+    });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to escalate request' });
@@ -2984,6 +3036,89 @@ app.post('/api/hotel-admin/requests/:id/transfer', requireHotelAdmin, async (req
 // unassigned request in a department is paired with that
 // department's least-loaded active staff member.
 // ============================================================
+// ============================================================
+// Workforce Analytics
+// Time-series trends, distinct from the point-in-time snapshots
+// on the Dashboard and Workload pages. Every series is a real
+// GROUP BY over live data.
+// ============================================================
+app.get('/api/hotel-admin/analytics', requireHotelAdmin, async (req, res) => {
+  try {
+    const hotelId = req.hotelAdmin.hotel_id;
+    const [volumeRes, weeklyRes, deptRes, attendanceRes, utilizationRes] = await Promise.all([
+      pool.query(
+        `SELECT date_trunc('day', created_at)::date AS day, COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE status = 'completed')::int AS completed
+         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
+         GROUP BY day ORDER BY day`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT date_trunc('week', created_at)::date AS week, COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_response
+         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '70 days'
+         GROUP BY week ORDER BY week`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT d.name,
+                COUNT(r.id)::int AS total, COUNT(r.id) FILTER (WHERE r.status = 'completed')::int AS completed,
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (r.updated_at - r.created_at)) / 60) FILTER (WHERE r.status = 'completed')), 0)::int AS avg_response
+         FROM hotel_admin_departments d
+         LEFT JOIN requests r ON LOWER(regexp_replace(r.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
+           AND r.hotel_id = d.hotel_id AND r.created_at >= NOW() - INTERVAL '30 days'
+         WHERE d.hotel_id = $1 AND d.status = 'active'
+         GROUP BY d.id ORDER BY d.name`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT attendance_date::date AS day,
+                COUNT(*) FILTER (WHERE status IN ('present','late','half-day'))::int AS present_like,
+                COUNT(*)::int AS total
+         FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date >= NOW() - INTERVAL '30 days'
+         GROUP BY day ORDER BY day`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT u.id, COUNT(r.id)::int AS load
+         FROM hotel_admin_users u
+         LEFT JOIN requests r ON r.assigned_user_id = u.id AND r.status IN ('pending','in-progress')
+         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL AND u.employment_status = 'active'
+         GROUP BY u.id`,
+        [hotelId]
+      )
+    ]);
+
+    const departmentComparison = deptRes.rows.map(d => ({
+      name: d.name, requests: d.total, completed: d.completed,
+      completionRate: d.total > 0 ? Math.round((d.completed / d.total) * 100) : null,
+      avgResponseMinutes: d.avg_response
+    }));
+
+    const utilBuckets = { '0': 0, '1-2': 0, '3-5': 0, '6+': 0 };
+    utilizationRes.rows.forEach(row => {
+      const load = row.load;
+      if (load === 0) utilBuckets['0']++;
+      else if (load <= 2) utilBuckets['1-2']++;
+      else if (load <= 5) utilBuckets['3-5']++;
+      else utilBuckets['6+']++;
+    });
+
+    res.json({
+      requestVolumeTrend: volumeRes.rows.map(r => ({ date: r.day, total: r.total, completed: r.completed })),
+      completionRateTrend: weeklyRes.rows.map(r => ({ week: r.week, rate: r.total > 0 ? Math.round((r.completed / r.total) * 100) : 0 })),
+      responseTimeTrend: weeklyRes.rows.map(r => ({ week: r.week, avgMinutes: r.avg_response })),
+      departmentComparison,
+      attendanceTrend: attendanceRes.rows.map(r => ({ date: r.day, rate: r.total > 0 ? Math.round((r.present_like / r.total) * 100) : null })),
+      staffUtilization: Object.entries(utilBuckets).map(([bucket, count]) => ({ bucket, count }))
+    });
+  } catch (err) {
+    console.error('Analytics query failed:', err);
+    res.status(500).json({ error: 'Failed to load analytics' });
+  }
+});
+
 app.get('/api/hotel-admin/workload', requireHotelAdmin, async (req, res) => {
   try {
     const hotelId = req.hotelAdmin.hotel_id;
@@ -3064,6 +3199,158 @@ app.get('/api/hotel-admin/workload', requireHotelAdmin, async (req, res) => {
   }
 });
 
+// ============================================================
+// Achievements / Recognition
+// Standings are computed live from real data for the requested
+// month. Nothing is auto-recorded — an admin must explicitly
+// award a category for it to appear in the Hall of Fame.
+// ============================================================
+function monthBounds(monthStr) {
+  const [y, m] = (monthStr || new Date().toISOString().slice(0, 7)).split('-').map(Number);
+  const start = new Date(Date.UTC(y, m - 1, 1));
+  const end = new Date(Date.UTC(y, m, 1));
+  return { start: start.toISOString(), end: end.toISOString(), period: `${y}-${String(m).padStart(2, '0')}` };
+}
+
+app.get('/api/hotel-admin/achievements/standings', requireHotelAdmin, async (req, res) => {
+  try {
+    const hotelId = req.hotelAdmin.hotel_id;
+    const { start, end, period } = monthBounds(req.query.month);
+
+    const [employeeRes, attendanceRes, deptRes] = await Promise.all([
+      pool.query(
+        `SELECT u.id, u.full_name, d.name AS department_name,
+                COUNT(r.id) FILTER (WHERE r.status = 'completed')::int AS completed,
+                COUNT(r.id)::int AS assigned_total,
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (r.updated_at - r.created_at)) / 60) FILTER (WHERE r.status = 'completed')), 0)::int AS avg_response
+         FROM hotel_admin_users u
+         LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+         LEFT JOIN requests r ON r.assigned_user_id = u.id AND r.assigned_at >= $2 AND r.assigned_at < $3
+         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL
+         GROUP BY u.id, d.name`,
+        [hotelId, start, end]
+      ),
+      pool.query(
+        `SELECT user_id,
+                COUNT(*) FILTER (WHERE status IN ('present','late'))::int AS present_like,
+                COUNT(*) FILTER (WHERE status = 'late')::int AS late,
+                COUNT(*)::int AS total
+         FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date >= $2 AND attendance_date < $3
+         GROUP BY user_id`,
+        [hotelId, start.slice(0, 10), end.slice(0, 10)]
+      ),
+      pool.query(
+        `SELECT d.id, d.name,
+                COUNT(r.id)::int AS total, COUNT(r.id) FILTER (WHERE r.status = 'completed')::int AS completed
+         FROM hotel_admin_departments d
+         LEFT JOIN requests r ON LOWER(regexp_replace(r.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
+           AND r.hotel_id = d.hotel_id AND r.created_at >= $2 AND r.created_at < $3
+         WHERE d.hotel_id = $1
+         GROUP BY d.id`,
+        [hotelId, start, end]
+      )
+    ]);
+
+    const attendanceByUser = attendanceRes.rows.reduce((acc, row) => { acc[row.user_id] = row; return acc; }, {});
+    const employees = employeeRes.rows.map(row => {
+      const att = attendanceByUser[row.id];
+      const reliability = att && att.total >= 5 ? Math.max(0, Math.min(100, Math.round(((att.present_like - att.late * 0.5) / att.total) * 100))) : null;
+      const completionRate = row.assigned_total > 0 ? Math.round((row.completed / row.assigned_total) * 100) : null;
+      return { ...row, completionRate, reliability, attendanceRecords: att?.total || 0 };
+    });
+
+    const pick = (arr, filterFn, sortFn) => {
+      const eligible = arr.filter(filterFn);
+      if (!eligible.length) return null;
+      return eligible.sort(sortFn)[0];
+    };
+
+    const topPerformer = pick(employees, e => e.completed >= 1, (a, b) => b.completed - a.completed);
+    const fastestResponse = pick(employees, e => e.completed >= 3, (a, b) => a.avg_response - b.avg_response);
+    const highestCompletionRate = pick(employees, e => e.assigned_total >= 3, (a, b) => b.completionRate - a.completionRate);
+    const mostReliable = pick(employees, e => e.attendanceRecords >= 5, (a, b) => b.reliability - a.reliability);
+
+    const eligible4EOM = employees.filter(e => e.completed >= 1 || e.attendanceRecords >= 5);
+    const employeeOfMonth = eligible4EOM.length ? eligible4EOM.map(e => ({
+      ...e,
+      compositeScore: Math.round((e.completed || 0) * 5 + (e.completionRate || 0) * 0.3 + (e.reliability || 0) * 0.3)
+    })).sort((a, b) => b.compositeScore - a.compositeScore)[0] : null;
+
+    const deptCandidates = deptRes.rows.filter(d => d.total >= 3).map(d => ({ ...d, completionRate: Math.round((d.completed / d.total) * 100) }));
+    const departmentOfMonth = deptCandidates.length ? deptCandidates.sort((a, b) => b.completionRate - a.completionRate)[0] : null;
+
+    const alreadyAwarded = await pool.query(`SELECT category FROM hotel_admin_achievements WHERE hotel_id = $1 AND period = $2`, [hotelId, period]);
+    const awardedCategories = new Set(alreadyAwarded.rows.map(r => r.category));
+
+    res.json({
+      period,
+      standings: {
+        top_performer: topPerformer ? { userId: topPerformer.id, name: topPerformer.full_name, department: topPerformer.department_name, valueLabel: `${topPerformer.completed} completed` } : null,
+        fastest_response: fastestResponse ? { userId: fastestResponse.id, name: fastestResponse.full_name, department: fastestResponse.department_name, valueLabel: `${fastestResponse.avg_response} min avg` } : null,
+        highest_completion_rate: highestCompletionRate ? { userId: highestCompletionRate.id, name: highestCompletionRate.full_name, department: highestCompletionRate.department_name, valueLabel: `${highestCompletionRate.completionRate}% completion` } : null,
+        most_reliable: mostReliable ? { userId: mostReliable.id, name: mostReliable.full_name, department: mostReliable.department_name, valueLabel: `${mostReliable.reliability}% reliability` } : null,
+        employee_of_month: employeeOfMonth ? { userId: employeeOfMonth.id, name: employeeOfMonth.full_name, department: employeeOfMonth.department_name, valueLabel: `Score ${employeeOfMonth.compositeScore}` } : null,
+        department_of_month: departmentOfMonth ? { departmentId: departmentOfMonth.id, name: departmentOfMonth.name, valueLabel: `${departmentOfMonth.completionRate}% completion` } : null
+      },
+      awardedCategories: [...awardedCategories],
+      methodologyNote: 'Top Performer / Fastest Response / Highest Completion Rate are computed only from requests explicitly assigned to a staff member via Request Assignment. Most Reliable uses attendance records (needs 5+ for the month to qualify). Employee of the Month is a composite of completed assignments, completion rate, and attendance reliability. Categories show no winner if there isn\'t enough real data yet — nothing is fabricated to fill a card.'
+    });
+  } catch (err) {
+    console.error('Achievement standings failed:', err);
+    res.status(500).json({ error: 'Failed to compute standings' });
+  }
+});
+
+app.get('/api/hotel-admin/achievements', requireHotelAdmin, async (req, res) => {
+  try {
+    const params = [req.hotelAdmin.hotel_id];
+    let periodFilter = '';
+    if (req.query.period) { params.push(req.query.period); periodFilter = `AND a.period = $${params.length}`; }
+    const result = await pool.query(
+      `SELECT a.*, u.full_name AS user_name, d.name AS department_name, b.full_name AS awarded_by_name
+       FROM hotel_admin_achievements a
+       LEFT JOIN hotel_admin_users u ON u.id = a.user_id
+       LEFT JOIN hotel_admin_departments d ON d.id = a.department_id
+       LEFT JOIN hotel_admin_users b ON b.id = a.awarded_by
+       WHERE a.hotel_id = $1 ${periodFilter}
+       ORDER BY a.period DESC, a.awarded_at DESC`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load achievements' });
+  }
+});
+
+app.post('/api/hotel-admin/achievements/award', requireHotelAdmin, async (req, res) => {
+  const { period, category, userId, departmentId, valueLabel } = req.body;
+  if (!period || !category) return res.status(400).json({ error: 'period and category are required' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO hotel_admin_achievements (hotel_id, period, category, user_id, department_id, value_label, awarded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (hotel_id, period, category) DO UPDATE SET user_id = $4, department_id = $5, value_label = $6, awarded_by = $7, awarded_at = NOW()
+       RETURNING *`,
+      [req.hotelAdmin.hotel_id, period, category, userId || null, departmentId || null, valueLabel || null, req.hotelAdmin.id]
+    );
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'achievement_awarded', 'achievement', result.rows[0].id, req, { period, category, userId, departmentId });
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to award achievement' });
+  }
+});
+
+app.delete('/api/hotel-admin/achievements/:id', requireHotelAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`DELETE FROM hotel_admin_achievements WHERE id = $1 AND hotel_id = $2 RETURNING id`, [req.params.id, req.hotelAdmin.hotel_id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Achievement not found' });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'achievement_revoked', 'achievement', req.params.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to revoke achievement' });
+  }
+});
+
 app.get('/api/hotel-admin/audit-logs', requireHotelAdmin, async (req, res) => {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 100);
@@ -3086,7 +3373,12 @@ app.get('/api/hotel-admin/audit-logs', requireHotelAdmin, async (req, res) => {
 app.get('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM hotel_admin_notifications WHERE hotel_id = $1 ORDER BY created_at DESC LIMIT 100`,
+      `SELECT n.*, d.name AS department_name, s.name AS shift_name, u.full_name AS sender_name
+       FROM hotel_admin_notifications n
+       LEFT JOIN hotel_admin_departments d ON d.id = n.department_id
+       LEFT JOIN hotel_admin_shifts s ON s.id = n.target_shift_id
+       LEFT JOIN hotel_admin_users u ON u.id = n.sender_user_id
+       WHERE n.hotel_id = $1 ORDER BY n.created_at DESC LIMIT 100`,
       [req.hotelAdmin.hotel_id]
     );
     res.json(result.rows);
@@ -3096,18 +3388,38 @@ app.get('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) =>
 });
 
 app.post('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) => {
-  const { title, message, type, departmentId } = req.body;
+  const { title, message, type, departmentId, targetShiftId, severity } = req.body;
   if (!title || !message) return res.status(400).json({ error: 'Title and message required' });
+  const validTypes = ['staff_announcement', 'department_announcement', 'emergency_alert', 'shift_notification', 'policy_update'];
+  const finalType = validTypes.includes(type) ? type : 'staff_announcement';
+  const finalSeverity = finalType === 'emergency_alert' ? 'critical' : (['normal', 'high', 'critical'].includes(severity) ? severity : 'normal');
+
   try {
+    let recipientCount = 0;
+    if (finalType === 'department_announcement' && departmentId) {
+      const r = await pool.query(`SELECT COUNT(*)::int AS c FROM hotel_admin_users WHERE hotel_id = $1 AND department_id = $2 AND deleted_at IS NULL AND account_status = 'active'`, [req.hotelAdmin.hotel_id, departmentId]);
+      recipientCount = r.rows[0].c;
+    } else if (finalType === 'shift_notification' && targetShiftId) {
+      const r = await pool.query(`SELECT COUNT(*)::int AS c FROM hotel_admin_users WHERE hotel_id = $1 AND shift_id = $2 AND deleted_at IS NULL AND account_status = 'active'`, [req.hotelAdmin.hotel_id, targetShiftId]);
+      recipientCount = r.rows[0].c;
+    } else {
+      const r = await pool.query(`SELECT COUNT(*)::int AS c FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL AND account_status = 'active'`, [req.hotelAdmin.hotel_id]);
+      recipientCount = r.rows[0].c;
+    }
+
     const result = await pool.query(
       `INSERT INTO hotel_admin_notifications
-       (hotel_id, sender_user_id, department_id, type, title, message, delivery_status, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,'queued',NOW()) RETURNING *`,
-      [req.hotelAdmin.hotel_id, req.hotelAdmin.id, departmentId || null, type || 'announcement', title, message]
+       (hotel_id, sender_user_id, department_id, target_shift_id, type, severity, title, message, delivery_status, recipient_count, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'sent',$9,NOW()) RETURNING *`,
+      [req.hotelAdmin.hotel_id, req.hotelAdmin.id, finalType === 'department_announcement' ? (departmentId || null) : null, finalType === 'shift_notification' ? (targetShiftId || null) : null, finalType, finalSeverity, title, message, recipientCount]
     );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'notification_sent', 'notification', result.rows[0].id, req);
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'notification_sent', 'notification', result.rows[0].id, req, { type: finalType, recipientCount });
+    io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('newNotification', {
+      hotelId: req.hotelAdmin.hotel_id, type: finalType, severity: finalSeverity, title, recipientCount
+    });
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    console.error('Send notification failed:', err);
     res.status(500).json({ error: 'Failed to send notification' });
   }
 });
@@ -3115,10 +3427,13 @@ app.post('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) =
 app.get('/api/hotel-admin/reports', requireHotelAdmin, async (req, res) => {
   try {
     const hotelId = req.hotelAdmin.hotel_id;
-    const [users, depts, requests] = await Promise.all([
+    const [users, depts, requests, attendance, leave, shiftSchedule] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL`, [hotelId]),
       pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_departments WHERE hotel_id = $1`, [hotelId]),
-      pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`, [hotelId])
+      pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`, [hotelId]),
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date >= NOW() - INTERVAL '30 days'`, [hotelId]),
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_leave_requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`, [hotelId]),
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_shift_schedule WHERE hotel_id = $1 AND shift_date >= NOW() - INTERVAL '30 days'`, [hotelId])
     ]);
     const r = requests.rows[0] || {};
     res.json({
@@ -3127,7 +3442,10 @@ app.get('/api/hotel-admin/reports', requireHotelAdmin, async (req, res) => {
       departmentPerformance: { records: depts.rows[0]?.total || 0 },
       userActivity: { records: users.rows[0]?.total || 0 },
       requestSummary: { records: r.total || 0 },
-      completionRates: { records: r.completed || 0 }
+      completionRates: { records: r.completed || 0 },
+      attendanceReport: { records: attendance.rows[0]?.total || 0 },
+      leaveReport: { records: leave.rows[0]?.total || 0 },
+      shiftPerformanceReport: { records: shiftSchedule.rows[0]?.total || 0 }
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load reports' });
@@ -3196,6 +3514,41 @@ app.get('/api/hotel-admin/reports/export', requireHotelAdmin, async (req, res) =
       );
       headers = ['Room', 'Service', 'Status', 'Created', 'Updated'];
       keyMap = ['room_number', 'service', 'status', 'created_at', 'updated_at'];
+      rows = result.rows;
+    } else if (type === 'attendance_report') {
+      const result = await pool.query(
+        `SELECT u.full_name, a.attendance_date, a.status, a.clock_in, a.clock_out
+         FROM hotel_admin_attendance a JOIN hotel_admin_users u ON u.id = a.user_id
+         WHERE a.hotel_id = $1 AND a.attendance_date >= NOW() - ($2 || ' days')::interval
+         ORDER BY a.attendance_date DESC LIMIT 1000`,
+        [hotelId, periodDays]
+      );
+      headers = ['Employee', 'Date', 'Status', 'Clock In', 'Clock Out'];
+      keyMap = ['full_name', 'attendance_date', 'status', 'clock_in', 'clock_out'];
+      rows = result.rows;
+    } else if (type === 'leave_report') {
+      const result = await pool.query(
+        `SELECT u.full_name, l.leave_type, l.custom_type_label, l.start_date, l.end_date, l.status
+         FROM hotel_admin_leave_requests l JOIN hotel_admin_users u ON u.id = l.user_id
+         WHERE l.hotel_id = $1 AND l.created_at >= NOW() - ($2 || ' days')::interval
+         ORDER BY l.start_date DESC LIMIT 1000`,
+        [hotelId, periodDays]
+      );
+      headers = ['Employee', 'Type', 'Custom Label', 'Start', 'End', 'Status'];
+      keyMap = ['full_name', 'leave_type', 'custom_type_label', 'start_date', 'end_date', 'status'];
+      rows = result.rows;
+    } else if (type === 'shift_performance_report') {
+      const result = await pool.query(
+        `SELECT s.name AS shift_name, u.full_name, sc.shift_date, sc.status
+         FROM hotel_admin_shift_schedule sc
+         JOIN hotel_admin_shifts s ON s.id = sc.shift_id
+         JOIN hotel_admin_users u ON u.id = sc.user_id
+         WHERE sc.hotel_id = $1 AND sc.shift_date >= NOW() - ($2 || ' days')::interval
+         ORDER BY sc.shift_date DESC LIMIT 1000`,
+        [hotelId, periodDays]
+      );
+      headers = ['Shift', 'Employee', 'Date', 'Status'];
+      keyMap = ['shift_name', 'full_name', 'shift_date', 'status'];
       rows = result.rows;
     } else {
       const result = await pool.query(

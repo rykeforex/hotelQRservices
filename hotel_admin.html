@@ -115,9 +115,11 @@
       background: var(--panel-strong);
       white-space: nowrap;
     }
-    .status-active, .status-delivered, .status-sent, .status-present, .status-approved { color: var(--success); background: rgba(18,128,92,0.12); }
+    .status-active, .status-delivered, .status-sent, .status-present, .status-approved, .status-completed { color: var(--success); background: rgba(18,128,92,0.12); }
     .status-locked, .status-suspended, .status-failed, .status-absent, .status-rejected { color: var(--danger); background: rgba(180,35,24,0.12); }
-    .status-queued, .status-pending, .status-late, .status-half-day { color: #a15c00; background: rgba(201,162,39,0.14); }
+    .status-queued, .status-pending, .status-late, .status-half-day, .status-in-progress { color: #a15c00; background: rgba(201,162,39,0.14); }
+    .live-dot { display: inline-block; height: 9px; width: 9px; border-radius: 50%; background: var(--success); margin-right: 6px; animation: liveDotPulse 1.6s ease-in-out infinite; }
+    @keyframes liveDotPulse { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(18,128,92,0.5); } 50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(18,128,92,0); } }
     .table-wrap { overflow-x: auto; border-radius: 16px; border: 1px solid var(--line); }
     table { width: 100%; border-collapse: collapse; min-width: 760px; }
     th, td { padding: 0.9rem; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -160,6 +162,7 @@
       h1 { font-size: 2rem !important; }
     }
   </style>
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
 <script src="ui-kit.js"></script>
 </head>
 <body>
@@ -237,12 +240,16 @@
 
   const navItems = [
     ['dashboard', 'fa-gauge-high', 'Dashboard'],
+    ['realtime', 'fa-tower-broadcast', 'Real-Time Operations'],
     ['branding', 'fa-palette', 'Branding Center'],
     ['users', 'fa-users-gear', 'User Management'],
     ['roles', 'fa-user-shield', 'Role Management'],
     ['departments', 'fa-building-user', 'Departments'],
     ['performance', 'fa-chart-line', 'Workforce Dashboard'],
     ['attendance', 'fa-calendar-check', 'Attendance & Leave'],
+    ['requests', 'fa-clipboard-list', 'Request Assignment'],
+    ['achievements', 'fa-trophy', 'Achievements'],
+    ['analytics', 'fa-chart-column', 'Workforce Analytics'],
     ['shifts', 'fa-business-time', 'Shifts'],
     ['audit', 'fa-clipboard-list', 'Audit Logs'],
     ['notifications', 'fa-bell', 'Notifications'],
@@ -363,6 +370,114 @@
     state.cache.departments = departments;
     state.cache.shifts = shifts;
     state.cache.users = users.users || [];
+  }
+
+  function connectRealtimeSocket() {
+    if (state.realtimeConnected || typeof io === 'undefined' || !state.user?.hotelId) return;
+    state.realtimeConnected = true;
+    const socket = io(API_BASE_URL);
+    socket.emit('joinHotel', state.user.hotelId);
+
+    function pushFeedEntry(entry) {
+      state.realtimeFeed = state.realtimeFeed || [];
+      state.realtimeFeed.unshift({ ...entry, time: new Date() });
+      state.realtimeFeed = state.realtimeFeed.slice(0, 50);
+      if (state.page === 'realtime') renderRealtimeFeed();
+    }
+    const sameHotel = data => data && (!data.hotel_id || data.hotel_id === state.user.hotelId) && (!data.hotelId || data.hotelId === state.user.hotelId);
+
+    socket.on('newRequest', data => {
+      if (!sameHotel(data)) return;
+      pushFeedEntry({ icon: 'fa-bell', label: `New request — Room ${data.room_number} (${data.service})` });
+      if (state.page === 'realtime') loadRealtimeSnapshot();
+    });
+    socket.on('statusUpdate', data => {
+      if (!sameHotel(data)) return;
+      pushFeedEntry({ icon: 'fa-arrows-rotate', label: `Request #${data.id} status → ${data.status}` });
+      if (state.page === 'realtime') loadRealtimeSnapshot();
+    });
+    socket.on('staffOnline', data => {
+      if (!sameHotel(data)) return;
+      pushFeedEntry({ icon: 'fa-circle', color: 'var(--success)', label: `${data.fullName} came online` });
+      if (state.page === 'realtime') loadRealtimeSnapshot();
+    });
+    socket.on('staffOffline', data => {
+      if (!sameHotel(data)) return;
+      pushFeedEntry({ icon: 'fa-circle', label: `${data.fullName} went offline` });
+    });
+    socket.on('requestAssigned', data => {
+      if (!sameHotel(data)) return;
+      pushFeedEntry({ icon: 'fa-user-check', label: data.requestId ? `Request #${data.requestId} assigned to ${data.userName}` : `${data.count} request(s) bulk-assigned to ${data.userName}` });
+    });
+    socket.on('requestEscalated', data => {
+      if (!sameHotel(data)) return;
+      pushFeedEntry({ icon: 'fa-triangle-exclamation', color: '#c0524f', label: `Escalated — Room ${data.roomNumber} (${data.service})` });
+      if (state.page === 'realtime') loadRealtimeSnapshot();
+    });
+    socket.on('newNotification', data => {
+      if (!sameHotel(data)) return;
+      const isCritical = data.severity === 'critical';
+      pushFeedEntry({
+        icon: isCritical ? 'fa-triangle-exclamation' : 'fa-bullhorn',
+        color: isCritical ? '#c0524f' : undefined,
+        label: `${isCritical ? 'EMERGENCY: ' : ''}${data.title} — sent to ${data.recipientCount} recipient${data.recipientCount === 1 ? '' : 's'}`
+      });
+      if (isCritical) window.LuxeUI?.toast('error', 'Emergency Alert', data.title);
+    });
+  }
+
+  async function loadRealtime() {
+    const section = $('section-realtime');
+    setSectionLoading('section-realtime');
+    connectRealtimeSocket();
+    section.innerHTML = `
+      <div id="realtimeSnapshot"><p style="color:var(--muted);"><i class="fas fa-circle-notch fa-spin"></i> Loading…</p></div>
+      <div class="card p-5 mt-5">
+        <h3 class="serif text-2xl mb-3"><span class="live-dot"></span> Live Activity Feed</h3>
+        <div id="realtimeFeed" class="space-y-1"></div>
+      </div>`;
+    await loadRealtimeSnapshot();
+    renderRealtimeFeed();
+  }
+
+  async function loadRealtimeSnapshot() {
+    const el = $('realtimeSnapshot');
+    if (!el) return;
+    try {
+      const data = await api('/api/hotel-admin/realtime/snapshot');
+      const hourTotal = data.departmentActivity.reduce((sum, d) => sum + d.count, 0);
+      el.innerHTML = `
+        <div class="grid gap-3 mb-4" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+          <div class="card p-4"><div class="text-2xl font-bold gold">${data.onlineStaff.length}</div><div class="text-xs uppercase mt-1" style="color:var(--muted);">Online Now</div></div>
+          <div class="card p-4"><div class="text-2xl font-bold gold">${data.requestsWaiting}</div><div class="text-xs uppercase mt-1" style="color:var(--muted);">Requests Waiting</div></div>
+          <div class="card p-4"><div class="text-2xl font-bold gold">${hourTotal}</div><div class="text-xs uppercase mt-1" style="color:var(--muted);">Requests (last hour)</div></div>
+        </div>
+        <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">
+          <div class="card p-4">
+            <h4 class="serif text-xl mb-2">Who's Online</h4>
+            ${data.onlineStaff.length ? data.onlineStaff.map(u => `<div class="flex items-center gap-2 text-sm py-1"><span style="height:8px;width:8px;border-radius:50%;background:var(--success);display:inline-block;flex-shrink:0;"></span>${esc(u.full_name)} <span class="text-xs" style="color:var(--muted);">${esc(u.department_name || '')}</span></div>`).join('') : `<p class="text-sm" style="color:var(--muted);">Nobody online right now.</p>`}
+          </div>
+          <div class="card p-4">
+            <h4 class="serif text-xl mb-2">Department Activity <span class="text-xs font-normal" style="color:var(--muted);">(last hour)</span></h4>
+            ${data.departmentActivity.length ? data.departmentActivity.map(d => `<div class="flex justify-between text-sm py-1"><span>${esc(d.service)}</span><strong>${d.count}</strong></div>`).join('') : `<p class="text-sm" style="color:var(--muted);">No activity in the last hour.</p>`}
+          </div>
+          <div class="card p-4">
+            <h4 class="serif text-xl mb-2">Recently Assigned</h4>
+            ${data.recentAssignments.length ? data.recentAssignments.map(r => `<div class="text-sm py-1.5" style="border-bottom:1px solid var(--line);">Room ${esc(r.room_number)} · ${esc(r.service)} → ${esc(r.assigned_name)} ${badge(r.status)}</div>`).join('') : `<p class="text-sm" style="color:var(--muted);">No assignments yet.</p>`}
+          </div>
+        </div>`;
+    } catch (err) { el.innerHTML = errorState(err.message, 'loadRealtimeSnapshot()'); }
+  }
+
+  function renderRealtimeFeed() {
+    const el = $('realtimeFeed');
+    if (!el) return;
+    const feed = state.realtimeFeed || [];
+    el.innerHTML = feed.length ? feed.map(entry => `<div class="flex items-center gap-3 text-sm py-2" style="border-bottom:1px solid var(--line);">
+      <i class="fas ${entry.icon}" style="color:${entry.color || 'var(--gold)'};width:16px;flex-shrink:0;"></i>
+      <span class="flex-1">${esc(entry.label)}</span>
+      <span class="text-xs" style="color:var(--muted);flex-shrink:0;">${new Date(entry.time).toLocaleTimeString()}</span>
+    </div>`).join('') : `<p class="text-sm" style="color:var(--muted);">Waiting for activity — new requests, status changes, and assignments will appear here live.</p>`;
   }
 
   async function loadDashboard() {
@@ -1037,6 +1152,398 @@
     }
   }
 
+  async function loadRequestAssignment() {
+    const section = $('section-requests');
+    setSectionLoading('section-requests');
+    if (!state.requestsTab) state.requestsTab = 'queue';
+    if (!state.requestsPage) state.requestsPage = 1;
+    if (!state.requestsFilters) state.requestsFilters = { status: '', priority: '', assigned: '' };
+    try {
+      await loadReferenceData();
+      section.innerHTML = `
+        <div class="flex gap-2 mb-5">
+          <button class="btn ${state.requestsTab === 'queue' ? 'gold-btn' : ''}" onclick="switchRequestsTab('queue')"><i class="fas fa-list-check"></i> Request Queue</button>
+          <button class="btn ${state.requestsTab === 'workload' ? 'gold-btn' : ''}" onclick="switchRequestsTab('workload')"><i class="fas fa-scale-balanced"></i> Workload Balancing</button>
+        </div>
+        <div id="requestsTabContent"></div>`;
+      await renderRequestsTab();
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadRequestAssignment()'); }
+  }
+
+  async function switchRequestsTab(tab) {
+    state.requestsTab = tab;
+    $$('#section-requests > .flex.gap-2 > button').forEach((btn, i) => btn.classList.toggle('gold-btn', (i === 0) === (tab === 'queue')));
+    await renderRequestsTab();
+  }
+
+  async function renderRequestsTab() {
+    const wrap = $('requestsTabContent');
+    wrap.innerHTML = `<p style="color:var(--muted);"><i class="fas fa-circle-notch fa-spin"></i> Loading…</p>`;
+    if (state.requestsTab === 'workload') return renderWorkloadTab();
+
+    try {
+      const f = state.requestsFilters;
+      const params = new URLSearchParams({ page: state.requestsPage, limit: 20 });
+      if (f.status) params.set('status', f.status);
+      if (f.priority) params.set('priority', f.priority);
+      if (f.assigned) params.set('assigned', f.assigned);
+      const data = await api(`/api/hotel-admin/requests?${params.toString()}`);
+
+      wrap.innerHTML = `
+        <div class="flex flex-wrap gap-2 mb-4 items-center">
+          <select id="filterStatus"><option value="">All statuses</option>${['pending','in-progress','completed'].map(s => `<option value="${s}" ${f.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
+          <select id="filterPriority"><option value="">All priorities</option>${['low','normal','high','urgent'].map(p => `<option value="${p}" ${f.priority === p ? 'selected' : ''}>${p}</option>`).join('')}</select>
+          <select id="filterAssigned"><option value="">Assigned or not</option><option value="assigned" ${f.assigned === 'assigned' ? 'selected' : ''}>Assigned</option><option value="unassigned" ${f.assigned === 'unassigned' ? 'selected' : ''}>Unassigned</option></select>
+          <button class="btn gold-btn" id="bulkAssignBtn" disabled><i class="fas fa-users"></i> Bulk Assign (<span id="bulkCount">0</span>)</button>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="selectAllReq"></th><th>Room</th><th>Service</th><th>Status</th><th>Priority</th><th>Assigned To</th><th>Created</th><th>Actions</th></tr></thead><tbody>
+          ${data.requests.length ? data.requests.map(r => `<tr>
+            <td><input type="checkbox" class="reqCheck" value="${r.id}" ${r.status === 'completed' ? 'disabled' : ''}></td>
+            <td>${esc(r.room_number)}</td>
+            <td>${esc(r.service)}${r.escalated ? ' <i class="fas fa-triangle-exclamation" style="color:#c0524f;" title="Escalated"></i>' : ''}</td>
+            <td>${badge(r.status)}</td>
+            <td><select onchange="setPriority(${r.id}, this.value)" style="font-size:.75rem;">${['low','normal','high','urgent'].map(p => `<option value="${p}" ${r.priority === p ? 'selected' : ''}>${p}</option>`).join('')}</select></td>
+            <td>${r.assigned_name ? esc(r.assigned_name) : '<span style="color:var(--muted);">Unassigned</span>'}</td>
+            <td>${fmt(r.created_at)}</td>
+            <td><div class="flex gap-1">
+              <button class="btn" onclick="showAssignForm(${r.id})" title="Assign"><i class="fas fa-user-plus"></i></button>
+              <button class="btn" onclick="escalateRequest(${r.id}, this)" title="Escalate" ${r.escalated ? 'disabled' : ''}><i class="fas fa-arrow-up-right-dots"></i></button>
+              <button class="btn" onclick="showTransferForm(${r.id})" title="Transfer department"><i class="fas fa-right-left"></i></button>
+            </div></td>
+          </tr>`).join('') : `<tr><td colspan="8">${emptyState('No requests found', 'Adjust filters or check back later.')}</td></tr>`}
+        </tbody></table></div>
+        <div class="flex items-center justify-between mt-4">
+          <button class="btn" ${state.requestsPage <= 1 ? 'disabled' : ''} onclick="state.requestsPage--; renderRequestsTab();"><i class="fas fa-chevron-left"></i> Previous</button>
+          <span class="text-xs" style="color:var(--muted);">Page ${state.requestsPage}</span>
+          <button class="btn" ${data.requests.length < 20 ? 'disabled' : ''} onclick="state.requestsPage++; renderRequestsTab();">Next <i class="fas fa-chevron-right"></i></button>
+        </div>`;
+
+      $('filterStatus').addEventListener('change', e => { state.requestsFilters.status = e.target.value; state.requestsPage = 1; renderRequestsTab(); });
+      $('filterPriority').addEventListener('change', e => { state.requestsFilters.priority = e.target.value; state.requestsPage = 1; renderRequestsTab(); });
+      $('filterAssigned').addEventListener('change', e => { state.requestsFilters.assigned = e.target.value; state.requestsPage = 1; renderRequestsTab(); });
+
+      const updateBulkBtn = () => {
+        const checked = $$('.reqCheck:checked');
+        $('bulkCount').textContent = checked.length;
+        $('bulkAssignBtn').disabled = checked.length === 0;
+      };
+      $('selectAllReq').addEventListener('change', e => { $$('.reqCheck').forEach(cb => { cb.checked = e.target.checked; }); updateBulkBtn(); });
+      $$('.reqCheck').forEach(cb => cb.addEventListener('change', updateBulkBtn));
+      $('bulkAssignBtn').addEventListener('click', () => {
+        const ids = $$('.reqCheck:checked').map(cb => Number(cb.value));
+        showAssignForm(null, ids);
+      });
+    } catch (err) { wrap.innerHTML = errorState(err.message, 'renderRequestsTab()'); }
+  }
+
+  function showAssignForm(requestId, bulkIds) {
+    openModal('Request Assignment', bulkIds ? `Bulk Assign (${bulkIds.length})` : 'Assign Request', `
+      <form id="assignReqForm" class="space-y-4">
+        <select name="userId" required>${optionList(state.cache.users, null, 'fullName')}</select>
+        <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-user-check"></i> Assign</button></div>
+      </form>`);
+    $('assignReqForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const submitBtn = event.currentTarget.querySelector('button[type="submit"]');
+      const userId = Number(new FormData(event.currentTarget).get('userId'));
+      window.LuxeUI?.loading(submitBtn, true, 'Assigning…');
+      try {
+        if (bulkIds) {
+          const result = await api('/api/hotel-admin/requests/bulk-assign', { method: 'POST', body: JSON.stringify({ requestIds: bulkIds, userId }) });
+          window.LuxeUI?.toast('success', 'Bulk assignment complete', `${result.updated} request(s) assigned.`);
+        } else {
+          await api(`/api/hotel-admin/requests/${requestId}/assign`, { method: 'POST', body: JSON.stringify({ userId }) });
+          window.LuxeUI?.toast('success', 'Request assigned', '');
+        }
+        closeModal(); renderRequestsTab();
+      } catch (err) {
+        window.LuxeUI?.toast('error', 'Assignment failed', err.message);
+        window.LuxeUI?.loading(submitBtn, false);
+      }
+    });
+  }
+
+  async function setPriority(id, priority) {
+    try {
+      await api(`/api/hotel-admin/requests/${id}/priority`, { method: 'PUT', body: JSON.stringify({ priority }) });
+      window.LuxeUI?.toast('success', 'Priority updated', '');
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Update failed', err.message);
+    }
+  }
+
+  async function escalateRequest(id, btn) {
+    window.LuxeUI?.loading(btn, true);
+    try {
+      await api(`/api/hotel-admin/requests/${id}/escalate`, { method: 'POST' });
+      window.LuxeUI?.toast('success', 'Request escalated', 'Priority set to urgent.');
+      renderRequestsTab();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Escalation failed', err.message);
+      window.LuxeUI?.loading(btn, false);
+    }
+  }
+
+  function showTransferForm(id) {
+    openModal('Request Assignment', 'Transfer to Department', `
+      <form id="transferForm" class="space-y-4">
+        <select name="service" required>${state.cache.departments.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('')}</select>
+        <p class="text-xs" style="color:var(--muted);">Transferring clears the current assignment.</p>
+        <div class="flex justify-end gap-2"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn gold-btn" type="submit"><i class="fas fa-right-left"></i> Transfer</button></div>
+      </form>`);
+    $('transferForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const submitBtn = event.currentTarget.querySelector('button[type="submit"]');
+      const service = new FormData(event.currentTarget).get('service');
+      window.LuxeUI?.loading(submitBtn, true, 'Transferring…');
+      try {
+        await api(`/api/hotel-admin/requests/${id}/transfer`, { method: 'POST', body: JSON.stringify({ service }) });
+        window.LuxeUI?.toast('success', 'Request transferred', '');
+        closeModal(); renderRequestsTab();
+      } catch (err) {
+        window.LuxeUI?.toast('error', 'Transfer failed', err.message);
+        window.LuxeUI?.loading(submitBtn, false);
+      }
+    });
+  }
+
+  async function renderWorkloadTab() {
+    const wrap = $('requestsTabContent');
+    try {
+      const w = await api('/api/hotel-admin/workload');
+      const hours = [...Array(24).keys()];
+      const maxVol = Math.max(1, ...w.heatmap.map(h => h.volume));
+      const services = [...new Set(w.heatmap.map(h => h.service))];
+      const volByServiceHour = {};
+      w.heatmap.forEach(h => { volByServiceHour[`${h.service}-${h.hour}`] = h.volume; });
+
+      wrap.innerHTML = `
+        <div class="grid gap-3 mb-5" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+          <div class="card p-4"><div class="text-2xl font-bold gold">${w.unassignedCount}</div><div class="text-xs uppercase mt-1" style="color:var(--muted);">Unassigned Requests</div></div>
+          <div class="card p-4"><div class="text-2xl font-bold gold">${w.suggestions.length}</div><div class="text-xs uppercase mt-1" style="color:var(--muted);">Suggested Reassignments</div></div>
+        </div>
+
+        <div class="grid gap-5" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
+          <div class="card p-4">
+            <h4 class="serif text-xl mb-3">Busiest Staff</h4>
+            ${w.busiest.map(s => `<div class="flex justify-between text-sm py-1.5" style="border-bottom:1px solid var(--line);"><span>${esc(s.full_name)} <span class="text-xs" style="color:var(--muted);">${esc(s.department_name || '')}</span></span><strong>${s.current_load}</strong></div>`).join('') || `<p class="text-sm" style="color:var(--muted);">No active assignments.</p>`}
+          </div>
+          <div class="card p-4">
+            <h4 class="serif text-xl mb-3">Available Capacity</h4>
+            ${w.leastBusy.map(s => `<div class="flex justify-between text-sm py-1.5" style="border-bottom:1px solid var(--line);"><span>${esc(s.full_name)} <span class="text-xs" style="color:var(--muted);">${esc(s.department_name || '')}</span></span><strong>${s.current_load}</strong></div>`).join('') || `<p class="text-sm" style="color:var(--muted);">No staff data.</p>`}
+          </div>
+        </div>
+
+        <div class="card p-4 mt-5">
+          <h4 class="serif text-xl mb-3">Department Workload</h4>
+          <div class="table-wrap"><table><thead><tr><th>Department</th><th>Staff</th><th>Pending Requests</th><th>Ratio</th></tr></thead><tbody>
+            ${w.departmentWorkload.map(d => `<tr><td>${esc(d.name)}</td><td>${d.staff_count}</td><td>${d.pending}</td><td>${d.staff_count > 0 ? (d.pending / d.staff_count).toFixed(1) : '—'}</td></tr>`).join('')}
+          </tbody></table></div>
+        </div>
+
+        <div class="card p-4 mt-5">
+          <h4 class="serif text-xl mb-1">Peak Hours Heatmap <span class="text-xs font-normal" style="color:var(--muted);">(requests by hour, 30 days)</span></h4>
+          <div style="overflow-x:auto;margin-top:12px;">
+            <div style="display:grid;grid-template-columns:100px repeat(24,minmax(20px,1fr));gap:2px;min-width:700px;">
+              <div></div>${hours.map(h => `<div class="text-xs text-center" style="color:var(--muted);">${h}</div>`).join('')}
+              ${services.map(svc => `<div class="text-xs" style="color:var(--muted);align-self:center;">${esc(svc)}</div>${hours.map(h => {
+                const v = volByServiceHour[`${svc}-${h}`] || 0;
+                const alpha = v ? Math.max(0.15, v / maxVol) : 0.04;
+                return `<div title="${v} requests" style="aspect-ratio:1;border-radius:3px;background:rgba(201,162,39,${alpha});"></div>`;
+              }).join('')}`).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="card p-4 mt-5">
+          <h4 class="serif text-xl mb-1">Suggested Reassignments</h4>
+          <p class="text-xs mb-3" style="color:var(--muted);">${esc(w.methodologyNote)}</p>
+          ${w.suggestions.length ? w.suggestions.map(s => `<div class="flex items-center justify-between py-2" style="border-bottom:1px solid var(--line);">
+            <div class="text-sm">Room ${esc(s.roomNumber)} · ${esc(s.service)} <span class="text-xs" style="color:var(--muted);">waiting since ${fmt(s.waitingSince)}</span></div>
+            <div class="flex items-center gap-2"><span class="text-sm">→ ${esc(s.suggestedUserName)} (${s.suggestedUserCurrentLoad} active)</span><button class="btn gold-btn" onclick="applySuggestion(${s.requestId}, ${s.suggestedUserId}, this)">Apply</button></div>
+          </div>`).join('') : `<p class="text-sm" style="color:var(--muted);">No pending unassigned requests right now.</p>`}
+        </div>`;
+    } catch (err) { wrap.innerHTML = errorState(err.message, 'renderWorkloadTab()'); }
+  }
+
+  async function applySuggestion(requestId, userId, btn) {
+    window.LuxeUI?.loading(btn, true);
+    try {
+      await api(`/api/hotel-admin/requests/${requestId}/assign`, { method: 'POST', body: JSON.stringify({ userId }) });
+      window.LuxeUI?.toast('success', 'Assigned', '');
+      renderWorkloadTab();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Assignment failed', err.message);
+      window.LuxeUI?.loading(btn, false);
+    }
+  }
+
+  const ACHIEVEMENT_CATEGORIES = [
+    ['top_performer', 'fa-medal', 'Top Performer'],
+    ['fastest_response', 'fa-bolt', 'Fastest Response'],
+    ['highest_completion_rate', 'fa-circle-check', 'Highest Completion Rate'],
+    ['most_reliable', 'fa-shield-heart', 'Most Reliable Employee'],
+    ['employee_of_month', 'fa-crown', 'Employee of the Month'],
+    ['department_of_month', 'fa-building-flag', 'Department of the Month']
+  ];
+
+  async function loadAchievements() {
+    const section = $('section-achievements');
+    setSectionLoading('section-achievements');
+    if (!state.achievementsMonth) state.achievementsMonth = new Date().toISOString().slice(0, 7);
+    try {
+      await loadReferenceData();
+      section.innerHTML = `
+        <div class="flex items-center gap-3 mb-5">
+          <input type="month" class="input" value="${state.achievementsMonth}" onchange="state.achievementsMonth=this.value; loadAchievements();" style="width:auto;">
+          <p class="text-sm" style="color:var(--muted);">Recognition for this period</p>
+        </div>
+        <div id="standingsGrid"></div>
+        <h3 class="serif text-2xl mt-8 mb-3"><i class="fas fa-award gold"></i> Hall of Fame</h3>
+        <div id="hallOfFame"></div>`;
+      await renderStandings();
+      await renderHallOfFame();
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadAchievements()'); }
+  }
+
+  async function renderStandings() {
+    const grid = $('standingsGrid');
+    grid.innerHTML = `<p style="color:var(--muted);"><i class="fas fa-circle-notch fa-spin"></i> Loading…</p>`;
+    try {
+      const data = await api(`/api/hotel-admin/achievements/standings?month=${state.achievementsMonth}`);
+      grid.innerHTML = `
+        <div class="card p-3 mb-4 text-xs flex gap-2" style="color:var(--muted);"><i class="fas fa-circle-info gold mt-0.5"></i><span>${esc(data.methodologyNote)}</span></div>
+        <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">
+          ${ACHIEVEMENT_CATEGORIES.map(([key, icon, label]) => {
+            const winner = data.standings[key];
+            const awarded = data.awardedCategories.includes(key);
+            return `<div class="card p-5">
+              <div class="flex items-center gap-2 mb-3"><i class="fas ${icon} gold text-xl"></i><h4 class="serif text-xl">${label}</h4></div>
+              ${winner ? `
+                <div class="text-lg font-bold">${esc(winner.name)}</div>
+                <div class="text-xs" style="color:var(--muted);">${esc(winner.department || '')}</div>
+                <div class="mt-2 badge status-active">${esc(winner.valueLabel)}</div>
+                <button class="btn ${awarded ? '' : 'gold-btn'} mt-4 w-full" ${awarded ? 'disabled' : ''} onclick="awardAchievement('${key}', ${winner.userId ?? 'null'}, ${winner.departmentId ?? 'null'}, '${esc(winner.valueLabel)}', this)">
+                  <i class="fas ${awarded ? 'fa-check' : 'fa-trophy'}"></i> ${awarded ? 'Awarded' : 'Award'}
+                </button>` :
+                `<p class="text-sm mt-2" style="color:var(--muted);">Not enough data yet this period.</p>`}
+            </div>`;
+          }).join('')}
+        </div>`;
+    } catch (err) { grid.innerHTML = errorState(err.message, 'renderStandings()'); }
+  }
+
+  async function awardAchievement(category, userId, departmentId, valueLabel, btn) {
+    window.LuxeUI?.loading(btn, true);
+    try {
+      await api('/api/hotel-admin/achievements/award', {
+        method: 'POST',
+        body: JSON.stringify({ period: state.achievementsMonth, category, userId, departmentId, valueLabel })
+      });
+      window.LuxeUI?.toast('success', 'Achievement awarded', '');
+      await renderStandings();
+      await renderHallOfFame();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Award failed', err.message);
+      window.LuxeUI?.loading(btn, false);
+    }
+  }
+
+  async function renderHallOfFame() {
+    const wrap = $('hallOfFame');
+    wrap.innerHTML = `<p style="color:var(--muted);"><i class="fas fa-circle-notch fa-spin"></i> Loading…</p>`;
+    try {
+      const awards = await api('/api/hotel-admin/achievements');
+      const byPeriod = awards.reduce((acc, a) => { (acc[a.period] = acc[a.period] || []).push(a); return acc; }, {});
+      const periods = Object.keys(byPeriod).sort().reverse();
+      wrap.innerHTML = periods.length ? periods.map(period => `
+        <div class="card p-4 mb-4">
+          <h4 class="serif text-xl mb-3">${new Date(period + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h4>
+          <div class="grid gap-2" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));">
+            ${byPeriod[period].map(a => {
+              const catInfo = ACHIEVEMENT_CATEGORIES.find(c => c[0] === a.category);
+              return `<div class="flex items-center justify-between text-sm py-2" style="border-bottom:1px solid var(--line);">
+                <span><i class="fas ${catInfo ? catInfo[1] : 'fa-award'} gold mr-2"></i>${catInfo ? catInfo[2] : a.category}: <strong>${esc(a.user_name || a.department_name || '—')}</strong> <span class="text-xs" style="color:var(--muted);">${esc(a.value_label || '')}</span></span>
+                <button class="btn" onclick="revokeAchievement(${a.id})" title="Revoke"><i class="fas fa-xmark"></i></button>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`).join('') : emptyState('No achievements awarded yet', 'Award standings above to build your Hall of Fame.');
+    } catch (err) { wrap.innerHTML = errorState(err.message, 'renderHallOfFame()'); }
+  }
+
+  async function revokeAchievement(id) {
+    if (!confirm('Revoke this achievement?')) return;
+    try {
+      await api(`/api/hotel-admin/achievements/${id}`, { method: 'DELETE' });
+      window.LuxeUI?.toast('success', 'Achievement revoked', '');
+      renderStandings(); renderHallOfFame();
+    } catch (err) {
+      window.LuxeUI?.toast('error', 'Failed to revoke', err.message);
+    }
+  }
+
+  function svgLineChart(points, { color = 'var(--gold)', height = 130, valueFormatter = v => v } = {}) {
+    if (!points.length) return `<p class="text-sm" style="color:var(--muted);">No data for this period.</p>`;
+    const width = 600;
+    const padding = 24;
+    const values = points.map(p => p.value);
+    const max = Math.max(...values, 1);
+    const min = Math.min(...values, 0);
+    const range = max - min || 1;
+    const stepX = (width - padding * 2) / Math.max(1, points.length - 1);
+    const coords = points.map((p, i) => {
+      const x = padding + i * stepX;
+      const y = padding + (height - padding * 2) * (1 - (p.value - min) / range);
+      return { x, y, ...p };
+    });
+    const path = coords.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
+    const area = `${path} L${coords[coords.length - 1].x.toFixed(1)},${height - padding} L${coords[0].x.toFixed(1)},${height - padding} Z`;
+    return `<svg viewBox="0 0 ${width} ${height}" style="width:100%;height:${height}px;overflow:visible;">
+      <path d="${area}" fill="${color}" opacity="0.08"></path>
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="2"></path>
+      ${coords.map(c => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3" fill="${color}"><title>${esc(c.label)}: ${esc(valueFormatter(c.value))}</title></circle>`).join('')}
+      ${coords.filter((c, i) => i % Math.ceil(coords.length / 6 || 1) === 0).map(c => `<text x="${c.x.toFixed(1)}" y="${height - 4}" font-size="9" fill="var(--muted)" text-anchor="middle">${esc(c.label)}</text>`).join('')}
+    </svg>`;
+  }
+
+  function cssBarChart(points, { color = 'var(--gold)', height = 130, valueFormatter = v => v } = {}) {
+    if (!points.length) return `<p class="text-sm" style="color:var(--muted);">No data for this period.</p>`;
+    const max = Math.max(...points.map(p => p.value), 1);
+    return `<div class="flex items-end gap-1" style="height:${height}px;">
+      ${points.map(p => `<div class="flex-1 flex flex-col items-center justify-end h-full" title="${esc(p.label)}: ${esc(valueFormatter(p.value))}">
+        <div style="width:100%;background:${color};border-radius:3px 3px 0 0;height:${Math.max(2, (p.value / max) * (height - 20))}px;"></div>
+        <div class="text-xs mt-1" style="color:var(--muted);white-space:nowrap;">${esc(p.label)}</div>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  async function loadAnalytics() {
+    const section = $('section-analytics');
+    setSectionLoading('section-analytics');
+    try {
+      const data = await api('/api/hotel-admin/analytics');
+
+      const volumePoints = data.requestVolumeTrend.map(r => ({ label: new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), value: r.total }));
+      const completionPoints = data.completionRateTrend.map(r => ({ label: new Date(r.week).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), value: r.rate }));
+      const responsePoints = data.responseTimeTrend.map(r => ({ label: new Date(r.week).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), value: r.avgMinutes }));
+      const attendancePoints = data.attendanceTrend.filter(r => r.rate !== null).map(r => ({ label: new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), value: r.rate }));
+      const deptPoints = data.departmentComparison.filter(d => d.completionRate !== null).map(d => ({ label: d.name, value: d.completionRate }));
+      const utilPoints = data.staffUtilization.map(u => ({ label: `${u.bucket} active`, value: u.count }));
+
+      section.innerHTML = `
+        <div class="grid gap-5" style="grid-template-columns:repeat(auto-fit,minmax(400px,1fr));">
+          <div class="card p-5"><h3 class="serif text-xl mb-3">Request Volume <span class="text-xs font-normal" style="color:var(--muted);">(daily, 30 days)</span></h3>${cssBarChart(volumePoints, { valueFormatter: v => `${v} requests` })}</div>
+          <div class="card p-5"><h3 class="serif text-xl mb-3">Completion Rate Trend <span class="text-xs font-normal" style="color:var(--muted);">(weekly, 10 weeks)</span></h3>${svgLineChart(completionPoints, { valueFormatter: v => `${v}%` })}</div>
+          <div class="card p-5"><h3 class="serif text-xl mb-3">Response Time Trend <span class="text-xs font-normal" style="color:var(--muted);">(weekly avg minutes)</span></h3>${svgLineChart(responsePoints, { valueFormatter: v => `${v} min` })}</div>
+          <div class="card p-5"><h3 class="serif text-xl mb-3">Attendance Trend <span class="text-xs font-normal" style="color:var(--muted);">(daily rate, 30 days)</span></h3>${cssBarChart(attendancePoints, { valueFormatter: v => `${v}%` })}</div>
+          <div class="card p-5"><h3 class="serif text-xl mb-3">Department Comparison <span class="text-xs font-normal" style="color:var(--muted);">(completion rate)</span></h3>${cssBarChart(deptPoints, { valueFormatter: v => `${v}%` })}</div>
+          <div class="card p-5"><h3 class="serif text-xl mb-3">Staff Utilization <span class="text-xs font-normal" style="color:var(--muted);">(current active-request load)</span></h3>${cssBarChart(utilPoints, { valueFormatter: v => `${v} staff` })}</div>
+        </div>
+        <p class="text-xs mt-4" style="color:var(--muted);"><i class="fas fa-circle-info gold"></i> For real-time peak-hours coverage and staff workload, see the Workload Balancing tab under Request Assignment.</p>`;
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadAnalytics()'); }
+  }
+
   async function loadShifts() {
     const section = $('section-shifts');
     setSectionLoading('section-shifts');
@@ -1263,6 +1770,14 @@
     } catch (err) { section.innerHTML = errorState(err.message, 'loadAudit()'); }
   }
 
+  const NOTIFICATION_TYPES = [
+    ['staff_announcement', 'fa-bullhorn', 'Staff Announcement', 'Sent to all active staff'],
+    ['department_announcement', 'fa-building', 'Department Announcement', 'Sent to one department'],
+    ['emergency_alert', 'fa-triangle-exclamation', 'Emergency Alert', 'Critical — sent to all active staff'],
+    ['shift_notification', 'fa-clock', 'Shift Notification', 'Sent to staff on a specific shift'],
+    ['policy_update', 'fa-file-contract', 'Policy Update', 'Sent to all active staff']
+  ];
+
   async function loadNotifications() {
     const section = $('section-notifications');
     setSectionLoading('section-notifications');
@@ -1270,23 +1785,71 @@
       await loadReferenceData();
       const rows = await api('/api/hotel-admin/notifications');
       section.innerHTML = `
-        <div class="grid gap-5" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));">
+        <div class="grid gap-5" style="grid-template-columns:minmax(280px,1fr) minmax(320px,1.3fr);align-items:start;">
           <form id="notificationForm" class="card p-5 space-y-4">
-            <h3 class="serif text-2xl">Send Notice</h3>
+            <h3 class="serif text-2xl">Communication Center</h3>
+            <select name="type" id="notifTypeSelect">${NOTIFICATION_TYPES.map(([val, , label]) => `<option value="${val}">${label}</option>`).join('')}</select>
+            <p id="notifTypeHint" class="text-xs" style="color:var(--muted);">${NOTIFICATION_TYPES[0][3]}</p>
+            <select name="departmentId" id="notifDeptSelect" class="hidden">${optionList(state.cache.departments, null)}</select>
+            <select name="targetShiftId" id="notifShiftSelect" class="hidden">${optionList(state.cache.shifts, null)}</select>
+            <select name="severity" id="notifSeveritySelect"><option value="normal">Normal</option><option value="high">High</option><option value="critical">Critical</option></select>
             <input name="title" class="input" placeholder="Title" required>
-            <select name="type"><option value="announcement">Announcement</option><option value="department">Department Notice</option><option value="maintenance">Maintenance Notice</option></select>
-            <select name="departmentId">${optionList(state.cache.departments, null)}</select>
-            <textarea name="message" placeholder="Message" required></textarea>
-            <button class="btn gold-btn" type="submit"><i class="fas fa-paper-plane"></i> Send</button>
+            <textarea name="message" class="input" placeholder="Message" rows="4" required></textarea>
+            <button class="btn gold-btn w-full" type="submit"><i class="fas fa-paper-plane"></i> Send</button>
           </form>
-          <div class="card p-5"><h3 class="serif text-2xl mb-4">Delivery Status</h3>${rows.length ? `<div class="space-y-3">${rows.map(row => `<div class="card p-3"><div class="flex justify-between gap-3"><strong>${esc(row.title)}</strong>${badge(row.delivery_status)}</div><p class="text-sm mt-2" style="color:var(--muted);">${esc(row.message)}</p><div class="text-xs mt-2" style="color:var(--muted);">${fmt(row.created_at)}</div></div>`).join('')}</div>` : emptyState('No notifications', 'Sent notices will appear here.')}</div>
+          <div class="card p-5">
+            <h3 class="serif text-2xl mb-4">Recent Notices</h3>
+            ${rows.length ? `<div class="space-y-3">${rows.map(row => {
+              const typeInfo = NOTIFICATION_TYPES.find(t => t[0] === row.type);
+              const isCritical = row.severity === 'critical';
+              return `<div class="card p-3" style="${isCritical ? 'border-color:#c0524f;background:rgba(192,82,79,0.06);' : ''}">
+                <div class="flex justify-between gap-3 items-start">
+                  <strong><i class="fas ${typeInfo ? typeInfo[1] : 'fa-bell'} ${isCritical ? '' : 'gold'} mr-1" style="${isCritical ? 'color:#c0524f;' : ''}"></i>${esc(row.title)}</strong>
+                  ${badge(row.delivery_status)}
+                </div>
+                <p class="text-sm mt-2" style="color:var(--muted);">${esc(row.message)}</p>
+                <div class="text-xs mt-2 flex gap-3 flex-wrap" style="color:var(--muted);">
+                  <span>${esc(typeInfo ? typeInfo[2] : row.type)}</span>
+                  ${row.department_name ? `<span>· ${esc(row.department_name)}</span>` : ''}
+                  ${row.shift_name ? `<span>· ${esc(row.shift_name)} shift</span>` : ''}
+                  <span>· ${row.recipient_count} recipient${row.recipient_count === 1 ? '' : 's'}</span>
+                  <span>· by ${esc(row.sender_name || 'System')}</span>
+                  <span>· ${fmt(row.created_at)}</span>
+                </div>
+              </div>`;
+            }).join('')}</div>` : emptyState('No notices sent', 'Announcements, alerts, and policy updates will appear here.')}
+          </div>
         </div>`;
+
+      const typeSelect = $('notifTypeSelect');
+      const updateFormVisibility = () => {
+        const type = typeSelect.value;
+        $('notifDeptSelect').classList.toggle('hidden', type !== 'department_announcement');
+        $('notifShiftSelect').classList.toggle('hidden', type !== 'shift_notification');
+        const info = NOTIFICATION_TYPES.find(t => t[0] === type);
+        $('notifTypeHint').textContent = info ? info[3] : '';
+        if (type === 'emergency_alert') { $('notifSeveritySelect').value = 'critical'; $('notifSeveritySelect').disabled = true; }
+        else { $('notifSeveritySelect').disabled = false; }
+      };
+      typeSelect.addEventListener('change', updateFormVisibility);
+      updateFormVisibility();
+
       $('notificationForm').addEventListener('submit', async event => {
         event.preventDefault();
-        const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+        const form = event.currentTarget;
+        const submitBtn = form.querySelector('button[type="submit"]');
+        const payload = Object.fromEntries(new FormData(form).entries());
         payload.departmentId = payload.departmentId ? Number(payload.departmentId) : null;
-        await api('/api/hotel-admin/notifications', { method: 'POST', body: JSON.stringify(payload) });
-        loadNotifications();
+        payload.targetShiftId = payload.targetShiftId ? Number(payload.targetShiftId) : null;
+        window.LuxeUI?.loading(submitBtn, true, 'Sending…');
+        try {
+          const result = await api('/api/hotel-admin/notifications', { method: 'POST', body: JSON.stringify(payload) });
+          window.LuxeUI?.toast('success', 'Notice sent', `Delivered to ${result.recipient_count} recipient${result.recipient_count === 1 ? '' : 's'}.`);
+          loadNotifications();
+        } catch (err) {
+          window.LuxeUI?.toast('error', 'Send failed', err.message);
+          window.LuxeUI?.loading(submitBtn, false);
+        }
       });
     } catch (err) { section.innerHTML = errorState(err.message, 'loadNotifications()'); }
   }
@@ -1302,7 +1865,10 @@
         user_activity: data.userActivity.records,
         request_summary: data.requestSummary.records,
         completion_rates: data.completionRates.records,
-        executive_summary: data.requestSummary.records
+        executive_summary: data.requestSummary.records,
+        attendance_report: data.attendanceReport.records,
+        leave_report: data.leaveReport.records,
+        shift_performance_report: data.shiftPerformanceReport.records
       };
       const reportTypes = data.reportTypes || [];
       if (!state.reportPeriod) state.reportPeriod = 30;
@@ -1809,7 +2375,7 @@
     return `<div class="card p-5"><h3 class="serif text-2xl mb-3">${esc(title)}</h3>${rows.length ? `<div class="space-y-2">${rows.map(row => `<div class="card p-3 text-sm">${esc(row)}</div>`).join('')}</div>` : emptyState(`No ${title.toLowerCase()}`, 'Nothing has been recorded for this category.')}</div>`;
   }
 
-  const loaders = { dashboard: loadDashboard, branding: loadBranding, users: loadUsers, roles: loadRoles, departments: loadDepartments, performance: loadPerformance, attendance: loadAttendance, shifts: loadShifts, audit: loadAudit, notifications: loadNotifications, reports: loadReports, settings: loadSettings, security: loadSecurity };
+  const loaders = { dashboard: loadDashboard, realtime: loadRealtime, branding: loadBranding, users: loadUsers, roles: loadRoles, departments: loadDepartments, performance: loadPerformance, attendance: loadAttendance, requests: loadRequestAssignment, achievements: loadAchievements, analytics: loadAnalytics, shifts: loadShifts, audit: loadAudit, notifications: loadNotifications, reports: loadReports, settings: loadSettings, security: loadSecurity };
 
   function debounce(fn, delay) {
     let timer;
@@ -1855,6 +2421,7 @@
       state.user = me.user;
       $('appScreen').classList.remove('hidden');
       navigate('dashboard');
+      connectRealtimeSocket();
     } catch (err) {
       clearSession();
     }

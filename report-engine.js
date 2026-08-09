@@ -40,6 +40,21 @@ const REPORT_TYPES = {
     title: 'User Activity Report',
     subtitle: 'Staff account activity summary',
     sections: ['kpis', 'staffTable', 'insights']
+  },
+  attendance_report: {
+    title: 'Attendance Report',
+    subtitle: 'Clock-in reliability and coverage',
+    sections: ['attendanceKpis', 'attendanceTable', 'insights']
+  },
+  leave_report: {
+    title: 'Leave Report',
+    subtitle: 'Leave requests and approvals',
+    sections: ['leaveKpis', 'leaveTable', 'insights']
+  },
+  shift_performance_report: {
+    title: 'Shift Performance Report',
+    subtitle: 'Coverage, conflicts, and vacancy',
+    sections: ['shiftKpis', 'shiftCoverageTable', 'insights']
   }
 };
 
@@ -170,6 +185,74 @@ async function collectMetrics(pool, hotelId, periodDays) {
     byService: byServiceRes.rows,
     byDay: byDayRes.rows,
     staffPerformance: staffPerfRes.rows
+  };
+}
+
+async function collectWorkforceExtras(pool, hotelId, periodDays) {
+  const [attendanceSummaryRes, attendanceByEmployeeRes, leaveSummaryRes, leaveListRes, shiftSummaryRes, coverageRes] = await Promise.all([
+    pool.query(
+      `SELECT COUNT(*) FILTER (WHERE status = 'present')::int AS present,
+              COUNT(*) FILTER (WHERE status = 'late')::int AS late,
+              COUNT(*) FILTER (WHERE status = 'absent')::int AS absent,
+              COUNT(*) FILTER (WHERE status = 'half-day')::int AS half_day,
+              COUNT(*)::int AS total,
+              COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (clock_out - clock_in)) / 3600) FILTER (WHERE clock_in IS NOT NULL AND clock_out IS NOT NULL), 1), 0) AS avg_hours
+       FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date >= NOW() - ($2 || ' days')::interval`,
+      [hotelId, periodDays]
+    ),
+    pool.query(
+      `SELECT u.full_name, d.name AS department_name,
+              COUNT(*) FILTER (WHERE a.status = 'present')::int AS present,
+              COUNT(*) FILTER (WHERE a.status = 'late')::int AS late,
+              COUNT(*) FILTER (WHERE a.status = 'absent')::int AS absent,
+              COUNT(*)::int AS total
+       FROM hotel_admin_attendance a
+       JOIN hotel_admin_users u ON u.id = a.user_id AND u.deleted_at IS NULL
+       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
+       WHERE a.hotel_id = $1 AND a.attendance_date >= NOW() - ($2 || ' days')::interval
+       GROUP BY u.id, u.full_name, d.name ORDER BY late DESC, absent DESC LIMIT 15`,
+      [hotelId, periodDays]
+    ),
+    pool.query(
+      `SELECT leave_type, status, COUNT(*)::int AS count
+       FROM hotel_admin_leave_requests WHERE hotel_id = $1 AND created_at >= NOW() - ($2 || ' days')::interval
+       GROUP BY leave_type, status`,
+      [hotelId, periodDays]
+    ),
+    pool.query(
+      `SELECT l.leave_type, l.custom_type_label, l.start_date, l.end_date, l.status, u.full_name
+       FROM hotel_admin_leave_requests l JOIN hotel_admin_users u ON u.id = l.user_id
+       WHERE l.hotel_id = $1 AND l.created_at >= NOW() - ($2 || ' days')::interval
+       ORDER BY l.start_date DESC LIMIT 20`,
+      [hotelId, periodDays]
+    ),
+    pool.query(
+      `SELECT COUNT(*)::int AS total_scheduled, COUNT(DISTINCT user_id)::int AS staff_scheduled
+       FROM hotel_admin_shift_schedule WHERE hotel_id = $1 AND shift_date >= NOW() - ($2 || ' days')::interval`,
+      [hotelId, periodDays]
+    ),
+    pool.query(
+      `SELECT s.name, s.start_time, s.end_time, COUNT(sc.id)::int AS scheduled_count
+       FROM hotel_admin_shifts s
+       LEFT JOIN hotel_admin_shift_schedule sc ON sc.shift_id = s.id AND sc.shift_date >= NOW() - ($2 || ' days')::interval
+       WHERE s.hotel_id = $1 GROUP BY s.id ORDER BY s.name`,
+      [hotelId, periodDays]
+    )
+  ]);
+
+  const leaveTotals = leaveSummaryRes.rows.reduce((acc, row) => {
+    acc.total += row.count;
+    acc[row.status] = (acc[row.status] || 0) + row.count;
+    return acc;
+  }, { total: 0, pending: 0, approved: 0, rejected: 0 });
+
+  const attendance = attendanceSummaryRes.rows[0] || {};
+  const attendanceRate = attendance.total > 0 ? Math.round(((attendance.present + attendance.late + attendance.half_day) / attendance.total) * 100) : 0;
+
+  return {
+    attendance: { ...attendance, attendanceRate, byEmployee: attendanceByEmployeeRes.rows },
+    leave: { totals: leaveTotals, byType: leaveSummaryRes.rows, list: leaveListRes.rows },
+    shifts: { ...shiftSummaryRes.rows[0], coverage: coverageRes.rows }
   };
 }
 
@@ -398,6 +481,8 @@ async function generateReportPdf({ pool, hotelId, hotelName, adminName, reportTy
   const period = Number(periodDays) > 0 ? Number(periodDays) : 30;
 
   const data = await collectMetrics(pool, hotelId, period);
+  const needsWorkforceExtras = config.sections.some(s => s.startsWith('attendance') || s.startsWith('leave') || s.startsWith('shift'));
+  const extras = needsWorkforceExtras ? await collectWorkforceExtras(pool, hotelId, period) : null;
   const brandColors = data.hotel.brand_colors || {};
   const primary = brandColors.primary || '#c9a227';
   const secondary = brandColors.secondary || '#15130f';
@@ -516,6 +601,82 @@ async function generateReportPdf({ pool, hotelId, hotelName, adminName, reportTy
       });
     } else {
       doc.font('Helvetica').fontSize(10).fillColor('#8a8070').text('No notable patterns detected for this period.');
+    }
+  }
+
+  if (config.sections.includes('attendanceKpis')) {
+    sectionHeading(doc, 'Attendance Overview', primary);
+    drawKpiGrid(doc, [
+      { label: 'Attendance Rate', value: `${extras.attendance.attendanceRate}%` },
+      { label: 'Present', value: extras.attendance.present || 0 },
+      { label: 'Late', value: extras.attendance.late || 0 },
+      { label: 'Absent', value: extras.attendance.absent || 0 },
+      { label: 'Half-day', value: extras.attendance.half_day || 0 },
+      { label: 'Avg Hours Worked', value: extras.attendance.avg_hours || 0 }
+    ], primary);
+    doc.moveDown(0.5);
+  }
+
+  if (config.sections.includes('attendanceTable')) {
+    sectionHeading(doc, 'Attendance by Employee', primary);
+    if (extras.attendance.byEmployee.length) {
+      drawTable(doc,
+        ['Employee', 'Department', 'Present', 'Late', 'Absent'],
+        extras.attendance.byEmployee.map(e => [e.full_name, e.department_name || 'Unassigned', e.present, e.late, e.absent]),
+        [160, 130, 78, 78, 78], primary
+      );
+    } else {
+      doc.font('Helvetica').fontSize(10).fillColor('#8a8070').text('No attendance records for this period.');
+      doc.moveDown();
+    }
+  }
+
+  if (config.sections.includes('leaveKpis')) {
+    sectionHeading(doc, 'Leave Overview', primary);
+    drawKpiGrid(doc, [
+      { label: 'Total Requests', value: extras.leave.totals.total },
+      { label: 'Approved', value: extras.leave.totals.approved || 0 },
+      { label: 'Pending', value: extras.leave.totals.pending || 0 },
+      { label: 'Rejected', value: extras.leave.totals.rejected || 0 }
+    ], primary);
+    doc.moveDown(0.5);
+  }
+
+  if (config.sections.includes('leaveTable')) {
+    sectionHeading(doc, 'Leave Requests', primary);
+    if (extras.leave.list.length) {
+      drawTable(doc,
+        ['Employee', 'Type', 'Start', 'End', 'Status'],
+        extras.leave.list.map(l => [l.full_name, l.custom_type_label || l.leave_type, l.start_date.toISOString().slice(0, 10), l.end_date.toISOString().slice(0, 10), l.status]),
+        [140, 110, 90, 90, 94], primary
+      );
+    } else {
+      doc.font('Helvetica').fontSize(10).fillColor('#8a8070').text('No leave requests for this period.');
+      doc.moveDown();
+    }
+  }
+
+  if (config.sections.includes('shiftKpis')) {
+    sectionHeading(doc, 'Shift Coverage Overview', primary);
+    drawKpiGrid(doc, [
+      { label: 'Total Scheduled', value: extras.shifts.total_scheduled || 0 },
+      { label: 'Staff Scheduled', value: extras.shifts.staff_scheduled || 0 },
+      { label: 'Shift Templates', value: extras.shifts.coverage.length }
+    ], primary);
+    doc.moveDown(0.5);
+  }
+
+  if (config.sections.includes('shiftCoverageTable')) {
+    sectionHeading(doc, 'Coverage by Shift', primary);
+    if (extras.shifts.coverage.length) {
+      drawTable(doc,
+        ['Shift', 'Hours', 'Times Scheduled (period)'],
+        extras.shifts.coverage.map(s => [s.name, `${s.start_time || '—'} - ${s.end_time || '—'}`, s.scheduled_count]),
+        [180, 180, 152], primary
+      );
+    } else {
+      doc.font('Helvetica').fontSize(10).fillColor('#8a8070').text('No shift templates configured yet.');
+      doc.moveDown();
     }
   }
 
