@@ -10,8 +10,8 @@
  *   - hotel name into the guest logo text (request.html)
  *
  * Fails silently on any error so a missing/misconfigured hotel never breaks
- * the page. Include it once, right before </body>:
- *   <script src="branding-loader.js"></script>
+ * the page. Include it once per page (inline or external), near the end
+ * of the body.
  */
 (function () {
   function getHotelId() {

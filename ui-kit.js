@@ -2,8 +2,7 @@
  * ui-kit.js
  *
  * Shared, dependency-free luxury UI feedback kit: toast notifications and
- * button loading states. Drop into any page with:
- *   <script src="ui-kit.js"></script>
+ * button loading states. Include it once per page (inline or external).
  *
  * Usage:
  *   LuxeUI.toast('success', 'Welcome back', 'Redirecting to your dashboard…');
