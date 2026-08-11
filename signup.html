@@ -310,12 +310,19 @@
       verificationBox.style.display = 'none';
     }
 
-    function showSuccess(message) {
+    function showSuccess(message, emailDelivered) {
       successMsg.textContent = message;
       successMsg.classList.add('show');
       errorMsg.classList.remove('show');
-      verificationBox.textContent = 'A verification email has been sent. Please check your inbox and follow the secure link there.';
-      verificationBox.style.display = 'block';
+      if (emailDelivered) {
+        verificationBox.textContent = 'A verification email has been sent. Please check your inbox and follow the secure link there.';
+        verificationBox.style.display = 'block';
+      } else {
+        // Don't contradict the message above by claiming the email sent
+        // when it didn't — just hide the box instead of showing two
+        // conflicting statements.
+        verificationBox.style.display = 'none';
+      }
     }
 
     form.addEventListener('submit', async (event) => {
@@ -352,8 +359,8 @@
 
         if (data.requiresVerification) {
           const msg = data.message || 'Account created. Please verify your email before signing in.';
-          showSuccess(msg);
-          window.LuxeUI?.toast('success', 'Hotel account created', 'Check your inbox for a verification link.');
+          showSuccess(msg, data.emailDelivered);
+          window.LuxeUI?.toast('success', 'Hotel account created', data.emailDelivered ? 'Check your inbox for a verification link.' : 'Contact support to verify your account manually.');
           form.reset();
           return;
         }

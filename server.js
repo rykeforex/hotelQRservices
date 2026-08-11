@@ -1125,6 +1125,7 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(201).json({
         ok: true,
         requiresVerification: true,
+        emailDelivered: !emailResult.skipped,
         message: emailResult.skipped
           ? 'Account created. Please verify your email before signing in. Your verification email could not be delivered automatically.'
           : 'Account created. Please verify your email before signing in.',
@@ -1196,6 +1197,7 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(201).json({
       ok: true,
       requiresVerification: true,
+      emailDelivered: !emailResult.skipped,
       message: emailResult.skipped
         ? 'Account created. Please verify your email before signing in. Your verification email could not be delivered automatically.'
         : 'Account created. Please verify your email before signing in.',
