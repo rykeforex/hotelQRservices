@@ -445,6 +445,7 @@
     ['requests', 'fa-clipboard-list', 'Request Assignment'],
     ['achievements', 'fa-trophy', 'Achievements'],
     ['analytics', 'fa-chart-column', 'Workforce Analytics'],
+    ['bi', 'fa-brain', 'Business Intelligence'],
     ['shifts', 'fa-business-time', 'Shifts'],
     ['audit', 'fa-clipboard-list', 'Audit Logs'],
     ['notifications', 'fa-bell', 'Notifications'],
@@ -1739,6 +1740,56 @@
     } catch (err) { section.innerHTML = errorState(err.message, 'loadAnalytics()'); }
   }
 
+  async function loadBI() {
+    const section = $('section-bi');
+    setSectionLoading('section-bi');
+    try {
+      const data = await api('/api/hotel-admin/bi/dashboard');
+      const t = data.trend;
+      const completionDelta = t.currentCompletionRate - t.priorCompletionRate;
+      const responseDelta = t.currentAvgResponse - t.priorAvgResponse;
+      const trendArrow = (delta, goodIsUp) => {
+        if (delta === 0) return '<i class="fas fa-minus" style="color:var(--muted);"></i>';
+        const isGood = goodIsUp ? delta > 0 : delta < 0;
+        return `<i class="fas ${delta > 0 ? 'fa-arrow-up' : 'fa-arrow-down'}" style="color:${isGood ? 'var(--success)' : '#c0524f'};"></i>`;
+      };
+
+      section.innerHTML = `
+        <div class="card p-3 mb-5 text-xs flex gap-2" style="color:var(--muted);"><i class="fas fa-circle-info gold mt-0.5"></i><span>${esc(data.scoreMethodology)}</span></div>
+
+        <div class="grid gap-4 mb-5" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+          <div class="card p-5"><div class="text-xs uppercase" style="color:var(--muted);">Operational Health</div><div class="text-4xl font-bold gold mt-2">${data.scores.operationalHealth}</div></div>
+          <div class="card p-5"><div class="text-xs uppercase" style="color:var(--muted);">Service Performance</div><div class="text-4xl font-bold gold mt-2">${data.scores.servicePerformance}</div></div>
+          <div class="card p-5"><div class="text-xs uppercase" style="color:var(--muted);">Department Efficiency</div><div class="text-4xl font-bold gold mt-2">${data.scores.departmentEfficiency ?? '—'}</div></div>
+          <div class="card p-5"><div class="text-xs uppercase" style="color:var(--muted);">Staff Productivity</div><div class="text-4xl font-bold gold mt-2">${data.scores.staffProductivity ?? '—'}</div></div>
+        </div>
+
+        <div class="grid gap-5 mb-5" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
+          <div class="card p-5">
+            <h3 class="serif text-xl mb-3">Guest Service Trend <span class="text-xs font-normal" style="color:var(--muted);">(30 days vs prior 30 days)</span></h3>
+            <div class="flex justify-between items-center py-2" style="border-bottom:1px solid var(--line);"><span>Completion Rate</span><span>${t.priorCompletionRate}% → ${t.currentCompletionRate}% ${trendArrow(completionDelta, true)}</span></div>
+            <div class="flex justify-between items-center py-2"><span>Avg Response Time</span><span>${t.priorAvgResponse}m → ${t.currentAvgResponse}m ${trendArrow(responseDelta, false)}</span></div>
+          </div>
+          <div class="card p-5">
+            <h3 class="serif text-xl mb-3">Risk Indicators</h3>
+            ${data.riskIndicators.length ? data.riskIndicators.map(r => `<div class="flex items-center gap-2 py-2" style="border-bottom:1px solid var(--line);"><span class="badge status-${r.severity === 'critical' ? 'rejected' : 'pending'}">${r.severity}</span><span class="text-sm">${esc(r.message)}</span></div>`).join('') : `<p class="text-sm" style="color:var(--muted);">No risk indicators flagged right now.</p>`}
+          </div>
+        </div>
+
+        <div class="card p-5 mb-5">
+          <h3 class="serif text-xl mb-3"><i class="fas fa-lightbulb gold"></i> Executive Insights</h3>
+          ${data.insights.length ? data.insights.map(i => `<div class="flex gap-2 py-2" style="border-bottom:1px solid var(--line);"><i class="fas fa-circle gold" style="font-size:.4rem;margin-top:7px;"></i><span class="text-sm">${esc(i)}</span></div>`).join('') : `<p class="text-sm" style="color:var(--muted);">Not enough activity yet to generate insights.</p>`}
+        </div>
+
+        <div class="card p-5">
+          <h3 class="serif text-xl mb-3">Department Efficiency</h3>
+          <div class="table-wrap"><table><thead><tr><th>Department</th><th>Staff</th><th>Requests</th><th>Completion Rate</th><th>Avg Response</th><th>Efficiency Score</th></tr></thead><tbody>
+            ${data.departments.map(d => `<tr><td>${esc(d.name)}</td><td>${d.staffCount}</td><td>${d.requests}</td><td>${d.completionRate === null ? '—' : d.completionRate + '%'}</td><td>${d.avgResponseMinutes}m</td><td>${d.efficiencyScore ?? '—'}</td></tr>`).join('')}
+          </tbody></table></div>
+        </div>`;
+    } catch (err) { section.innerHTML = errorState(err.message, 'loadBI()'); }
+  }
+
   async function loadShifts() {
     const section = $('section-shifts');
     setSectionLoading('section-shifts');
@@ -2570,7 +2621,7 @@
     return `<div class="card p-5"><h3 class="serif text-2xl mb-3">${esc(title)}</h3>${rows.length ? `<div class="space-y-2">${rows.map(row => `<div class="card p-3 text-sm">${esc(row)}</div>`).join('')}</div>` : emptyState(`No ${title.toLowerCase()}`, 'Nothing has been recorded for this category.')}</div>`;
   }
 
-  const loaders = { dashboard: loadDashboard, realtime: loadRealtime, branding: loadBranding, users: loadUsers, roles: loadRoles, departments: loadDepartments, performance: loadPerformance, attendance: loadAttendance, requests: loadRequestAssignment, achievements: loadAchievements, analytics: loadAnalytics, shifts: loadShifts, audit: loadAudit, notifications: loadNotifications, reports: loadReports, settings: loadSettings, security: loadSecurity };
+  const loaders = { dashboard: loadDashboard, realtime: loadRealtime, branding: loadBranding, users: loadUsers, roles: loadRoles, departments: loadDepartments, performance: loadPerformance, attendance: loadAttendance, requests: loadRequestAssignment, achievements: loadAchievements, analytics: loadAnalytics, bi: loadBI, shifts: loadShifts, audit: loadAudit, notifications: loadNotifications, reports: loadReports, settings: loadSettings, security: loadSecurity };
 
   function debounce(fn, delay) {
     let timer;

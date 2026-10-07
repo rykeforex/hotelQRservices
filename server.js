@@ -3121,6 +3121,170 @@ app.get('/api/hotel-admin/analytics', requireHotelAdmin, async (req, res) => {
   }
 });
 
+// ============================================================
+// Business Intelligence — Executive Dashboard + Insights
+// Every score, trend, and insight below is computed from real
+// data with a documented formula. No forecasting here — that
+// lives in a separate Predictive Analytics module so "real
+// history" and "projection" are never blurred together.
+// ============================================================
+app.get('/api/hotel-admin/bi/dashboard', requireHotelAdmin, async (req, res) => {
+  try {
+    const hotelId = req.hotelAdmin.hotel_id;
+    const [
+      currentRes, priorRes, deptRes, staffRes, attendanceRes, hourlyRes, repeatIssuesRes, lockedRes
+    ] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+                COUNT(*) FILTER (WHERE escalated)::int AS escalated,
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_response
+         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_response
+         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days'`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT d.id, d.name, COUNT(DISTINCT u.id)::int AS staff_count,
+                COUNT(r.id)::int AS total, COUNT(r.id) FILTER (WHERE r.status = 'completed')::int AS completed,
+                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (r.updated_at - r.created_at)) / 60) FILTER (WHERE r.status = 'completed')), 0)::int AS avg_response
+         FROM hotel_admin_departments d
+         LEFT JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
+         LEFT JOIN requests r ON LOWER(regexp_replace(r.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
+           AND r.hotel_id = d.hotel_id AND r.created_at >= NOW() - INTERVAL '30 days'
+         WHERE d.hotel_id = $1 AND d.status = 'active'
+         GROUP BY d.id ORDER BY d.name`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE is_online = TRUE)::int AS online
+         FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL AND account_status = 'active'`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT COUNT(*) FILTER (WHERE status IN ('present','late','half-day'))::int AS present_like, COUNT(*)::int AS total
+         FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date >= NOW() - INTERVAL '30 days'`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT EXTRACT(HOUR FROM created_at)::int AS hour, COUNT(*)::int AS total
+         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
+         GROUP BY hour ORDER BY hour`,
+        [hotelId]
+      ),
+      pool.query(
+        `SELECT room_number, service, COUNT(*)::int AS occurrences
+         FROM requests WHERE hotel_id = $1 AND service ILIKE '%maintenance%' AND created_at >= NOW() - INTERVAL '30 days'
+         GROUP BY room_number, service HAVING COUNT(*) >= 2 ORDER BY occurrences DESC LIMIT 10`,
+        [hotelId]
+      ),
+      pool.query(`SELECT COUNT(*)::int AS count FROM hotel_admin_users WHERE hotel_id = $1 AND account_status = 'locked' AND deleted_at IS NULL`, [hotelId])
+    ]);
+
+    const current = currentRes.rows[0];
+    const prior = priorRes.rows[0];
+    const staff = staffRes.rows[0];
+    const attendance = attendanceRes.rows[0];
+
+    const currentCompletionRate = current.total > 0 ? Math.round((current.completed / current.total) * 100) : 0;
+    const priorCompletionRate = prior.total > 0 ? Math.round((prior.completed / prior.total) * 100) : 0;
+    const escalationRate = current.total > 0 ? Math.round((current.escalated / current.total) * 100) : 0;
+    const attendanceRate = attendance.total > 0 ? Math.round((attendance.present_like / attendance.total) * 100) : null;
+    const staffOnlineRatio = staff.total > 0 ? staff.online / staff.total : 0;
+
+    const departments = deptRes.rows.map(d => ({
+      id: d.id, name: d.name, staffCount: d.staff_count, requests: d.total, completed: d.completed,
+      completionRate: d.total > 0 ? Math.round((d.completed / d.total) * 100) : null,
+      avgResponseMinutes: d.avg_response,
+      efficiencyScore: d.total > 0 ? computePerformanceScore({ completionRate: Math.round((d.completed / d.total) * 100), avgResponseMinutes: d.avg_response }) : null
+    }));
+
+    const scoredDepts = departments.filter(d => d.efficiencyScore !== null);
+    const departmentEfficiency = scoredDepts.length ? Math.round(scoredDepts.reduce((s, d) => s + d.efficiencyScore, 0) / scoredDepts.length) : null;
+
+    const servicePerformanceScore = computePerformanceScore({ completionRate: currentCompletionRate, avgResponseMinutes: current.avg_response });
+
+    // Operational Health = weighted blend of completion rate, response time,
+    // attendance rate, and staff online ratio. Weights sum to 100%.
+    const operationalHealthScore = Math.round(
+      currentCompletionRate * 0.35 +
+      Math.max(0, 100 - current.avg_response) * 0.25 +
+      (attendanceRate ?? currentCompletionRate) * 0.20 +
+      (staffOnlineRatio * 100) * 0.20
+    );
+
+    const staffProductivity = scoredDepts.length
+      ? Math.round(scoredDepts.reduce((s, d) => s + d.efficiencyScore * Math.max(1, d.staffCount), 0) / scoredDepts.reduce((s, d) => s + Math.max(1, d.staffCount), 0))
+      : null;
+
+    // Risk indicators — only real, threshold-based flags.
+    const riskIndicators = [];
+    if (lockedRes.rows[0].count > 0) riskIndicators.push({ severity: 'warning', message: `${lockedRes.rows[0].count} staff account(s) are locked.` });
+    const understaffed = departments.filter(d => d.staffCount === 0);
+    if (understaffed.length) riskIndicators.push({ severity: 'warning', message: `${understaffed.map(d => d.name).join(', ')} ${understaffed.length === 1 ? 'has' : 'have'} no staff assigned.` });
+    const strugglingDepts = departments.filter(d => d.completionRate !== null && d.requests >= 5 && d.completionRate < 60);
+    if (strugglingDepts.length) riskIndicators.push({ severity: 'critical', message: `${strugglingDepts.map(d => d.name).join(', ')} ${strugglingDepts.length === 1 ? 'is' : 'are'} completing under 60% of requests.` });
+    if (escalationRate > 10) riskIndicators.push({ severity: 'warning', message: `${escalationRate}% of requests this period were escalated.` });
+    if (attendanceRate !== null && attendanceRate < 70) riskIndicators.push({ severity: 'warning', message: `Attendance rate is ${attendanceRate}% over the last 30 days.` });
+    if (repeatIssuesRes.rows.length) riskIndicators.push({ severity: 'warning', message: `${repeatIssuesRes.rows.length} room(s) have repeated maintenance issues this period.` });
+
+    // Insights — auto-generated, plain-language observations from real comparisons.
+    const insights = [];
+    if (departments.length) {
+      const rated = departments.filter(d => d.completionRate !== null && d.requests >= 3);
+      if (rated.length >= 2) {
+        const best = [...rated].sort((a, b) => b.completionRate - a.completionRate)[0];
+        const worst = [...rated].sort((a, b) => a.completionRate - b.completionRate)[0];
+        if (best.id !== worst.id) insights.push(`${best.name} leads on completion rate (${best.completionRate}%), while ${worst.name} trails at ${worst.completionRate}%.`);
+      }
+      const slowest = [...rated].sort((a, b) => b.avgResponseMinutes - a.avgResponseMinutes)[0];
+      if (slowest) insights.push(`${slowest.name} has the slowest average response time at ${slowest.avgResponseMinutes} minutes.`);
+    }
+    if (hourlyRes.rows.length) {
+      const peak = [...hourlyRes.rows].sort((a, b) => b.total - a.total)[0];
+      const low = [...hourlyRes.rows].sort((a, b) => a.total - b.total)[0];
+      insights.push(`Peak request volume occurs around ${peak.hour}:00, with the lowest activity around ${low.hour}:00.`);
+    }
+    if (prior.total >= 5) {
+      const delta = currentCompletionRate - priorCompletionRate;
+      insights.push(`Completion rate has ${delta >= 0 ? 'improved' : 'declined'} by ${Math.abs(delta)} point${Math.abs(delta) === 1 ? '' : 's'} compared to the prior 30 days (${priorCompletionRate}% → ${currentCompletionRate}%).`);
+    }
+    if (repeatIssuesRes.rows.length) {
+      insights.push(`Room ${repeatIssuesRes.rows[0].room_number} has logged ${repeatIssuesRes.rows[0].occurrences} maintenance requests this period — worth a closer look.`);
+    }
+    const busiestDept = [...departments].filter(d => d.requests > 0).sort((a, b) => (b.requests / Math.max(1, b.staffCount)) - (a.requests / Math.max(1, a.staffCount)))[0];
+    if (busiestDept && busiestDept.staffCount > 0 && (busiestDept.requests / busiestDept.staffCount) > 5) {
+      insights.push(`${busiestDept.name} is handling ${(busiestDept.requests / busiestDept.staffCount).toFixed(1)} requests per staff member this period — the highest load-per-person of any department.`);
+    }
+
+    res.json({
+      scores: {
+        operationalHealth: operationalHealthScore,
+        servicePerformance: servicePerformanceScore,
+        departmentEfficiency,
+        staffProductivity
+      },
+      scoreMethodology: 'Operational Health = 35% completion rate + 25% response-time score + 20% attendance rate + 20% staff-online ratio. Service Performance and Department Efficiency = 50% completion rate + 50% response-time score. Staff Productivity = department efficiency scores weighted by headcount.',
+      trend: {
+        currentCompletionRate, priorCompletionRate,
+        currentAvgResponse: current.avg_response, priorAvgResponse: prior.avg_response,
+        currentTotal: current.total, priorTotal: prior.total
+      },
+      departments,
+      riskIndicators,
+      insights,
+      escalationRate,
+      attendanceRate
+    });
+  } catch (err) {
+    console.error('BI dashboard failed:', err);
+    res.status(500).json({ error: 'Failed to load business intelligence dashboard' });
+  }
+});
+
 app.get('/api/hotel-admin/workload', requireHotelAdmin, async (req, res) => {
   try {
     const hotelId = req.hotelAdmin.hotel_id;
