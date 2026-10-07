@@ -88,6 +88,7 @@ This application combines **Supabase client-side operations** with **Socket.io r
    - Set `SUPABASE_SERVICE_ROLE_KEY` in `.env` using the service role key from Supabase API settings.
    - Set `SUPABASE_STORAGE_BUCKET=audio` (the bucket used for voice recordings).
    - Ensure the bucket exists and is set to public access so recordings can be retrieved.
+   - Set `DATABASE_URL` to the PostgreSQL connection URI from **Supabase Dashboard → Project Settings → Database → Connection string → URI**. The hotel admin portal requires this database connection; Supabase URL and API keys alone are not enough. Use the pooler connection string if your hosting provider cannot connect directly.
 
 5. **Configure Confirmation Email**
    - Configure an email provider in the backend environment. Supported options are Resend (`RESEND_API_KEY`), Brevo (`BREVO_API_KEY`), SendGrid (`SENDGRID_API_KEY`), or SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and `SMTP_PASS`).

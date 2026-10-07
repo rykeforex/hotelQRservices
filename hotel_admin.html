@@ -2669,7 +2669,12 @@
       navigate('dashboard');
       connectRealtimeSocket();
     } catch (err) {
-      clearSession();
+      if (!state.token) return;
+      $('sections').innerHTML = errorState(
+        `Could not verify access to the admin portal: ${err.message}. Check the backend database connection and try again.`,
+        'location.reload()'
+      );
+      $('appScreen').classList.remove('hidden');
     }
   }
 

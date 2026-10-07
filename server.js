@@ -1339,6 +1339,11 @@ async function hotelAdminLogin(req, res, { allowDirectorFallback }) {
     const result = await authenticateHotelAdmin(loginIdentifier, password, req);
     if (!result.notFound) {
       if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+      if (!pool) {
+        return res.status(503).json({
+          error: 'Admin portal database is unavailable. Configure DATABASE_URL on the backend and restart the server.'
+        });
+      }
       return res.json({
         role: 'hotel_admin',
         redirectUrl: 'hotel_admin.html',
