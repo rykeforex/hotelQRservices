@@ -10,10 +10,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
-const { generateReportPdf, REPORT_TYPES } = require('./report-engine');
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -70,17 +68,8 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'luxehotel2026';
-const SMTP_HOST = process.env.SMTP_HOST || process.env.BREVO_SMTP_HOST || 'smtp.gmail.com';
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || process.env.BREVO_SMTP_PORT || '587', 10);
-const SMTP_SECURE = String(process.env.SMTP_SECURE || process.env.BREVO_SMTP_SECURE || 'false').toLowerCase() === 'true';
-const SMTP_SERVICE = process.env.SMTP_SERVICE || process.env.GMAIL_SERVICE || '';
-const SMTP_USER = process.env.SMTP_USER || process.env.BREVO_SMTP_USER || '';
-const SMTP_PASS = process.env.SMTP_PASS || process.env.BREVO_SMTP_PASS || '';
-const SMTP_FROM = process.env.SMTP_FROM || process.env.EMAIL_FROM || process.env.BREVO_SMTP_FROM || 'no-reply@luxehotel.com';
-const EMAIL_PROVIDER = String(process.env.EMAIL_PROVIDER || process.env.MAIL_PROVIDER || '').toLowerCase();
-const SMTP_TIMEOUT_MS = parseInt(process.env.SMTP_TIMEOUT_MS || '30000', 10);
-const SMTP_REQUIRE_TLS = String(process.env.SMTP_REQUIRE_TLS || '').toLowerCase() === 'true';
-const IS_RENDER = Boolean(process.env.RENDER || process.env.RENDER_SERVICE_NAME || process.env.RENDER_EXTERNAL_URL);
+// Public URL of the frontend (Vercel). Supabase email links (verify / reset) send people back here.
+const FRONTEND_URL = String(process.env.FRONTEND_URL || process.env.APP_BASE_URL || 'https://hotel-q-rservices.vercel.app').replace(/\/$/, '');
 
 // Supabase client config from env
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
@@ -161,7 +150,10 @@ async function initDatabase() {
       await pool.query(`
         ALTER TABLE hotel_admin_users
         ADD COLUMN IF NOT EXISTS verification_token TEXT,
-        ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+        ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS auth_user_id UUID;
+      ALTER TABLE hotel_admin_users ALTER COLUMN password_hash DROP NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS hotel_admin_users_auth_user_id_key ON hotel_admin_users (auth_user_id);
       `);
       console.log('Verified verification columns exist.');
     } catch (err) {
@@ -182,7 +174,10 @@ async function ensureVerificationColumns() {
     await pool.query(`
       ALTER TABLE hotel_admin_users
       ADD COLUMN IF NOT EXISTS verification_token TEXT,
-      ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+      ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS auth_user_id UUID;
+      ALTER TABLE hotel_admin_users ALTER COLUMN password_hash DROP NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS hotel_admin_users_auth_user_id_key ON hotel_admin_users (auth_user_id);
     `);
     console.log('Verified verification columns exist (global helper).');
   } catch (err) {
@@ -266,6 +261,8 @@ app.get('/request.html', (req, res) => res.sendFile(path.join(__dirname, 'reques
 app.get('/qr-generator.html', (req, res) => res.sendFile(path.join(__dirname, 'qr-generator.html')));
 app.get('/signup.html', (req, res) => res.sendFile(path.join(__dirname, 'signup.html')));
 app.get('/signup', (req, res) => res.sendFile(path.join(__dirname, 'signup.html')));
+app.get('/forgot-password.html', (req, res) => res.sendFile(path.join(__dirname, 'forgot-password.html')));
+app.get('/reset-password.html', (req, res) => res.sendFile(path.join(__dirname, 'reset-password.html')));
 
 // Use memory storage for uploads to avoid persisting files in the repository
 const upload = multer({ storage: multer.memoryStorage() });
@@ -422,294 +419,249 @@ function parseHotelIdFromRequest(req) {
   return Number.isInteger(hotelId) && hotelId > 0 ? hotelId : null;
 }
 
-function buildVerificationUrl(req, token) {
-  const baseUrl = process.env.APP_BASE_URL || process.env.PUBLIC_BASE_URL || '';
-  if (baseUrl) {
-    return `${baseUrl.replace(/\/$/, '')}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+// ============================================================
+// Supabase Auth
+// Supabase owns passwords, email verification and password-reset emails.
+// This server only validates sessions and maps them to hotel_admin_users rows.
+// Configure the email sender in Supabase: Authentication > Emails > SMTP Settings.
+// ============================================================
+const PASSWORD_PLACEHOLDER = 'SUPABASE_AUTH';
+
+// A fresh client per call so one visitor's session can never leak into another request.
+function makeAuthClient() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY must be set');
   }
-
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000';
-  return `${protocol}://${host}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
-}
-
-function buildVerificationEmailHtml(hotelName, verifyUrl) {
-  return `
-    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1c1a17;">
-      <h2>Verify your hotel admin account</h2>
-      <p>Hello,</p>
-      <p>Your account for <strong>${hotelName}</strong> has been created. Please verify your email address to activate the account.</p>
-      <p><a href="${verifyUrl}" style="display:inline-block;padding:10px 16px;background:#C9A84C;color:#fff;text-decoration:none;border-radius:999px;">Verify Email</a></p>
-      <p>If the button does not work, copy and paste this link into your browser:</p>
-      <p>${verifyUrl}</p>
-    </div>
-  `;
-}
-
-function buildVerificationEmailText(hotelName, verifyUrl) {
-  return [
-    'Verify your hotel admin account',
-    '',
-    `Hello,`,
-    '',
-    `Your account for ${hotelName} has been created. Please verify your email address to activate the account.`,
-    '',
-    `Verification link: ${verifyUrl}`
-  ].join('\n');
-}
-
-async function sendViaResend(to, subject, html, text) {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    throw new Error('RESEND_API_KEY is not configured');
-  }
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      from: SMTP_FROM,
-      to: [to],
-      subject,
-      html,
-      text
-    })
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, flowType: 'implicit' }
   });
-
-  const payload = await response.text();
-  if (!response.ok) {
-    throw new Error(`Resend API error ${response.status}: ${payload}`);
-  }
-
-  const parsed = payload ? JSON.parse(payload) : {};
-  return { provider: 'resend', messageId: parsed.id || parsed.message_id };
 }
 
-async function sendViaBrevo(to, subject, html, text) {
-  const apiKey = process.env.BREVO_API_KEY;
-  if (!apiKey) {
-    throw new Error('BREVO_API_KEY is not configured');
-  }
-
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': apiKey
-    },
-    body: JSON.stringify({
-      sender: { name: 'LUXE Hotel', email: SMTP_FROM },
-      to: [{ email: to }],
-      subject,
-      htmlContent: html,
-      textContent: text
-    })
-  });
-
-  const payload = await response.text();
-  if (!response.ok) {
-    throw new Error(`Brevo API error ${response.status}: ${payload}`);
-  }
-
-  const parsed = payload ? JSON.parse(payload) : {};
-  return { provider: 'brevo', messageId: parsed.messageId || parsed.message_id || parsed.id };
+function authErrorStatus(error) {
+  const status = Number(error?.status || 0);
+  const msg = String(error?.message || '').toLowerCase();
+  if (status === 429 || msg.includes('rate limit')) return 429;
+  return status >= 400 && status < 500 ? status : 400;
 }
 
-async function sendViaSendgrid(to, subject, html, text) {
-  const apiKey = process.env.SENDGRID_API_KEY;
-  if (!apiKey) {
-    throw new Error('SENDGRID_API_KEY is not configured');
+async function dbFindAdmin({ authUserId, identifier }) {
+  if (pool) {
+    try {
+      const byAuth = Boolean(authUserId);
+      const cond = byAuth
+        ? 'u.auth_user_id = $1'
+        : "(LOWER(u.email) = LOWER($1) OR LOWER(COALESCE(u.employee_id,'')) = LOWER($1))";
+      const result = await pool.query(
+        `SELECT u.id, u.hotel_id, u.full_name, u.email, u.role_id, u.account_status, u.failed_login_attempts,
+                u.email_verified_at, u.auth_user_id, h.name AS hotel_name
+           FROM hotel_admin_users u
+           JOIN hotels h ON h.id = u.hotel_id
+          WHERE ${cond} AND u.deleted_at IS NULL
+          LIMIT 1`,
+        [byAuth ? authUserId : identifier]
+      );
+      return result.rows[0] || null;
+    } catch (err) {
+      console.warn('dbFindAdmin via pool failed, trying Supabase client:', err.message || err);
+    }
   }
 
-  const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: SMTP_FROM, name: 'LUXE Hotel' },
-      subject,
-      content: [
-        { type: 'text/plain', value: text },
-        { type: 'text/html', value: html }
-      ]
-    })
-  });
-
-  if (!response.ok) {
-    const payload = await response.text();
-    throw new Error(`SendGrid API error ${response.status}: ${payload}`);
-  }
-
-  const messageId = response.headers.get('x-message-id') || 'sendgrid';
-  return { provider: 'sendgrid', messageId };
-}
-
-async function sendViaSmtp(to, subject, html, text) {
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    throw new Error('SMTP credentials are not configured');
-  }
-
-  const isGmail = String(SMTP_SERVICE || SMTP_HOST || '').toLowerCase().includes('gmail') || String(SMTP_USER || '').toLowerCase().endsWith('@gmail.com');
-  const sharedAuth = {
-    user: SMTP_USER,
-    pass: SMTP_PASS
-  };
-  const baseOptions = {
-    connectionTimeout: SMTP_TIMEOUT_MS,
-    greetingTimeout: SMTP_TIMEOUT_MS,
-    socketTimeout: SMTP_TIMEOUT_MS,
-    auth: sharedAuth,
-    requireTLS: true,
-    secure: isGmail,
-    debug: true
-  };
-
-  const transportConfigs = [];
-  if (isGmail) {
-    transportConfigs.push({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      service: 'gmail',
-      ...baseOptions
-    });
-    transportConfigs.push({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
-      service: 'gmail',
-      ...baseOptions
-    });
+  const db = supabaseService || supabaseAnon;
+  if (!db) return null;
+  const cols = 'id, hotel_id, full_name, email, role_id, account_status, failed_login_attempts, email_verified_at, auth_user_id';
+  let row = null;
+  if (authUserId) {
+    const { data, error } = await db.from('hotel_admin_users').select(cols).eq('auth_user_id', authUserId).is('deleted_at', null).limit(1);
+    if (error) throw error;
+    row = data?.[0] || null;
   } else {
-    transportConfigs.push({
-      host: SMTP_HOST,
-      port: SMTP_PORT || 587,
-      secure: SMTP_SECURE,
-      ...baseOptions
+    let r = await db.from('hotel_admin_users').select(cols).eq('email', identifier).is('deleted_at', null).limit(1);
+    if (r.error) throw r.error;
+    row = r.data?.[0] || null;
+    if (!row) {
+      r = await db.from('hotel_admin_users').select(cols).eq('employee_id', identifier).is('deleted_at', null).limit(1);
+      if (r.error) throw r.error;
+      row = r.data?.[0] || null;
+    }
+  }
+  if (!row) return null;
+  const { data: hotels } = await db.from('hotels').select('name').eq('id', row.hotel_id).limit(1);
+  return { ...row, hotel_name: hotels?.[0]?.name || '' };
+}
+
+const ADMIN_PATCH_COLUMNS = new Set([
+  'failed_login_attempts', 'account_status', 'locked_at', 'last_login_at', 'last_seen_at',
+  'is_online', 'email_verified_at', 'auth_user_id', 'force_password_reset'
+]);
+
+async function dbUpdateAdmin(id, patch) {
+  const keys = Object.keys(patch).filter((k) => ADMIN_PATCH_COLUMNS.has(k));
+  if (!keys.length) return;
+  if (pool) {
+    try {
+      const setSql = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+      await pool.query(
+        `UPDATE hotel_admin_users SET ${setSql}, updated_at = NOW() WHERE id = $${keys.length + 1}`,
+        [...keys.map((k) => patch[k]), id]
+      );
+      return;
+    } catch (err) {
+      console.warn('dbUpdateAdmin via pool failed, trying Supabase client:', err.message || err);
+    }
+  }
+  const db = supabaseService || supabaseAnon;
+  if (!db) return;
+  const clean = {};
+  keys.forEach((k) => { clean[k] = patch[k]; });
+  clean.updated_at = new Date().toISOString();
+  const { error } = await db.from('hotel_admin_users').update(clean).eq('id', id);
+  if (error) console.error('dbUpdateAdmin failed:', error.message);
+}
+
+const HOTEL_ADMIN_PERMISSIONS = {
+  'View Requests': true, 'Complete Requests': true, 'Edit Requests': true, 'Delete Requests': true,
+  'Export Reports': true, 'Manage Staff': true, 'Manage Departments': true, 'View Analytics': true, 'Manage Settings': true
+};
+
+// Creates the hotel, its "Hotel Admin" role and the first admin row, linked to the Supabase Auth user.
+async function createHotelAndAdmin({ hotelName, fullName, email, authUserId, confirmed }) {
+  const status = confirmed ? 'active' : 'pending_verification';
+  const verifiedAt = confirmed ? new Date().toISOString() : null;
+  const employeeId = `ADM-${Date.now()}`;
+
+  if (pool) {
+    let client = null;
+    try {
+      client = await pool.connect();
+    } catch (err) {
+      console.warn('Postgres pool connect failed, using Supabase client:', err.message || err);
+    }
+    if (client) {
+      try {
+        await client.query('BEGIN');
+        const hotelResult = await client.query(
+          `INSERT INTO hotels (name, contact_email, timezone, language, date_format, created_at, updated_at)
+           VALUES ($1, $2, 'UTC', 'en', 'MMM D, YYYY', NOW(), NOW()) RETURNING id, name`,
+          [hotelName, email]
+        );
+        const hotel = hotelResult.rows[0];
+        const roleResult = await client.query(
+          `INSERT INTO hotel_admin_roles (hotel_id, name, description, permissions, created_at, updated_at)
+           VALUES ($1, 'Hotel Admin', 'Full administrative access', $2::jsonb, NOW(), NOW()) RETURNING id`,
+          [hotel.id, JSON.stringify(HOTEL_ADMIN_PERMISSIONS)]
+        );
+        const userResult = await client.query(
+          `INSERT INTO hotel_admin_users
+             (hotel_id, role_id, full_name, employee_id, email, password_hash, account_status, employment_status,
+              auth_user_id, email_verified_at, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,NOW(),NOW())
+           RETURNING id, hotel_id, full_name, email`,
+          [hotel.id, roleResult.rows[0].id, fullName, employeeId, email, PASSWORD_PLACEHOLDER, status, authUserId, verifiedAt]
+        );
+        await client.query('COMMIT');
+        return { hotel, user: userResult.rows[0] };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+  }
+
+  const db = supabaseService || supabaseAnon;
+  if (!db) throw new Error('No database connection is available');
+  const now = new Date().toISOString();
+
+  const { data: hotelRows, error: hotelErr } = await db.from('hotels')
+    .insert({ name: hotelName, contact_email: email, timezone: 'UTC', language: 'en', date_format: 'MMM D, YYYY', created_at: now, updated_at: now })
+    .select();
+  if (hotelErr) throw hotelErr;
+  const hotel = hotelRows[0];
+
+  const { data: roleRows, error: roleErr } = await db.from('hotel_admin_roles')
+    .insert({ hotel_id: hotel.id, name: 'Hotel Admin', description: 'Full administrative access', permissions: HOTEL_ADMIN_PERMISSIONS, created_at: now, updated_at: now })
+    .select();
+  if (roleErr) throw roleErr;
+
+  const { data: userRows, error: userErr } = await db.from('hotel_admin_users')
+    .insert({
+      hotel_id: hotel.id, role_id: roleRows[0].id, full_name: fullName, employee_id: employeeId, email,
+      password_hash: PASSWORD_PLACEHOLDER, account_status: status, employment_status: 'active',
+      auth_user_id: authUserId, email_verified_at: verifiedAt, created_at: now, updated_at: now
+    })
+    .select();
+  if (userErr) throw userErr;
+  const u = userRows[0];
+  return { hotel, user: { id: u.id, hotel_id: u.hotel_id, full_name: u.full_name, email: u.email } };
+}
+
+async function findAuthUserByEmail(email) {
+  if (!supabaseService) return null;
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await supabaseService.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error || !data?.users?.length) return null;
+    const hit = data.users.find((u) => String(u.email || '').toLowerCase() === email);
+    if (hit) return hit;
+    if (data.users.length < 1000) return null;
+  }
+  return null;
+}
+
+// Checks credentials with Supabase Auth, then applies hotel-level rules (lockout, suspension).
+async function authenticateHotelAdmin(identifier, password, req) {
+  const row = await dbFindAdmin({ identifier });
+  if (!row) return { notFound: true };
+
+  if (row.account_status === 'locked' || row.account_status === 'suspended') {
+    await writeHotelAudit(row.hotel_id, row.id, 'blocked_login', 'user', row.id, req);
+    return { status: 423, error: 'Account is not active' };
+  }
+  if (row.account_status === 'deleted') return { status: 401, error: 'Invalid credentials' };
+
+  const { data, error } = await makeAuthClient().auth.signInWithPassword({ email: row.email, password });
+  if (error || !data?.session) {
+    const msg = String(error?.message || '').toLowerCase();
+    if (msg.includes('not confirmed')) {
+      return { status: 403, error: 'Please verify your email before signing in.', code: 'email_not_confirmed' };
+    }
+    if (authErrorStatus(error) === 429) {
+      return { status: 429, error: 'Too many attempts. Please wait a moment and try again.' };
+    }
+    const failed = Number(row.failed_login_attempts || 0) + 1;
+    const locked = failed >= 5;
+    await dbUpdateAdmin(row.id, {
+      failed_login_attempts: failed,
+      account_status: locked ? 'locked' : row.account_status,
+      locked_at: locked ? new Date().toISOString() : null
     });
-    if (SMTP_PORT !== 465) {
-      transportConfigs.push({
-        host: SMTP_HOST,
-        port: 465,
-        secure: true,
-        ...baseOptions
-      });
-    }
+    await writeHotelAudit(row.hotel_id, row.id, 'failed_login', 'user', row.id, req, { failedAttempts: failed });
+    if (locked) return { status: 401, error: 'Account locked after failed attempts' };
+    return {
+      status: 401,
+      error: row.auth_user_id
+        ? 'Invalid credentials'
+        : 'Invalid credentials. If your account was created before the upgrade, use "Forgot password" to set a new password.'
+    };
   }
 
-  let lastError = null;
-  for (const transporterConfig of transportConfigs) {
-    const transporter = nodemailer.createTransport(transporterConfig);
-    try {
-      const info = await transporter.sendMail({
-        from: SMTP_FROM,
-        to,
-        subject,
-        html,
-        text
-      });
-      return { provider: isGmail ? 'google' : 'smtp', messageId: info.messageId };
-    } catch (err) {
-      lastError = err;
-      console.warn(`[EMAIL] SMTP attempt failed for ${to}:`, err?.message || err);
-    }
-  }
+  const now = new Date().toISOString();
+  const patch = {
+    failed_login_attempts: 0, last_login_at: now, last_seen_at: now, is_online: true,
+    email_verified_at: row.email_verified_at || now
+  };
+  if (!row.auth_user_id) patch.auth_user_id = data.user.id;
+  if (row.account_status === 'pending_verification') patch.account_status = 'active';
+  await dbUpdateAdmin(row.id, patch);
+  await writeHotelAudit(row.hotel_id, row.id, 'login', 'user', row.id, req);
 
-  throw lastError || new Error('SMTP delivery failed');
-}
-
-function isVerificationEmailConfigured() {
-  return Boolean(
-    (SMTP_HOST && SMTP_USER && SMTP_PASS) ||
-    process.env.RESEND_API_KEY ||
-    process.env.BREVO_API_KEY ||
-    process.env.SENDGRID_API_KEY
-  );
-}
-
-function queueVerificationEmail(to, verifyUrl, hotelName) {
-  setImmediate(async () => {
-    try {
-      const result = await sendVerificationEmail(to, verifyUrl, hotelName);
-      if (result.skipped) {
-        console.error(`[EMAIL] Verification email was not sent to ${to}: ${result.reason}`);
-      }
-    } catch (err) {
-      console.error(`[EMAIL] Verification email send failed for ${to}:`, err);
-    }
-  });
-}
-
-async function sendVerificationEmail(to, verifyUrl, hotelName) {
-  const subject = `Verify your ${hotelName} admin account`;
-  const html = buildVerificationEmailHtml(hotelName, verifyUrl);
-  const text = buildVerificationEmailText(hotelName, verifyUrl);
-  const providers = [];
-
-  if (EMAIL_PROVIDER) {
-    const preferred = EMAIL_PROVIDER;
-    if (preferred === 'resend') providers.push('resend');
-    if (preferred === 'brevo') providers.push('brevo');
-    if (preferred === 'sendgrid') providers.push('sendgrid');
-    if (preferred === 'smtp' || preferred === 'google' || preferred === 'gmail') providers.push('smtp');
-  }
-
-  if (IS_RENDER && process.env.BREVO_API_KEY && !providers.includes('brevo')) {
-    providers.unshift('brevo');
-  }
-  if (IS_RENDER && process.env.RESEND_API_KEY && !providers.includes('resend')) {
-    providers.unshift('resend');
-  }
-
-  if (!providers.includes('smtp') && SMTP_HOST && SMTP_USER && SMTP_PASS) {
-    providers.push('smtp');
-  }
-  if (!providers.includes('resend') && process.env.RESEND_API_KEY) {
-    providers.push('resend');
-  }
-  if (!providers.includes('brevo') && process.env.BREVO_API_KEY) {
-    providers.push('brevo');
-  }
-  if (!providers.includes('sendgrid') && process.env.SENDGRID_API_KEY) {
-    providers.push('sendgrid');
-  }
-
-  if (!providers.length) {
-    console.warn(`[EMAIL] No mail provider configured for verification emails. To=${to}`);
-    return { ok: true, skipped: true, reason: 'no_provider_configured' };
-  }
-
-  const errors = [];
-  for (const provider of providers) {
-    try {
-      let result;
-      if (provider === 'resend') {
-        result = await sendViaResend(to, subject, html, text);
-      } else if (provider === 'brevo') {
-        result = await sendViaBrevo(to, subject, html, text);
-      } else if (provider === 'sendgrid') {
-        result = await sendViaSendgrid(to, subject, html, text);
-      } else {
-        result = await sendViaSmtp(to, subject, html, text);
-      }
-
-      console.log(`[EMAIL] Verification email sent via ${result.provider} to ${to}: ${result.messageId}`);
-      return { ok: true, skipped: false, provider: result.provider, messageId: result.messageId };
-    } catch (err) {
-      const message = err?.message || String(err);
-      errors.push(`${provider}: ${message}`);
-      console.error(`[EMAIL] ${provider} failed for ${to}:`, err);
-    }
-  }
-
-  console.warn(`[EMAIL] All configured mail providers failed. Verification email skipped. Errors: ${errors.join(' | ')}`);
-  return { ok: false, skipped: true, reason: 'provider_failed', errors };
+  return {
+    ok: true,
+    token: data.session.access_token,
+    refreshToken: data.session.refresh_token,
+    expiresAt: data.session.expires_at,
+    user: { id: row.id, hotelId: row.hotel_id, fullName: row.full_name, email: row.email, hotelName: row.hotel_name }
+  };
 }
 
 async function insertRequestViaDatabase(requestData) {
@@ -1045,9 +997,7 @@ app.post('/api/auth/department', async (req, res) => {
 });
 
 app.post('/api/auth/register', async (req, res) => {
-  await ensureVerificationColumns().catch(() => {});
-
-  const { hotelName, fullName, email, password, confirmPassword } = req.body;
+  const { hotelName, fullName, email, password, confirmPassword } = req.body || {};
   const trimmedHotelName = String(hotelName || '').trim();
   const trimmedFullName = String(fullName || '').trim();
   const trimmedEmail = String(email || '').trim().toLowerCase();
@@ -1055,238 +1005,177 @@ app.post('/api/auth/register', async (req, res) => {
   if (!trimmedHotelName || !trimmedFullName || !trimmedEmail || !password || !confirmPassword) {
     return res.status(400).json({ error: 'Hotel name, full name, email, and password are required.' });
   }
-
   if (String(password).length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
   }
-
   if (String(password) !== String(confirmPassword)) {
     return res.status(400).json({ error: 'Passwords do not match.' });
   }
-
-  let client = null;
-  let usingPool = false;
-
-  if (pool) {
-    try {
-      client = await pool.connect();
-      await client.query('BEGIN');
-      usingPool = true;
-    } catch (connErr) {
-      console.warn('Postgres pool connect failed, attempting Supabase fallback:', connErr?.message || connErr);
-    }
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(503).json({ error: 'Authentication is not configured on the server.' });
   }
 
-  if (!usingPool) {
-    const fallbackClient = supabaseService || supabaseAnon;
-    if (!fallbackClient) {
-      console.error('No database pool and no Supabase client available for registration fallback');
-      return res.status(503).json({ error: 'Database is unreachable and no Supabase client is configured' });
-    }
-
-    if (!supabaseService) {
-      console.warn('Using Supabase anon client for registration fallback; this requires permissive table policies.');
-    }
-
-    try {
-      const existingUserCheck = await fallbackClient
-        .from('hotel_admin_users')
-        .select('id')
-        .ilike('email', trimmedEmail)
-        .limit(1);
-      if (existingUserCheck.error) throw existingUserCheck.error;
-      if ((existingUserCheck.data || []).length > 0) {
-        return res.status(409).json({ error: 'An account with this email already exists.' });
-      }
-
-      const { data: hotelRows, error: hotelErr } = await fallbackClient
-        .from('hotels')
-        .insert({ name: trimmedHotelName, contact_email: trimmedEmail, timezone: 'UTC', language: 'en', date_format: 'MMM D, YYYY', created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        .select();
-      if (hotelErr) throw hotelErr;
-      const hotel = Array.isArray(hotelRows) ? hotelRows[0] : hotelRows;
-
-      let roleId = null;
-      const { data: roleRows, error: roleErr } = await fallbackClient
-        .from('hotel_admin_roles')
-        .select('id')
-        .eq('hotel_id', hotel.id)
-        .ilike('name', 'Hotel Admin')
-        .limit(1);
-      if (roleErr) throw roleErr;
-      roleId = roleRows?.[0]?.id || null;
-      if (!roleId) {
-        const { data: newRoleRows, error: newRoleErr } = await fallbackClient
-          .from('hotel_admin_roles')
-          .insert({ hotel_id: hotel.id, name: 'Hotel Admin', description: 'Full administrative access', permissions: { 'View Requests': true }, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .select();
-        if (newRoleErr) throw newRoleErr;
-        roleId = newRoleRows?.[0]?.id;
-      }
-
-      const hashedPassword = await bcrypt.hash(password, 12);
-      const verificationToken = crypto.randomBytes(32).toString('hex');
-      const verificationUrl = buildVerificationUrl(req, verificationToken);
-
-      const { data: userRows, error: userErr } = await fallbackClient
-        .from('hotel_admin_users')
-        .insert({ hotel_id: hotel.id, role_id: roleId, full_name: trimmedFullName, employee_id: `ADM-${Date.now()}`, email: trimmedEmail, password_hash: hashedPassword, account_status: 'pending_verification', employment_status: 'active', verification_token: verificationToken, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        .select();
-      if (userErr) throw userErr;
-      const createdUser = Array.isArray(userRows) ? userRows[0] : userRows;
-
-      await writeHotelAudit(hotel.id, createdUser.id, 'registered_hotel', 'hotel', hotel.id, req);
-      const emailConfigured = isVerificationEmailConfigured();
-      if (emailConfigured) queueVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
-
-      return res.status(201).json({
-        ok: true,
-        requiresVerification: true,
-        emailConfigured,
-        message: emailConfigured
-          ? 'Account created. Your confirmation email is being sent.'
-          : 'Account created, but confirmation email delivery is not configured. Please contact support.',
-        user: { id: createdUser.id, hotelId: hotel.id, fullName: createdUser.full_name, email: createdUser.email, hotelName: hotel.name },
-        role: 'hotel_admin'
-      });
-    } catch (fallbackErr) {
-      console.error('Fallback registration failed:', fallbackErr);
-      return res.status(500).json({ error: 'Registration failed (fallback)', details: fallbackErr.message || String(fallbackErr) });
-    }
-  }
+  const emailRedirectTo = `${FRONTEND_URL}/index.html?verified=1`;
 
   try {
-    const existingUser = await client.query(
-      `SELECT id FROM hotel_admin_users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL LIMIT 1`,
-      [trimmedEmail]
-    );
-    if (existingUser.rows[0]) {
-      await client.query('ROLLBACK');
+    const authClient = makeAuthClient();
+    const existing = await dbFindAdmin({ identifier: trimmedEmail });
+    if (existing) {
+      if (existing.account_status === 'pending_verification') {
+        await authClient.auth.resend({ type: 'signup', email: existing.email, options: { emailRedirectTo } });
+        return res.json({
+          ok: true,
+          requiresVerification: true,
+          emailSent: true,
+          message: 'This email is already registered but not verified. We sent a fresh verification email.'
+        });
+      }
       return res.status(409).json({ error: 'An account with this email already exists.' });
     }
 
-    const hotelResult = await client.query(
-      `INSERT INTO hotels (name, contact_email, timezone, language, date_format, created_at, updated_at)
-       VALUES ($1, $2, 'UTC', 'en', 'MMM D, YYYY', NOW(), NOW())
-       RETURNING id, name`,
-      [trimmedHotelName, trimmedEmail]
-    );
-    const hotel = hotelResult.rows[0];
-
-    const roleResult = await client.query(
-      `SELECT id FROM hotel_admin_roles WHERE hotel_id = $1 AND LOWER(name) = LOWER('Hotel Admin') LIMIT 1`,
-      [hotel.id]
-    );
-    let roleId = roleResult.rows[0]?.id || null;
-    if (!roleId) {
-      const newRole = await client.query(
-        `INSERT INTO hotel_admin_roles (hotel_id, name, description, permissions, created_at, updated_at)
-         VALUES ($1, 'Hotel Admin', 'Full administrative access', '{"View Requests": true, "Complete Requests": true, "Edit Requests": true, "Delete Requests": true, "Export Reports": true, "Manage Staff": true, "Manage Departments": true, "View Analytics": true, "Manage Settings": true}'::jsonb, NOW(), NOW())
-         RETURNING id`,
-        [hotel.id]
-      );
-      roleId = newRole.rows[0].id;
+    const { data, error } = await authClient.auth.signUp({
+      email: trimmedEmail,
+      password: String(password),
+      options: { emailRedirectTo, data: { full_name: trimmedFullName, hotel_name: trimmedHotelName } }
+    });
+    if (error) {
+      const status = authErrorStatus(error);
+      console.error('Supabase signUp failed:', error.status, error.message);
+      if (status === 429) {
+        return res.status(429).json({ error: 'Too many verification emails were requested. Please wait a few minutes and try again.' });
+      }
+      return res.status(status === 422 ? 400 : status).json({ error: error.message || 'Could not create the account.' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 12);
-    const verificationToken = crypto.randomBytes(32).toString('hex');
-    const verificationUrl = buildVerificationUrl(req, verificationToken);
-    const userResult = await client.query(
-      `INSERT INTO hotel_admin_users (
-         hotel_id, role_id, full_name, employee_id, email, password_hash, account_status, employment_status, verification_token, created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, 'pending_verification', 'active', $7, NOW(), NOW())
-       RETURNING id, hotel_id, full_name, email`,
-      [hotel.id, roleId, trimmedFullName, `ADM-${Date.now()}`, trimmedEmail, hashedPassword, verificationToken]
-    );
-    const createdUser = userResult.rows[0];
+    const authUser = data?.user;
+    // Supabase hides duplicate emails by returning a user with no identities.
+    if (!authUser || (Array.isArray(authUser.identities) && authUser.identities.length === 0)) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
 
-    await client.query('COMMIT');
-    await writeHotelAudit(hotel.id, createdUser.id, 'registered_hotel', 'hotel', hotel.id, req);
+    const confirmed = Boolean(authUser.email_confirmed_at) || Boolean(data.session);
+    let created;
+    try {
+      created = await createHotelAndAdmin({
+        hotelName: trimmedHotelName, fullName: trimmedFullName, email: trimmedEmail, authUserId: authUser.id, confirmed
+      });
+    } catch (dbErr) {
+      console.error('Hotel registration failed after Supabase signUp:', dbErr);
+      if (supabaseService) await supabaseService.auth.admin.deleteUser(authUser.id).catch(() => {});
+      return res.status(500).json({ error: 'Hotel registration failed. Please try again.' });
+    }
 
-    const emailConfigured = isVerificationEmailConfigured();
-    if (emailConfigured) queueVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
+    await writeHotelAudit(created.hotel.id, created.user.id, 'registered_hotel', 'hotel', created.hotel.id, req);
+    const userOut = {
+      id: created.user.id, hotelId: created.hotel.id, fullName: created.user.full_name,
+      email: created.user.email, hotelName: created.hotel.name
+    };
 
+    if (confirmed && data.session) {
+      return res.status(201).json({
+        ok: true, requiresVerification: false, role: 'hotel_admin', redirectUrl: 'hotel_admin.html',
+        token: data.session.access_token, refreshToken: data.session.refresh_token, user: userOut
+      });
+    }
     return res.status(201).json({
       ok: true,
       requiresVerification: true,
-      emailConfigured,
-      message: emailConfigured
-        ? 'Account created. Your confirmation email is being sent.'
-        : 'Account created, but confirmation email delivery is not configured. Please contact support.',
-      user: {
-        id: createdUser.id,
-        hotelId: hotel.id,
-        fullName: createdUser.full_name,
-        email: createdUser.email,
-        hotelName: hotel.name
-      },
+      emailSent: true,
+      message: 'Account created. Check your inbox (and spam folder) for the verification email.',
+      user: userOut,
       role: 'hotel_admin'
     });
   } catch (err) {
-    await client?.query('ROLLBACK').catch(() => {});
-    console.error('Hotel registration failed:', err);
-    return res.status(500).json({ error: 'Hotel registration failed. Please try again.' });
-  } finally {
-    if (client) client.release();
+    console.error('Registration failed:', err);
+    return res.status(500).json({ error: 'Registration failed. Please try again.' });
   }
 });
 
-app.get('/api/auth/verify-email', async (req, res) => {
-  const token = String(req.query.token || '').trim();
-  if (!token) {
-    return res.status(400).send('<h2>Invalid verification link.</h2><p>The verification token is missing.</p>');
+app.post('/api/auth/resend-verification', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: 'Email required' });
+  try {
+    const { error } = await makeAuthClient().auth.resend({
+      type: 'signup', email, options: { emailRedirectTo: `${FRONTEND_URL}/index.html?verified=1` }
+    });
+    if (error && authErrorStatus(error) === 429) {
+      return res.status(429).json({ error: 'Please wait a minute before requesting another email.' });
+    }
+    if (error) console.warn('Supabase resend failed:', error.message);
+    // Same answer whether or not the account exists.
+    return res.json({ ok: true, message: 'If that account is awaiting verification, a new email has been sent.' });
+  } catch (err) {
+    console.error('Resend verification failed:', err);
+    return res.status(500).json({ error: 'Could not resend the verification email.' });
   }
+});
+
+async function handleForgotPassword(req, res) {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: 'Email required' });
+  const generic = { ok: true, message: 'If an account exists for that email, a reset link has been sent.' };
+  try {
+    const row = await dbFindAdmin({ identifier: email });
+    if (row) {
+      // Accounts created before the Supabase Auth upgrade have no auth user yet: create and link one.
+      if (!row.auth_user_id && supabaseService) {
+        let authUser = null;
+        const { data, error } = await supabaseService.auth.admin.createUser({
+          email: row.email, email_confirm: true, password: crypto.randomBytes(24).toString('hex'),
+          user_metadata: { full_name: row.full_name }
+        });
+        if (error) authUser = await findAuthUserByEmail(row.email);
+        else authUser = data.user;
+        if (authUser) {
+          await dbUpdateAdmin(row.id, { auth_user_id: authUser.id, email_verified_at: row.email_verified_at || new Date().toISOString() });
+        }
+      }
+      const { error } = await makeAuthClient().auth.resetPasswordForEmail(row.email, {
+        redirectTo: `${FRONTEND_URL}/reset-password.html`
+      });
+      if (error) {
+        console.warn('Supabase resetPasswordForEmail failed:', error.message);
+        if (authErrorStatus(error) === 429) {
+          return res.status(429).json({ error: 'Please wait a minute before requesting another reset email.' });
+        }
+      }
+      await writeHotelAudit(row.hotel_id, row.id, 'password_reset_requested', 'user', row.id, req);
+    }
+    return res.status(202).json(generic);
+  } catch (err) {
+    console.error('Forgot password failed:', err);
+    return res.status(500).json({ error: 'Password reset request failed' });
+  }
+}
+
+app.post('/api/auth/forgot-password', handleForgotPassword);
+app.post('/api/auth/hotel-admin/password-reset', handleForgotPassword);
+
+// Called by reset-password.html with the recovery token Supabase puts in the email link.
+app.post('/api/auth/reset-password', async (req, res) => {
+  const accessToken = String(req.body?.accessToken || '').trim();
+  const password = String(req.body?.password || '');
+  if (!accessToken || !password) return res.status(400).json({ error: 'Reset token and new password are required.' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+  if (!supabaseService) return res.status(503).json({ error: 'SUPABASE_SERVICE_ROLE_KEY is not configured on the server.' });
 
   try {
-    let user = null;
+    const { data, error } = await makeAuthClient().auth.getUser(accessToken);
+    if (error || !data?.user) return res.status(401).json({ error: 'This reset link is invalid or has expired.' });
 
-    if (pool) {
-      await ensureVerificationColumns().catch(() => {});
-      const result = await pool.query(
-        `SELECT id, email, account_status FROM hotel_admin_users WHERE verification_token = $1 LIMIT 1`,
-        [token]
-      );
-      user = result.rows[0];
-
-      if (user) {
-        await pool.query(
-          `UPDATE hotel_admin_users
-           SET account_status = 'active', email_verified_at = NOW(), verification_token = NULL
-           WHERE id = $1`,
-          [user.id]
-        );
-      }
-    } else {
-      const fallbackClient = supabaseService || supabaseAnon;
-      if (!fallbackClient) {
-        return res.status(503).json({ error: 'Database is not configured' });
-      }
-
-      const { data, error } = await fallbackClient
-        .from('hotel_admin_users')
-        .select('id, email, account_status')
-        .eq('verification_token', token)
-        .limit(1);
-      if (error) throw error;
-      user = Array.isArray(data) ? data[0] : data;
-
-      if (user) {
-        const { error: updateError } = await fallbackClient
-          .from('hotel_admin_users')
-          .update({ account_status: 'active', email_verified_at: new Date().toISOString(), verification_token: null })
-          .eq('id', user.id);
-        if (updateError) throw updateError;
-      }
+    const { error: updateError } = await supabaseService.auth.admin.updateUserById(data.user.id, { password });
+    if (updateError) {
+      return res.status(authErrorStatus(updateError) === 422 ? 400 : 500).json({ error: updateError.message || 'Could not update the password.' });
     }
-
-    if (!user) {
-      return res.status(404).send('<h2>Verification failed.</h2><p>This link is invalid or has already been used.</p>');
+    const row = await dbFindAdmin({ authUserId: data.user.id });
+    if (row) {
+      await dbUpdateAdmin(row.id, { force_password_reset: false, failed_login_attempts: 0 });
+      await writeHotelAudit(row.hotel_id, row.id, 'password_reset_completed', 'user', row.id, req);
     }
-
-    res.send(`<!doctype html><html><head><meta charset="utf-8"><title>Email Verified</title><style>body{font-family:Arial,sans-serif;padding:40px;line-height:1.5}h2{color:#2f7d32}</style></head><body><h2>Email verified successfully.</h2><p>Your hotel admin account is now active. You can sign in.</p><p><a href="/">Go to sign in</a></p></body></html>`);
+    return res.json({ ok: true });
   } catch (err) {
-    console.error('Email verification failed:', err);
-    res.status(500).send('<h2>Verification failed.</h2><p>Please try again later.</p>');
+    console.error('Reset password failed:', err);
+    return res.status(500).json({ error: 'Could not reset the password.' });
   }
 });
 
@@ -1370,21 +1259,20 @@ async function requireHotelAdmin(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
 
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    if (payload.type !== 'hotel_admin') return res.status(403).json({ error: 'Hotel admin access required' });
+    // Supabase validates the session token (signature, expiry, revoked sessions).
+    const { data, error } = await makeAuthClient().auth.getUser(token);
+    if (error || !data?.user) return res.status(401).json({ error: 'Invalid or expired session' });
 
     const result = await pool.query(
-      `SELECT u.id, u.hotel_id, u.full_name, u.email, u.role_id, u.account_status, u.force_logout_at, h.name AS hotel_name
+      `SELECT u.id, u.hotel_id, u.full_name, u.email, u.role_id, u.account_status, h.name AS hotel_name
        FROM hotel_admin_users u
        JOIN hotels h ON h.id = u.hotel_id
-       WHERE u.id = $1 AND u.hotel_id = $2 AND u.deleted_at IS NULL`,
-      [payload.userId, payload.hotelId]
+       WHERE u.auth_user_id = $1 AND u.deleted_at IS NULL`,
+      [data.user.id]
     );
     const user = result.rows[0];
-    if (!user || user.account_status !== 'active') return res.status(401).json({ error: 'Account is not active' });
-    if (user.force_logout_at && payload.iat && (payload.iat * 1000) < new Date(user.force_logout_at).getTime()) {
-      return res.status(401).json({ error: 'Your session was terminated. Please sign in again.' });
-    }
+    if (!user) return res.status(403).json({ error: 'Hotel admin access required' });
+    if (user.account_status !== 'active') return res.status(401).json({ error: 'Account is not active' });
 
     req.hotelAdmin = user;
     next();
@@ -1427,13 +1315,6 @@ function mapRoleRow(row) {
   };
 }
 
-function slugifyServiceKey(name) {
-  return String(name || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '')
-    .slice(0, 40) || 'department';
-}
-
 function mapDepartmentRow(row) {
   return {
     id: row.id,
@@ -1445,234 +1326,34 @@ function mapDepartmentRow(row) {
     pendingRequests: Number(row.pending_requests || 0),
     completedToday: Number(row.completed_today || 0),
     averageCompletionMinutes: Number(row.average_completion_minutes || 0),
-    icon: row.icon || 'fa-building',
-    color: row.color || '#c9a227',
-    description: row.description,
-    email: row.email,
-    phone: row.phone,
-    location: row.location,
-    floor: row.floor,
-    building: row.building,
-    operatingHours: row.operating_hours || {},
-    permissions: row.permissions || {},
-    serviceKey: row.service_key,
     createdAt: row.created_at
   };
 }
 
-app.post('/api/auth/hotel-admin', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-
-  try {
-    let user = null;
-
-    if (pool) {
-      const result = await pool.query(
-        `SELECT u.id, u.hotel_id, u.full_name, u.email, u.password_hash, u.account_status, u.failed_login_attempts, u.email_verified_at, h.name AS hotel_name
-         FROM hotel_admin_users u
-         JOIN hotels h ON h.id = u.hotel_id
-         WHERE LOWER(u.email) = LOWER($1) AND u.deleted_at IS NULL
-         LIMIT 1`,
-        [email]
-      );
-      user = result.rows[0];
-    }
-
-    if (!user) {
-      const fallbackClient = supabaseService || supabaseAnon;
-      if (!fallbackClient) {
-        return res.status(503).json({ error: 'Database is not configured' });
-      }
-
-      const { data, error } = await fallbackClient
-        .from('hotel_admin_users')
-        .select('id, hotel_id, full_name, email, password_hash, account_status, failed_login_attempts, email_verified_at')
-        .ilike('email', String(email).trim().toLowerCase())
-        .limit(1);
-      if (error) throw error;
-      const row = Array.isArray(data) ? data[0] : data;
-      if (row) {
-        const { data: hotelRows, error: hotelError } = await fallbackClient.from('hotels').select('name').eq('id', row.hotel_id).limit(1);
-        if (hotelError) throw hotelError;
-        user = { ...row, hotel_name: hotelRows?.[0]?.name || '' };
-      }
-    }
-
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-
-    const isVerified = user.account_status === 'active' || Boolean(user.email_verified_at);
-    if (user.account_status === 'pending_verification' || !isVerified) {
-      return res.status(403).json({ error: 'Please verify your email before signing in.' });
-    }
-    if (user.account_status === 'locked' || user.account_status === 'suspended') {
-      await writeHotelAudit(user.hotel_id, user.id, 'blocked_login', 'user', user.id, req);
-      return res.status(423).json({ error: 'Account is not active' });
-    }
-
-    const valid = await bcrypt.compare(password, user.password_hash || '');
-    if (!valid) {
-      const failed = Number(user.failed_login_attempts || 0) + 1;
-      const nextStatus = failed >= 5 ? 'locked' : user.account_status;
-
-      if (pool) {
-        await pool.query(
-          `UPDATE hotel_admin_users
-           SET failed_login_attempts = $1, account_status = $2, locked_at = CASE WHEN $2 = 'locked' THEN NOW() ELSE locked_at END
-           WHERE id = $3`,
-          [failed, nextStatus, user.id]
-        );
-      } else {
-        const fallbackClient = supabaseService || supabaseAnon;
-        if (fallbackClient) {
-          await fallbackClient.from('hotel_admin_users').update({ failed_login_attempts: failed, account_status: nextStatus, locked_at: nextStatus === 'locked' ? new Date().toISOString() : null }).eq('id', user.id);
-        }
-      }
-
-      await writeHotelAudit(user.hotel_id, user.id, 'failed_login', 'user', user.id, req, { failedAttempts: failed });
-      return res.status(401).json({ error: failed >= 5 ? 'Account locked after failed attempts' : 'Invalid credentials' });
-    }
-
-    if (pool) {
-      await pool.query(
-        `UPDATE hotel_admin_users
-         SET failed_login_attempts = 0, last_login_at = NOW(), last_seen_at = NOW(), is_online = TRUE
-         WHERE id = $1`,
-        [user.id]
-      );
-    } else {
-      const fallbackClient = supabaseService || supabaseAnon;
-      if (fallbackClient) {
-        await fallbackClient.from('hotel_admin_users').update({ failed_login_attempts: 0, last_login_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), is_online: true }).eq('id', user.id);
-      }
-    }
-
-    await writeHotelAudit(user.hotel_id, user.id, 'login', 'user', user.id, req);
-    io.to(`hotel_${user.hotel_id}`).emit('staffOnline', { userId: user.id, fullName: user.full_name, hotelId: user.hotel_id });
-
-    const token = jwt.sign(
-      { type: 'hotel_admin', userId: user.id, hotelId: user.hotel_id },
-      JWT_SECRET,
-      { expiresIn: '8h' }
-    );
-    res.json({
-      token,
-      user: { id: user.id, hotelId: user.hotel_id, fullName: user.full_name, email: user.email, hotelName: user.hotel_name }
-    });
-  } catch (err) {
-    console.error('Hotel admin login failed:', err);
-    res.status(500).json({ error: 'Authentication failed' });
-  }
-});
-
-app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-  const loginIdentifier = String(email || '').trim().toLowerCase();
+async function hotelAdminLogin(req, res, { allowDirectorFallback }) {
+  const loginIdentifier = String(req.body?.email || '').trim().toLowerCase();
+  const password = req.body?.password;
   if (!loginIdentifier || !password) return res.status(400).json({ error: 'Email and password required' });
 
   try {
-    let admin = null;
-
-    if (pool) {
-      const adminResult = await pool.query(
-        `SELECT u.id, u.hotel_id, u.full_name, u.email, u.password_hash, u.account_status, u.failed_login_attempts, u.email_verified_at, h.name AS hotel_name
-         FROM hotel_admin_users u
-         JOIN hotels h ON h.id = u.hotel_id
-         WHERE (LOWER(u.email) = LOWER($1) OR LOWER(COALESCE(u.employee_id,'')) = LOWER($1))
-           AND u.deleted_at IS NULL
-         LIMIT 1`,
-        [loginIdentifier]
-      );
-      admin = adminResult.rows[0];
-    }
-
-    if (!admin) {
-      const fallbackClient = supabaseService || supabaseAnon;
-      if (fallbackClient) {
-        const { data, error } = await fallbackClient
-          .from('hotel_admin_users')
-          .select('id, hotel_id, full_name, email, password_hash, account_status, failed_login_attempts, email_verified_at')
-          .ilike('email', loginIdentifier)
-          .limit(1);
-        if (error) throw error;
-        const row = Array.isArray(data) ? data[0] : data;
-        if (row) {
-          const { data: hotelRows, error: hotelError } = await fallbackClient.from('hotels').select('name').eq('id', row.hotel_id).limit(1);
-          if (hotelError) throw hotelError;
-          admin = { ...row, hotel_name: hotelRows?.[0]?.name || '' };
-        }
-      }
-    }
-
-    if (admin) {
-      const isVerified = admin.account_status === 'active' || Boolean(admin.email_verified_at);
-      if (admin.account_status === 'pending_verification' || !isVerified) {
-        return res.status(403).json({ error: 'Please verify your email before signing in.' });
-      }
-      if (admin.account_status === 'locked' || admin.account_status === 'suspended') {
-        await writeHotelAudit(admin.hotel_id, admin.id, 'blocked_login', 'user', admin.id, req);
-        return res.status(423).json({ error: 'Account is not active' });
-      }
-
-      const validAdminPassword = await bcrypt.compare(password, admin.password_hash || '');
-      if (!validAdminPassword) {
-        const failed = Number(admin.failed_login_attempts || 0) + 1;
-        const nextStatus = failed >= 5 ? 'locked' : admin.account_status;
-        if (pool) {
-          await pool.query(
-            `UPDATE hotel_admin_users
-             SET failed_login_attempts = $1, account_status = $2, locked_at = CASE WHEN $2 = 'locked' THEN NOW() ELSE locked_at END
-             WHERE id = $3`,
-            [failed, nextStatus, admin.id]
-          );
-        } else {
-          const fallbackClient = supabaseService || supabaseAnon;
-          if (fallbackClient) {
-            await fallbackClient.from('hotel_admin_users').update({ failed_login_attempts: failed, account_status: nextStatus, locked_at: nextStatus === 'locked' ? new Date().toISOString() : null }).eq('id', admin.id);
-          }
-        }
-        await writeHotelAudit(admin.hotel_id, admin.id, 'failed_login', 'user', admin.id, req, { failedAttempts: failed });
-        return res.status(401).json({ error: failed >= 5 ? 'Account locked after failed attempts' : 'Invalid credentials' });
-      }
-
-      if (pool) {
-        await pool.query(
-          `UPDATE hotel_admin_users
-           SET failed_login_attempts = 0, last_login_at = NOW(), last_seen_at = NOW(), is_online = TRUE
-           WHERE id = $1`,
-          [admin.id]
-        );
-      } else {
-        const fallbackClient = supabaseService || supabaseAnon;
-        if (fallbackClient) {
-          await fallbackClient.from('hotel_admin_users').update({ failed_login_attempts: 0, last_login_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), is_online: true }).eq('id', admin.id);
-        }
-      }
-      await writeHotelAudit(admin.hotel_id, admin.id, 'login', 'user', admin.id, req);
-      io.to(`hotel_${admin.hotel_id}`).emit('staffOnline', { userId: admin.id, fullName: admin.full_name, hotelId: admin.hotel_id });
-
-      const token = jwt.sign(
-        { type: 'hotel_admin', userId: admin.id, hotelId: admin.hotel_id },
-        JWT_SECRET,
-        { expiresIn: '8h' }
-      );
+    const result = await authenticateHotelAdmin(loginIdentifier, password, req);
+    if (!result.notFound) {
+      if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
       return res.json({
         role: 'hotel_admin',
         redirectUrl: 'hotel_admin.html',
-        token,
-        user: {
-          id: admin.id,
-          hotelId: admin.hotel_id,
-          fullName: admin.full_name,
-          email: admin.email,
-          hotelName: admin.hotel_name
-        }
+        token: result.token,
+        refreshToken: result.refreshToken,
+        expiresAt: result.expiresAt,
+        user: result.user
       });
     }
   } catch (err) {
-    console.error('Unified hotel admin login failed:', err);
+    console.error('Hotel admin login failed:', err);
     return res.status(500).json({ error: 'Authentication failed' });
   }
+
+  if (!allowDirectorFallback) return res.status(401).json({ error: 'Invalid credentials' });
 
   try {
     const hotelId = parseHotelIdFromRequest(req);
@@ -1696,38 +1377,18 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   return res.status(401).json({ error: 'Invalid credentials' });
-});
+}
+
+app.post('/api/auth/hotel-admin', (req, res) => hotelAdminLogin(req, res, { allowDirectorFallback: false }));
+app.post('/api/auth/login', (req, res) => hotelAdminLogin(req, res, { allowDirectorFallback: true }));
 
 app.post('/api/auth/hotel-admin/logout', requireHotelAdmin, async (req, res) => {
   try {
     await pool.query('UPDATE hotel_admin_users SET is_online = FALSE, last_seen_at = NOW() WHERE id = $1', [req.hotelAdmin.id]);
     await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'logout', 'user', req.hotelAdmin.id, req);
-    io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('staffOffline', { userId: req.hotelAdmin.id, fullName: req.hotelAdmin.full_name, hotelId: req.hotelAdmin.hotel_id });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Logout failed' });
-  }
-});
-
-app.post('/api/auth/hotel-admin/password-reset', async (req, res) => {
-  if (!requireDatabase(res)) return;
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email required' });
-  try {
-    const result = await pool.query('SELECT id, hotel_id FROM hotel_admin_users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL', [email]);
-    const user = result.rows[0];
-    if (user) {
-      await pool.query(
-        `INSERT INTO hotel_admin_password_resets (hotel_id, user_id, email, status, created_at)
-         VALUES ($1,$2,$3,'pending',NOW())`,
-        [user.hotel_id, user.id, email]
-      );
-      await writeHotelAudit(user.hotel_id, user.id, 'password_reset_requested', 'user', user.id, req);
-    }
-    res.status(202).json({ ok: true });
-  } catch (err) {
-    console.error('Hotel admin password reset failed:', err);
-    res.status(500).json({ error: 'Password reset request failed' });
   }
 });
 
@@ -1854,18 +1515,36 @@ app.post('/api/hotel-admin/users', requireHotelAdmin, async (req, res) => {
   const hotelId = req.hotelAdmin.hotel_id;
   const { fullName, employeeId, departmentId, roleId, email, phone, shiftId, employmentStatus, accountStatus, password, profilePhotoUrl } = req.body;
   if (!fullName || !email || !password) return res.status(400).json({ error: 'Full name, email and password are required' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters long' });
+  if (!supabaseService) return res.status(503).json({ error: 'SUPABASE_SERVICE_ROLE_KEY is required to create staff accounts' });
+
+  const lowered = String(email).trim().toLowerCase();
+  let authUserId = null;
   try {
-    const passwordHash = await bcrypt.hash(password, 12);
+    // Staff are created already confirmed: the hotel admin vouches for the address and hands over the password.
+    const { data, error } = await supabaseService.auth.admin.createUser({
+      email: lowered, password: String(password), email_confirm: true, user_metadata: { full_name: fullName }
+    });
+    if (error) {
+      const taken = /already|registered|exists/i.test(error.message || '');
+      return res.status(taken ? 409 : 400).json({ error: taken ? 'A user with that email already exists' : (error.message || 'Failed to create user') });
+    }
+    authUserId = data.user.id;
+
     const result = await pool.query(
       `INSERT INTO hotel_admin_users
-       (hotel_id, full_name, employee_id, department_id, role_id, email, phone, shift_id, employment_status, account_status, password_hash, profile_photo_url, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,LOWER($6),$7,$8,$9,$10,$11,$12,NOW(),NOW())
+       (hotel_id, full_name, employee_id, department_id, role_id, email, phone, shift_id, employment_status, account_status, password_hash, profile_photo_url, auth_user_id, email_verified_at, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW(),NOW())
        RETURNING *`,
-      [hotelId, fullName, employeeId || null, departmentId || null, roleId || null, email, phone || null, shiftId || null, employmentStatus || 'active', accountStatus || 'active', passwordHash, profilePhotoUrl || null]
+      [hotelId, fullName, employeeId || null, departmentId || null, roleId || null, lowered, phone || null, shiftId || null, employmentStatus || 'active', accountStatus || 'active', PASSWORD_PLACEHOLDER, profilePhotoUrl || null, authUserId]
     );
-    await writeHotelAudit(hotelId, req.hotelAdmin.id, 'user_created', 'user', result.rows[0].id, req, { email });
-    res.status(201).json(result.rows[0]);
+    await writeHotelAudit(hotelId, req.hotelAdmin.id, 'user_created', 'user', result.rows[0].id, req, { email: lowered });
+    const row = result.rows[0];
+    delete row.password_hash;
+    delete row.verification_token;
+    res.status(201).json(row);
   } catch (err) {
+    if (authUserId) await supabaseService.auth.admin.deleteUser(authUserId).catch(() => {});
     const message = err.code === '23505' ? 'A user with that email or employee ID already exists' : 'Failed to create user';
     res.status(err.code === '23505' ? 409 : 500).json({ error: message });
   }
@@ -1899,14 +1578,6 @@ app.get('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => {
 app.put('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => {
   const { fullName, employeeId, departmentId, roleId, email, phone, shiftId, employmentStatus, profilePhotoUrl } = req.body;
   try {
-    const before = await pool.query(
-      `SELECT full_name, employee_id, department_id, role_id, email, phone, shift_id, employment_status, profile_photo_url
-       FROM hotel_admin_users WHERE id = $1 AND hotel_id = $2 AND deleted_at IS NULL`,
-      [req.params.id, req.hotelAdmin.hotel_id]
-    );
-    if (!before.rows.length) return res.status(404).json({ error: 'User not found' });
-    const prev = before.rows[0];
-
     const result = await pool.query(
       `UPDATE hotel_admin_users
        SET full_name = COALESCE($1, full_name),
@@ -1924,18 +1595,15 @@ app.put('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => {
       [fullName || null, employeeId || null, departmentId || null, roleId || null, email || null, phone || null, shiftId || null, employmentStatus || null, profilePhotoUrl || null, req.params.id, req.hotelAdmin.hotel_id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-
-    const next = result.rows[0];
-    const fieldMap = { full_name: 'fullName', employee_id: 'employeeId', department_id: 'departmentId', role_id: 'roleId', email: 'email', phone: 'phone', shift_id: 'shiftId', employment_status: 'employmentStatus', profile_photo_url: 'profilePhotoUrl' };
-    const changes = {};
-    Object.keys(fieldMap).forEach(dbKey => {
-      if (String(prev[dbKey] ?? '') !== String(next[dbKey] ?? '')) {
-        changes[fieldMap[dbKey]] = { previous: prev[dbKey], next: next[dbKey] };
-      }
-    });
-
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'profile_updated', 'user', req.params.id, req, { changes });
-    res.json(next);
+    const updated = result.rows[0];
+    if (email && updated.auth_user_id && supabaseService) {
+      const { error: syncErr } = await supabaseService.auth.admin.updateUserById(updated.auth_user_id, { email: String(email).trim().toLowerCase(), email_confirm: true });
+      if (syncErr) console.warn('Could not sync email to Supabase Auth:', syncErr.message);
+    }
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'profile_updated', 'user', req.params.id, req);
+    delete updated.password_hash;
+    delete updated.verification_token;
+    res.json(updated);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update user' });
   }
@@ -1947,37 +1615,23 @@ app.post('/api/hotel-admin/users/:id/action', requireHotelAdmin, async (req, res
     activate: { account_status: 'active', failed_login_attempts: 0, locked_at: null },
     lock: { account_status: 'locked', locked_at: new Date() },
     unlock: { account_status: 'active', failed_login_attempts: 0, locked_at: null },
-    force_password_reset: { force_password_reset: true },
-    terminate_sessions: { force_logout_at: new Date() }
+    force_password_reset: { force_password_reset: true }
   };
   const patch = actions[req.body.action];
   if (!patch) return res.status(400).json({ error: 'Invalid user action' });
   try {
-    const before = await pool.query(
-      `SELECT account_status, force_password_reset, force_logout_at FROM hotel_admin_users WHERE id = $1 AND hotel_id = $2 AND deleted_at IS NULL`,
-      [req.params.id, req.hotelAdmin.hotel_id]
-    );
-    if (!before.rows.length) return res.status(404).json({ error: 'User not found' });
-    const prev = before.rows[0];
-
     const keys = Object.keys(patch);
     const setSql = keys.map((key, i) => `${key} = $${i + 1}`).join(', ');
     const values = keys.map(key => patch[key]);
     const result = await pool.query(
       `UPDATE hotel_admin_users SET ${setSql}, updated_at = NOW()
        WHERE id = $${values.length + 1} AND hotel_id = $${values.length + 2} AND deleted_at IS NULL
-       RETURNING id, account_status, force_password_reset, force_logout_at`,
+       RETURNING id, account_status, force_password_reset`,
       [...values, req.params.id, req.hotelAdmin.hotel_id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-
-    const next = result.rows[0];
-    const changes = {};
-    if (prev.account_status !== next.account_status) changes.accountStatus = { previous: prev.account_status, next: next.account_status };
-    if (prev.force_password_reset !== next.force_password_reset) changes.forcePasswordReset = { previous: prev.force_password_reset, next: next.force_password_reset };
-
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, req.body.action, 'user', req.params.id, req, { changes });
-    res.json(next);
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, req.body.action, 'user', req.params.id, req);
+    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update account' });
   }
@@ -1987,10 +1641,13 @@ app.delete('/api/hotel-admin/users/:id', requireHotelAdmin, async (req, res) => 
   try {
     const result = await pool.query(
       `UPDATE hotel_admin_users SET deleted_at = NOW(), account_status = 'deleted'
-       WHERE id = $1 AND hotel_id = $2 AND deleted_at IS NULL RETURNING id`,
+       WHERE id = $1 AND hotel_id = $2 AND deleted_at IS NULL RETURNING id, auth_user_id`,
       [req.params.id, req.hotelAdmin.hotel_id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    if (result.rows[0].auth_user_id && supabaseService) {
+      await supabaseService.auth.admin.deleteUser(result.rows[0].auth_user_id).catch((e) => console.warn('Could not delete Supabase Auth user:', e.message));
+    }
     await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'user_deleted', 'user', req.params.id, req);
     res.json({ ok: true });
   } catch (err) {
@@ -2061,142 +1718,54 @@ app.delete('/api/hotel-admin/roles/:id', requireHotelAdmin, async (req, res) => 
 app.get('/api/hotel-admin/departments', requireHotelAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT d.*, m.full_name AS manager_name, COUNT(DISTINCT u.id)::int AS staff,
-              COALESCE(r.pending, 0)::int AS pending_requests,
-              COALESCE(r.completed_today, 0)::int AS completed_today,
-              COALESCE(r.avg_minutes, 0)::int AS average_completion_minutes
+      `SELECT d.*, m.full_name AS manager_name, COUNT(u.id)::int AS staff,
+              0::int AS pending_requests, 0::int AS completed_today, 0::int AS average_completion_minutes
        FROM hotel_admin_departments d
        LEFT JOIN hotel_admin_users m ON m.id = d.manager_id
        LEFT JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
-       LEFT JOIN LATERAL (
-         SELECT
-           COUNT(*) FILTER (WHERE req.status IN ('pending','in-progress')) AS pending,
-           COUNT(*) FILTER (WHERE req.status = 'completed' AND req.updated_at::date = CURRENT_DATE) AS completed_today,
-           ROUND(AVG(EXTRACT(EPOCH FROM (req.updated_at - req.created_at)) / 60) FILTER (WHERE req.status = 'completed')) AS avg_minutes
-         FROM requests req
-         WHERE req.hotel_id = d.hotel_id AND LOWER(regexp_replace(req.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
-       ) r ON TRUE
        WHERE d.hotel_id = $1
-       GROUP BY d.id, m.full_name, r.pending, r.completed_today, r.avg_minutes
+       GROUP BY d.id, m.full_name
        ORDER BY d.name`,
       [req.hotelAdmin.hotel_id]
     );
-
-    const deptIds = result.rows.map(r => r.id);
-    let secondaryByDept = {};
-    if (deptIds.length) {
-      const secondary = await pool.query(
-        `SELECT ud.department_id, u.id, u.full_name
-         FROM hotel_admin_user_departments ud
-         JOIN hotel_admin_users u ON u.id = ud.user_id AND u.deleted_at IS NULL
-         WHERE ud.hotel_id = $1 AND ud.department_id = ANY($2::int[])`,
-        [req.hotelAdmin.hotel_id, deptIds]
-      );
-      secondaryByDept = secondary.rows.reduce((acc, row) => {
-        (acc[row.department_id] = acc[row.department_id] || []).push({ id: row.id, fullName: row.full_name });
-        return acc;
-      }, {});
-    }
-
-    res.json(result.rows.map(row => ({ ...mapDepartmentRow(row), secondaryStaff: secondaryByDept[row.id] || [] })));
+    res.json(result.rows.map(mapDepartmentRow));
   } catch (err) {
-    console.error('Load departments failed:', err);
     res.status(500).json({ error: 'Failed to load departments' });
   }
 });
 
 app.post('/api/hotel-admin/departments', requireHotelAdmin, async (req, res) => {
-  const {
-    name, managerId, icon, color, description, email, phone,
-    location, floor, building, operatingHours, permissions
-  } = req.body;
+  const { name, managerId } = req.body;
   if (!name) return res.status(400).json({ error: 'Department name required' });
   try {
-    const baseKey = slugifyServiceKey(name);
-    let serviceKey = baseKey;
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      const clash = await pool.query(
-        `SELECT 1 FROM hotel_admin_departments WHERE hotel_id = $1 AND service_key = $2`,
-        [req.hotelAdmin.hotel_id, serviceKey]
-      );
-      if (!clash.rows.length) break;
-      serviceKey = `${baseKey}${attempt + 1}`;
-    }
-
     const result = await pool.query(
-      `INSERT INTO hotel_admin_departments
-        (hotel_id, name, manager_id, status, icon, color, description, email, phone, location, floor, building, operating_hours, permissions, service_key, created_at, updated_at)
-       VALUES ($1,$2,$3,'active',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW()) RETURNING *`,
-      [
-        req.hotelAdmin.hotel_id, name, managerId || null, icon || 'fa-building', color || '#c9a227',
-        description || null, email || null, phone || null, location || null, floor || null, building || null,
-        operatingHours || {}, permissions || {}, serviceKey
-      ]
+      `INSERT INTO hotel_admin_departments (hotel_id, name, manager_id, status, created_at, updated_at)
+       VALUES ($1,$2,$3,'active',NOW(),NOW()) RETURNING *`,
+      [req.hotelAdmin.hotel_id, name, managerId || null]
     );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_created', 'department', result.rows[0].id, req, { name, serviceKey });
-    res.status(201).json(mapDepartmentRow(result.rows[0]));
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_created', 'department', result.rows[0].id, req);
+    res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error('Create department failed:', err);
     res.status(500).json({ error: 'Failed to create department' });
   }
 });
 
 app.put('/api/hotel-admin/departments/:id', requireHotelAdmin, async (req, res) => {
-  const {
-    name, managerId, status, icon, color, description, email, phone,
-    location, floor, building, operatingHours, permissions
-  } = req.body;
+  const { name, managerId, status } = req.body;
   try {
-    const before = await pool.query(`SELECT * FROM hotel_admin_departments WHERE id = $1 AND hotel_id = $2`, [req.params.id, req.hotelAdmin.hotel_id]);
-    if (!before.rows.length) return res.status(404).json({ error: 'Department not found' });
-    const prev = mapDepartmentRow(before.rows[0]);
-
     const result = await pool.query(
-      `UPDATE hotel_admin_departments SET
-        name = COALESCE($1,name), manager_id = $2, status = COALESCE($3,status),
-        icon = COALESCE($4, icon), color = COALESCE($5, color), description = $6, email = $7, phone = $8,
-        location = $9, floor = $10, building = $11,
-        operating_hours = COALESCE($12, operating_hours), permissions = COALESCE($13, permissions),
-        updated_at = NOW()
-       WHERE id = $14 AND hotel_id = $15 RETURNING *`,
-      [
-        name || null, managerId || null, status || null, icon || null, color || null,
-        description || null, email || null, phone || null, location || null, floor || null, building || null,
-        operatingHours || null, permissions || null, req.params.id, req.hotelAdmin.hotel_id
-      ]
+      `UPDATE hotel_admin_departments SET name = COALESCE($1,name), manager_id = $2, status = COALESCE($3,status), updated_at = NOW()
+       WHERE id = $4 AND hotel_id = $5 RETURNING *`,
+      [name || null, managerId || null, status || null, req.params.id, req.hotelAdmin.hotel_id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Department not found' });
-    const next = mapDepartmentRow(result.rows[0]);
-
-    const changes = {};
-    ['name', 'managerId', 'status', 'icon', 'color', 'description', 'email', 'phone', 'location', 'floor', 'building'].forEach(key => {
-      if (JSON.stringify(prev[key] ?? null) !== JSON.stringify(next[key] ?? null)) changes[key] = { previous: prev[key], next: next[key] };
-    });
-    const action = prev.managerId !== next.managerId ? 'department_manager_assigned' : 'department_updated';
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, action, 'department', req.params.id, req, { changes });
-    res.json(next);
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_updated', 'department', req.params.id, req);
+    res.json(result.rows[0]);
   } catch (err) {
-    console.error('Update department failed:', err);
     res.status(500).json({ error: 'Failed to update department' });
   }
 });
 
-app.delete('/api/hotel-admin/departments/:id', requireHotelAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `DELETE FROM hotel_admin_departments WHERE id = $1 AND hotel_id = $2 RETURNING name`,
-      [req.params.id, req.hotelAdmin.hotel_id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Department not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_deleted', 'department', req.params.id, req, { name: result.rows[0].name });
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('Delete department failed:', err);
-    res.status(500).json({ error: 'Failed to delete department' });
-  }
-});
-
-// Sets each listed user's PRIMARY department (one per user).
 app.post('/api/hotel-admin/departments/:id/staff', requireHotelAdmin, async (req, res) => {
   const staffIds = Array.isArray(req.body.staffIds) ? req.body.staffIds : [];
   try {
@@ -2212,310 +1781,32 @@ app.post('/api/hotel-admin/departments/:id/staff', requireHotelAdmin, async (req
   }
 });
 
-// Adds/removes SECONDARY department membership — lets one employee belong
-// to more than one department without changing their primary assignment.
-app.post('/api/hotel-admin/departments/:id/staff/:userId/secondary', requireHotelAdmin, async (req, res) => {
-  try {
-    const userCheck = await pool.query(`SELECT id FROM hotel_admin_users WHERE id = $1 AND hotel_id = $2 AND deleted_at IS NULL`, [req.params.userId, req.hotelAdmin.hotel_id]);
-    if (!userCheck.rows.length) return res.status(404).json({ error: 'User not found' });
-    await pool.query(
-      `INSERT INTO hotel_admin_user_departments (user_id, department_id, hotel_id)
-       VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
-      [req.params.userId, req.params.id, req.hotelAdmin.hotel_id]
-    );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_staff_assigned', 'department', req.params.id, req, { userId: Number(req.params.userId), secondary: true });
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to add staff to department' });
-  }
-});
-
-app.delete('/api/hotel-admin/departments/:id/staff/:userId/secondary', requireHotelAdmin, async (req, res) => {
-  try {
-    await pool.query(
-      `DELETE FROM hotel_admin_user_departments WHERE department_id = $1 AND user_id = $2 AND hotel_id = $3`,
-      [req.params.id, req.params.userId, req.hotelAdmin.hotel_id]
-    );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'department_staff_removed', 'department', req.params.id, req, { userId: Number(req.params.userId), secondary: true });
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to remove staff from department' });
-  }
-});
-
-// Public, no-auth: powers the guest request page's service picker so newly
-// created departments become request destinations automatically.
-app.get('/api/departments/public', async (req, res) => {
-  if (!requireDatabase(res)) return;
-  const hotelId = parseInt(req.query.hotelId, 10);
-  if (!hotelId) return res.status(400).json({ error: 'hotelId is required' });
-  try {
-    const result = await pool.query(
-      `SELECT name, icon, color, service_key FROM hotel_admin_departments
-       WHERE hotel_id = $1 AND status = 'active' ORDER BY name`,
-      [hotelId]
-    );
-    res.set('Cache-Control', 'public, max-age=60');
-    res.json(result.rows.map(row => ({ name: row.name, icon: row.icon || 'fa-building', color: row.color || '#c9a227', serviceKey: row.service_key })));
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to load departments' });
-  }
-});
-
-// ============================================================
-// Workforce Management — Executive Dashboard, Employee Profiles,
-// Performance Engine
-// ============================================================
-function computePerformanceScore({ completionRate, avgResponseMinutes }) {
-  const completionComponent = Math.max(0, Math.min(100, completionRate));
-  const responseComponent = Math.max(0, Math.min(100, 100 - avgResponseMinutes));
-  return Math.round((completionComponent + responseComponent) / 2);
-}
-
-app.get('/api/hotel-admin/realtime/snapshot', requireHotelAdmin, async (req, res) => {
-  try {
-    const hotelId = req.hotelAdmin.hotel_id;
-    const [onlineRes, pendingRes, deptActivityRes, recentAssignedRes] = await Promise.all([
-      pool.query(
-        `SELECT u.id, u.full_name, d.name AS department_name, u.last_seen_at
-         FROM hotel_admin_users u LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
-         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL AND u.is_online = TRUE ORDER BY u.full_name`,
-        [hotelId]
-      ),
-      pool.query(`SELECT COUNT(*)::int AS count FROM requests WHERE hotel_id = $1 AND status IN ('pending','in-progress')`, [hotelId]),
-      pool.query(
-        `SELECT service, COUNT(*)::int AS count FROM requests
-         WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '1 hour' GROUP BY service ORDER BY count DESC`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT r.id, r.room_number, r.service, r.status, r.assigned_at, u.full_name AS assigned_name
-         FROM requests r JOIN hotel_admin_users u ON u.id = r.assigned_user_id
-         WHERE r.hotel_id = $1 AND r.assigned_at IS NOT NULL
-         ORDER BY r.assigned_at DESC LIMIT 10`,
-        [hotelId]
-      )
-    ]);
-    res.json({
-      onlineStaff: onlineRes.rows,
-      requestsWaiting: pendingRes.rows[0]?.count || 0,
-      departmentActivity: deptActivityRes.rows,
-      recentAssignments: recentAssignedRes.rows
-    });
-  } catch (err) {
-    console.error('Realtime snapshot failed:', err);
-    res.status(500).json({ error: 'Failed to load real-time snapshot' });
-  }
-});
-
-app.get('/api/hotel-admin/workforce/dashboard', requireHotelAdmin, async (req, res) => {
-  try {
-    const hotelId = req.hotelAdmin.hotel_id;
-    const [hotelRes, staffRes, deptRes, shiftRes, reqRes, onShiftRes] = await Promise.all([
-      pool.query(`SELECT timezone FROM hotels WHERE id = $1`, [hotelId]),
-      pool.query(
-        `SELECT COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE is_online = TRUE)::int AS online,
-                COUNT(*) FILTER (WHERE employment_status = 'leave')::int AS on_leave
-         FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT COUNT(DISTINCT d.id)::int AS covered
-         FROM hotel_admin_departments d JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
-         WHERE d.hotel_id = $1 AND d.status = 'active'`,
-        [hotelId]
-      ),
-      pool.query(`SELECT COUNT(*)::int AS active FROM hotel_admin_shifts WHERE hotel_id = $1 AND status = 'active'`, [hotelId]),
-      pool.query(
-        `SELECT COUNT(*) FILTER (WHERE status IN ('pending','in-progress'))::int AS pending,
-                COUNT(*) FILTER (WHERE status = 'completed' AND updated_at::date = CURRENT_DATE)::int AS completed_today,
-                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')::int AS total_30d,
-                COUNT(*) FILTER (WHERE status = 'completed' AND created_at >= NOW() - INTERVAL '30 days')::int AS completed_30d,
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed' AND created_at >= NOW() - INTERVAL '30 days')), 0)::int AS avg_minutes
-         FROM requests WHERE hotel_id = $1`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT COUNT(DISTINCT u.id)::int AS on_shift
-         FROM hotel_admin_users u
-         JOIN hotel_admin_shifts s ON s.id = u.shift_id AND s.status = 'active'
-         CROSS JOIN LATERAL (SELECT COALESCE((SELECT timezone FROM hotels WHERE id = $1), 'UTC') AS tz) h
-         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL AND s.start_time IS NOT NULL AND s.end_time IS NOT NULL
-         AND (
-           (s.start_time <= s.end_time AND (NOW() AT TIME ZONE h.tz)::time BETWEEN s.start_time AND s.end_time)
-           OR (s.start_time > s.end_time AND ((NOW() AT TIME ZONE h.tz)::time >= s.start_time OR (NOW() AT TIME ZONE h.tz)::time <= s.end_time))
-         )`,
-        [hotelId]
-      )
-    ]);
-
-    const staff = staffRes.rows[0] || {};
-    const req30 = reqRes.rows[0] || {};
-    const completionRate = req30.total_30d > 0 ? Math.round((req30.completed_30d / req30.total_30d) * 100) : 0;
-    const hotelPerformanceScore = computePerformanceScore({ completionRate, avgResponseMinutes: req30.avg_minutes });
-
-    res.json({
-      totalEmployees: staff.total || 0,
-      employeesOnline: staff.online || 0,
-      employeesOffline: (staff.total || 0) - (staff.online || 0),
-      employeesOnLeave: staff.on_leave || 0,
-      employeesOnShift: onShiftRes.rows[0]?.on_shift || 0,
-      departmentsCovered: deptRes.rows[0]?.covered || 0,
-      activeShifts: shiftRes.rows[0]?.active || 0,
-      pendingRequests: req30.pending || 0,
-      completedRequestsToday: req30.completed_today || 0,
-      avgResponseMinutes: req30.avg_minutes || 0,
-      completionRate30d: completionRate,
-      overallHotelPerformanceScore: hotelPerformanceScore,
-      note: 'Per-employee request completion cannot be individually attributed because department dashboards authenticate with a shared department password rather than individual staff logins. Metrics above reflect real department- and hotel-level activity.'
-    });
-  } catch (err) {
-    console.error('Workforce dashboard failed:', err);
-    res.status(500).json({ error: 'Failed to load workforce dashboard' });
-  }
-});
-
-app.get('/api/hotel-admin/employees/:id/profile', requireHotelAdmin, async (req, res) => {
-  try {
-    const hotelId = req.hotelAdmin.hotel_id;
-    const userRes = await pool.query(
-      `SELECT u.*, d.name AS department_name, d.service_key, r.name AS role_name, s.name AS shift_name, s.start_time, s.end_time
-       FROM hotel_admin_users u
-       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
-       LEFT JOIN hotel_admin_roles r ON r.id = u.role_id
-       LEFT JOIN hotel_admin_shifts s ON s.id = u.shift_id
-       WHERE u.id = $1 AND u.hotel_id = $2 AND u.deleted_at IS NULL`,
-      [req.params.id, hotelId]
-    );
-    if (!userRes.rows.length) return res.status(404).json({ error: 'Employee not found' });
-    const user = userRes.rows[0];
-
-    const [deptStatsRes, timelineRes, monthlyRes, tenureRes] = await Promise.all([
-      user.service_key
-        ? pool.query(
-            `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
-                    COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_minutes
-             FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
-             AND LOWER(regexp_replace(service, '[^a-zA-Z0-9]+', '', 'g')) = $2`,
-            [hotelId, user.service_key]
-          )
-        : Promise.resolve({ rows: [{ total: 0, completed: 0, avg_minutes: 0 }] }),
-      pool.query(
-        `SELECT created_at, action, target_type, ip_address, device
-         FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND (actor_user_id = $2 OR (target_type = 'user' AND target_id = $2::text))
-         ORDER BY created_at DESC LIMIT 20`,
-        [hotelId, req.params.id]
-      ),
-      pool.query(
-        `SELECT date_trunc('month', created_at)::date AS month, COUNT(*)::int AS actions
-         FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND actor_user_id = $2 AND created_at >= NOW() - INTERVAL '6 months'
-         GROUP BY month ORDER BY month`,
-        [hotelId, req.params.id]
-      ),
-      pool.query(`SELECT EXTRACT(DAY FROM NOW() - created_at)::int AS tenure_days FROM hotel_admin_users WHERE id = $1`, [req.params.id])
-    ]);
-
-    const deptStats = deptStatsRes.rows[0] || { total: 0, completed: 0, avg_minutes: 0 };
-    const completionRate = deptStats.total > 0 ? Math.round((deptStats.completed / deptStats.total) * 100) : 0;
-
-    res.json({
-      id: user.id,
-      fullName: user.full_name,
-      employeeId: user.employee_id,
-      department: user.department_name,
-      role: user.role_name,
-      email: user.email,
-      phone: user.phone,
-      shift: user.shift_name,
-      shiftHours: user.start_time && user.end_time ? `${user.start_time} – ${user.end_time}` : null,
-      employmentStatus: user.employment_status,
-      accountStatus: user.account_status,
-      isOnline: user.is_online,
-      lastLogin: user.last_login_at,
-      lastSeen: user.last_seen_at,
-      createdDate: user.created_at,
-      tenureDays: tenureRes.rows[0]?.tenure_days || 0,
-      profilePhotoUrl: user.profile_photo_url,
-      departmentContext: {
-        requests30d: deptStats.total,
-        completed30d: deptStats.completed,
-        completionRate,
-        avgResponseMinutes: deptStats.avg_minutes
-      },
-      adminPortalActivity: {
-        totalActions: timelineRes.rows.length,
-        timeline: timelineRes.rows,
-        monthlyActivity: monthlyRes.rows
-      }
-    });
-  } catch (err) {
-    console.error('Employee profile failed:', err);
-    res.status(500).json({ error: 'Failed to load employee profile' });
-  }
-});
-
 app.get('/api/hotel-admin/performance', requireHotelAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.full_name, u.employment_status, u.account_status, u.is_online, u.last_login_at, u.created_at,
-              d.name AS department_name, d.service_key, s.name AS shift_name,
-              COUNT(a.id)::int AS admin_actions_30d,
-              EXTRACT(DAY FROM NOW() - u.created_at)::int AS tenure_days
+      `SELECT u.id, u.full_name, d.name AS department_name, u.is_online,
+              COUNT(a.id) FILTER (WHERE a.action IN ('request_completed','complete_requests'))::int AS completed_requests,
+              0::int AS average_completion_time,
+              COUNT(a.id) FILTER (WHERE a.action ILIKE '%escalat%')::int AS escalated_requests,
+              NULL::numeric AS customer_satisfaction_score,
+              0::int AS late_requests,
+              CASE WHEN u.is_online THEN 'Present' ELSE 'Offline' END AS attendance_status,
+              CASE
+                WHEN COUNT(a.id) FILTER (WHERE a.action IN ('request_completed','complete_requests')) >= 20 THEN 'Excellent'
+                WHEN COUNT(a.id) FILTER (WHERE a.action IN ('request_completed','complete_requests')) >= 10 THEN 'Strong'
+                WHEN u.is_online THEN 'Active'
+                ELSE 'Unrated'
+              END AS performance_rating
        FROM hotel_admin_users u
        LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
-       LEFT JOIN hotel_admin_shifts s ON s.id = u.shift_id
        LEFT JOIN hotel_admin_audit_logs a ON a.actor_user_id = u.id AND a.created_at >= NOW() - INTERVAL '30 days'
        WHERE u.hotel_id = $1 AND u.deleted_at IS NULL
-       GROUP BY u.id, d.name, d.service_key, s.name
-       ORDER BY u.full_name`,
+       GROUP BY u.id, d.name
+       ORDER BY completed_requests DESC, u.full_name`,
       [req.hotelAdmin.hotel_id]
     );
-
-    // Real department-level request stats, computed once per distinct
-    // service_key and attached to each employee's department as context —
-    // this is genuine data, unlike a fabricated per-person request count.
-    const serviceKeys = [...new Set(result.rows.map(r => r.service_key).filter(Boolean))];
-    let deptStatsByKey = {};
-    if (serviceKeys.length) {
-      const deptStats = await pool.query(
-        `SELECT LOWER(regexp_replace(service, '[^a-zA-Z0-9]+', '', 'g')) AS service_key,
-                COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_minutes
-         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
-         GROUP BY service_key`,
-        [req.hotelAdmin.hotel_id]
-      );
-      deptStatsByKey = deptStats.rows.reduce((acc, row) => { acc[row.service_key] = row; return acc; }, {});
-    }
-
-    const rows = result.rows.map(row => {
-      const dept = deptStatsByKey[row.service_key] || { total: 0, completed: 0, avg_minutes: 0 };
-      const completionRate = dept.total > 0 ? Math.round((dept.completed / dept.total) * 100) : 0;
-      return {
-        id: row.id,
-        fullName: row.full_name,
-        departmentName: row.department_name,
-        shiftName: row.shift_name,
-        employmentStatus: row.employment_status,
-        accountStatus: row.account_status,
-        isOnline: row.is_online,
-        lastLogin: row.last_login_at,
-        tenureDays: row.tenure_days,
-        adminActions30d: row.admin_actions_30d,
-        departmentRequests30d: dept.total,
-        departmentCompletionRate: completionRate,
-        departmentAvgResponseMinutes: dept.avg_minutes,
-        performanceScore: computePerformanceScore({ completionRate, avgResponseMinutes: dept.avg_minutes })
-      };
-    }).sort((a, b) => b.performanceScore - a.performanceScore);
-
-    res.json({
-      employees: rows,
-      note: 'Completion rate and response time reflect the employee\'s department as a whole — individual guest-request attribution is not possible under the current department-password login model.'
-    });
+    res.json(result.rows);
   } catch (err) {
-    console.error('Performance query failed:', err);
     res.status(500).json({ error: 'Failed to load performance' });
   }
 });
@@ -2576,959 +1867,6 @@ app.put('/api/hotel-admin/shifts/:id', requireHotelAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/hotel-admin/shifts/:id', requireHotelAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`DELETE FROM hotel_admin_shifts WHERE id = $1 AND hotel_id = $2 RETURNING name`, [req.params.id, req.hotelAdmin.hotel_id]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Shift not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'shift_deleted', 'shift', req.params.id, req, { name: result.rows[0].name });
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to delete shift' });
-  }
-});
-
-// ── Shift Calendar ──────────────────────────────────────────
-app.get('/api/hotel-admin/shift-schedule', requireHotelAdmin, async (req, res) => {
-  const start = req.query.start || new Date().toISOString().slice(0, 10);
-  const end = req.query.end || start;
-  try {
-    const result = await pool.query(
-      `SELECT sc.id, sc.shift_date, sc.status, sc.shift_id, sc.user_id,
-              s.name AS shift_name, s.start_time, s.end_time,
-              u.full_name, d.name AS department_name
-       FROM hotel_admin_shift_schedule sc
-       JOIN hotel_admin_shifts s ON s.id = sc.shift_id
-       JOIN hotel_admin_users u ON u.id = sc.user_id AND u.deleted_at IS NULL
-       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
-       WHERE sc.hotel_id = $1 AND sc.shift_date BETWEEN $2 AND $3
-       ORDER BY sc.shift_date, s.start_time NULLS LAST`,
-      [req.hotelAdmin.hotel_id, start, end]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Load shift schedule failed:', err);
-    res.status(500).json({ error: 'Failed to load shift schedule' });
-  }
-});
-
-app.post('/api/hotel-admin/shift-schedule', requireHotelAdmin, async (req, res) => {
-  const { shiftId, userId, startDate, recurrence, endDate, daysOfWeek } = req.body;
-  if (!shiftId || !userId || !startDate) return res.status(400).json({ error: 'shiftId, userId and startDate are required' });
-  try {
-    const dates = [];
-    const start = new Date(startDate + 'T00:00:00Z');
-    if (!recurrence || recurrence === 'none') {
-      dates.push(startDate);
-    } else {
-      const end = endDate ? new Date(endDate + 'T00:00:00Z') : new Date(start.getTime() + 27 * 86400000);
-      const allowedDays = Array.isArray(daysOfWeek) && daysOfWeek.length ? daysOfWeek.map(Number) : null;
-      for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-        if (recurrence === 'weekly' && allowedDays && !allowedDays.includes(d.getUTCDay())) continue;
-        dates.push(d.toISOString().slice(0, 10));
-        if (dates.length >= 180) break; // sane cap
-      }
-    }
-
-    let created = 0;
-    for (const date of dates) {
-      const result = await pool.query(
-        `INSERT INTO hotel_admin_shift_schedule (hotel_id, shift_id, user_id, shift_date)
-         VALUES ($1,$2,$3,$4) ON CONFLICT (user_id, shift_date, shift_id) DO NOTHING RETURNING id`,
-        [req.hotelAdmin.hotel_id, shiftId, userId, date]
-      );
-      if (result.rows.length) created++;
-    }
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'shift_scheduled', 'shift_schedule', shiftId, req, { userId, dates: dates.length, created });
-    res.status(201).json({ ok: true, requested: dates.length, created });
-  } catch (err) {
-    console.error('Create shift schedule failed:', err);
-    res.status(500).json({ error: 'Failed to schedule shift' });
-  }
-});
-
-app.delete('/api/hotel-admin/shift-schedule/:id', requireHotelAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`DELETE FROM hotel_admin_shift_schedule WHERE id = $1 AND hotel_id = $2 RETURNING id`, [req.params.id, req.hotelAdmin.hotel_id]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Scheduled shift not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'shift_schedule_removed', 'shift_schedule', req.params.id, req);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to remove scheduled shift' });
-  }
-});
-
-// A person scheduled to more than one shift template on the same date —
-// a real, simple, robust conflict signal without fragile hour-overlap math.
-app.get('/api/hotel-admin/shift-schedule/conflicts', requireHotelAdmin, async (req, res) => {
-  const start = req.query.start || new Date().toISOString().slice(0, 10);
-  const end = req.query.end || start;
-  try {
-    const result = await pool.query(
-      `SELECT sc.shift_date, sc.user_id, u.full_name, array_agg(DISTINCT s.name) AS shift_names, COUNT(DISTINCT sc.shift_id)::int AS shift_count
-       FROM hotel_admin_shift_schedule sc
-       JOIN hotel_admin_shifts s ON s.id = sc.shift_id
-       JOIN hotel_admin_users u ON u.id = sc.user_id AND u.deleted_at IS NULL
-       WHERE sc.hotel_id = $1 AND sc.shift_date BETWEEN $2 AND $3
-       GROUP BY sc.shift_date, sc.user_id, u.full_name
-       HAVING COUNT(DISTINCT sc.shift_id) > 1
-       ORDER BY sc.shift_date`,
-      [req.hotelAdmin.hotel_id, start, end]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to check conflicts' });
-  }
-});
-
-app.get('/api/hotel-admin/shift-schedule/vacant', requireHotelAdmin, async (req, res) => {
-  const date = req.query.date || new Date().toISOString().slice(0, 10);
-  try {
-    const result = await pool.query(
-      `SELECT s.id, s.name, s.start_time, s.end_time
-       FROM hotel_admin_shifts s
-       WHERE s.hotel_id = $1 AND s.status = 'active'
-       AND NOT EXISTS (SELECT 1 FROM hotel_admin_shift_schedule sc WHERE sc.shift_id = s.id AND sc.shift_date = $2)
-       ORDER BY s.start_time NULLS LAST`,
-      [req.hotelAdmin.hotel_id, date]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to load vacant shifts' });
-  }
-});
-
-// ============================================================
-// Attendance Management
-// Admin-operated: the Hotel Admin or a manager records clock
-// in/out and attendance status on behalf of staff, since staff
-// don't have a separate self-service login. Late detection is
-// computed against the employee's assigned shift start time.
-// ============================================================
-const LATE_GRACE_MINUTES = 10;
-const LEAVE_ALLOWANCES = { annual: 21, sick: 10, emergency: 5, maternity: 90, paternity: 14, compassionate: 5, custom: 0 };
-
-app.post('/api/hotel-admin/attendance/clock-in', requireHotelAdmin, async (req, res) => {
-  const { userId } = req.body;
-  if (!userId) return res.status(400).json({ error: 'userId is required' });
-  try {
-    const userRes = await pool.query(
-      `SELECT u.id, s.start_time FROM hotel_admin_users u LEFT JOIN hotel_admin_shifts s ON s.id = u.shift_id
-       WHERE u.id = $1 AND u.hotel_id = $2 AND u.deleted_at IS NULL`,
-      [userId, req.hotelAdmin.hotel_id]
-    );
-    if (!userRes.rows.length) return res.status(404).json({ error: 'Employee not found' });
-    const shiftStart = userRes.rows[0].start_time;
-
-    const now = new Date();
-    const today = now.toISOString().slice(0, 10);
-    let status = 'present';
-    if (shiftStart) {
-      const [h, m] = shiftStart.split(':').map(Number);
-      const shiftStartMinutes = h * 60 + m;
-      const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
-      if (nowMinutes > shiftStartMinutes + LATE_GRACE_MINUTES) status = 'late';
-    }
-
-    const result = await pool.query(
-      `INSERT INTO hotel_admin_attendance (hotel_id, user_id, attendance_date, clock_in, status, recorded_by)
-       VALUES ($1,$2,$3,NOW(),$4,$5)
-       ON CONFLICT (user_id, attendance_date) DO UPDATE SET clock_in = NOW(), status = $4, updated_at = NOW()
-       RETURNING *`,
-      [req.hotelAdmin.hotel_id, userId, today, status, req.hotelAdmin.id]
-    );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'attendance_clock_in', 'user', userId, req, { status });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Clock in failed:', err);
-    res.status(500).json({ error: 'Failed to clock in' });
-  }
-});
-
-app.post('/api/hotel-admin/attendance/clock-out', requireHotelAdmin, async (req, res) => {
-  const { userId } = req.body;
-  if (!userId) return res.status(400).json({ error: 'userId is required' });
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const result = await pool.query(
-      `UPDATE hotel_admin_attendance SET clock_out = NOW(), updated_at = NOW()
-       WHERE user_id = $1 AND hotel_id = $2 AND attendance_date = $3 RETURNING *`,
-      [userId, req.hotelAdmin.hotel_id, today]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'No clock-in record found for today' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'attendance_clock_out', 'user', userId, req);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to clock out' });
-  }
-});
-
-app.post('/api/hotel-admin/attendance/mark', requireHotelAdmin, async (req, res) => {
-  const { userId, date, status, notes } = req.body;
-  if (!userId || !date || !status) return res.status(400).json({ error: 'userId, date and status are required' });
-  try {
-    const result = await pool.query(
-      `INSERT INTO hotel_admin_attendance (hotel_id, user_id, attendance_date, status, notes, recorded_by)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (user_id, attendance_date) DO UPDATE SET status = $4, notes = $5, updated_at = NOW()
-       RETURNING *`,
-      [req.hotelAdmin.hotel_id, userId, date, status, notes || null, req.hotelAdmin.id]
-    );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'attendance_marked', 'user', userId, req, { date, status });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to mark attendance' });
-  }
-});
-
-app.get('/api/hotel-admin/attendance', requireHotelAdmin, async (req, res) => {
-  const start = req.query.start || new Date().toISOString().slice(0, 10);
-  const end = req.query.end || start;
-  try {
-    const result = await pool.query(
-      `SELECT a.*, u.full_name, d.name AS department_name
-       FROM hotel_admin_attendance a
-       JOIN hotel_admin_users u ON u.id = a.user_id AND u.deleted_at IS NULL
-       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
-       WHERE a.hotel_id = $1 AND a.attendance_date BETWEEN $2 AND $3
-       ${req.query.userId ? 'AND a.user_id = $4' : ''}
-       ORDER BY a.attendance_date DESC, u.full_name`,
-      req.query.userId ? [req.hotelAdmin.hotel_id, start, end, req.query.userId] : [req.hotelAdmin.hotel_id, start, end]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to load attendance' });
-  }
-});
-
-app.get('/api/hotel-admin/attendance/analytics', requireHotelAdmin, async (req, res) => {
-  const start = req.query.start || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-  const end = req.query.end || new Date().toISOString().slice(0, 10);
-  try {
-    const [summary, perEmployee] = await Promise.all([
-      pool.query(
-        `SELECT COUNT(*) FILTER (WHERE status = 'present')::int AS present,
-                COUNT(*) FILTER (WHERE status = 'late')::int AS late,
-                COUNT(*) FILTER (WHERE status = 'absent')::int AS absent,
-                COUNT(*) FILTER (WHERE status = 'half-day')::int AS half_day,
-                COUNT(*)::int AS total_records,
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (clock_out - clock_in)) / 3600) FILTER (WHERE clock_in IS NOT NULL AND clock_out IS NOT NULL), 1), 0) AS avg_hours
-         FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date BETWEEN $2 AND $3`,
-        [req.hotelAdmin.hotel_id, start, end]
-      ),
-      pool.query(
-        `SELECT u.id, u.full_name,
-                COUNT(*) FILTER (WHERE a.status = 'present')::int AS present,
-                COUNT(*) FILTER (WHERE a.status = 'late')::int AS late,
-                COUNT(*) FILTER (WHERE a.status = 'absent')::int AS absent,
-                COUNT(*)::int AS total_records
-         FROM hotel_admin_users u
-         JOIN hotel_admin_attendance a ON a.user_id = u.id AND a.attendance_date BETWEEN $2 AND $3
-         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL
-         GROUP BY u.id ORDER BY late DESC, absent DESC`,
-        [req.hotelAdmin.hotel_id, start, end]
-      )
-    ]);
-    const s = summary.rows[0] || {};
-    const attendanceRate = s.total_records > 0 ? Math.round(((s.present + s.late + s.half_day) / s.total_records) * 100) : 0;
-    res.json({ ...s, attendanceRate, perEmployee: perEmployee.rows });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to load attendance analytics' });
-  }
-});
-
-// ============================================================
-// Leave Management
-// ============================================================
-app.get('/api/hotel-admin/leave', requireHotelAdmin, async (req, res) => {
-  try {
-    const filters = ['l.hotel_id = $1'];
-    const params = [req.hotelAdmin.hotel_id];
-    if (req.query.status) { params.push(req.query.status); filters.push(`l.status = $${params.length}`); }
-    if (req.query.userId) { params.push(req.query.userId); filters.push(`l.user_id = $${params.length}`); }
-    const result = await pool.query(
-      `SELECT l.*, u.full_name, d.name AS department_name, r.full_name AS reviewed_by_name
-       FROM hotel_admin_leave_requests l
-       JOIN hotel_admin_users u ON u.id = l.user_id
-       LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
-       LEFT JOIN hotel_admin_users r ON r.id = l.reviewed_by
-       WHERE ${filters.join(' AND ')}
-       ORDER BY l.created_at DESC`,
-      params
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to load leave requests' });
-  }
-});
-
-app.post('/api/hotel-admin/leave', requireHotelAdmin, async (req, res) => {
-  const { userId, leaveType, customTypeLabel, startDate, endDate, reason } = req.body;
-  if (!userId || !leaveType || !startDate || !endDate) return res.status(400).json({ error: 'userId, leaveType, startDate and endDate are required' });
-  try {
-    const result = await pool.query(
-      `INSERT INTO hotel_admin_leave_requests (hotel_id, user_id, leave_type, custom_type_label, start_date, end_date, reason)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [req.hotelAdmin.hotel_id, userId, leaveType, customTypeLabel || null, startDate, endDate, reason || null]
-    );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'leave_requested', 'leave', result.rows[0].id, req, { userId, leaveType, startDate, endDate });
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to create leave request' });
-  }
-});
-
-app.post('/api/hotel-admin/leave/:id/review', requireHotelAdmin, async (req, res) => {
-  const decision = req.body.decision === 'approved' ? 'approved' : req.body.decision === 'rejected' ? 'rejected' : null;
-  if (!decision) return res.status(400).json({ error: 'decision must be approved or rejected' });
-  try {
-    const result = await pool.query(
-      `UPDATE hotel_admin_leave_requests SET status = $1, reviewed_by = $2, reviewed_at = NOW()
-       WHERE id = $3 AND hotel_id = $4 RETURNING *`,
-      [decision, req.hotelAdmin.id, req.params.id, req.hotelAdmin.hotel_id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Leave request not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, `leave_${decision}`, 'leave', req.params.id, req);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to review leave request' });
-  }
-});
-
-app.get('/api/hotel-admin/leave/balance/:userId', requireHotelAdmin, async (req, res) => {
-  const year = parseInt(req.query.year, 10) || new Date().getFullYear();
-  try {
-    const result = await pool.query(
-      `SELECT leave_type, SUM((end_date - start_date) + 1)::int AS days_used
-       FROM hotel_admin_leave_requests
-       WHERE hotel_id = $1 AND user_id = $2 AND status = 'approved' AND EXTRACT(YEAR FROM start_date) = $3
-       GROUP BY leave_type`,
-      [req.hotelAdmin.hotel_id, req.params.userId, year]
-    );
-    const used = result.rows.reduce((acc, row) => { acc[row.leave_type] = row.days_used; return acc; }, {});
-    const balance = Object.keys(LEAVE_ALLOWANCES).map(type => ({
-      type, allowance: LEAVE_ALLOWANCES[type], used: used[type] || 0, remaining: Math.max(0, LEAVE_ALLOWANCES[type] - (used[type] || 0))
-    }));
-    res.json({ year, balance, policyNote: `Default allowances shown (${Object.entries(LEAVE_ALLOWANCES).map(([k,v]) => `${k}: ${v}d`).join(', ')}) — adjust in code if your hotel's policy differs.` });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to load leave balance' });
-  }
-});
-
-// ============================================================
-// Request Assignment
-// Individual accountability layered on top of the existing
-// department-password request queue — assignment is tracked
-// here in the admin portal; the department dashboard itself is
-// untouched.
-// ============================================================
-app.get('/api/hotel-admin/requests', requireHotelAdmin, async (req, res) => {
-  const page = Math.max(parseInt(req.query.page || '1', 10), 1);
-  const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 100);
-  const filters = ['r.hotel_id = $1'];
-  const params = [req.hotelAdmin.hotel_id];
-  if (req.query.status) { params.push(req.query.status); filters.push(`r.status = $${params.length}`); }
-  if (req.query.priority) { params.push(req.query.priority); filters.push(`r.priority = $${params.length}`); }
-  if (req.query.service) { params.push(req.query.service); filters.push(`r.service = $${params.length}`); }
-  if (req.query.assigned === 'unassigned') filters.push('r.assigned_user_id IS NULL');
-  if (req.query.assigned === 'assigned') filters.push('r.assigned_user_id IS NOT NULL');
-  try {
-    params.push(limit, (page - 1) * limit);
-    const result = await pool.query(
-      `SELECT r.*, u.full_name AS assigned_name, COUNT(*) OVER()::int AS total_count
-       FROM requests r
-       LEFT JOIN hotel_admin_users u ON u.id = r.assigned_user_id
-       WHERE ${filters.join(' AND ')}
-       ORDER BY CASE r.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, r.created_at DESC
-       LIMIT $${params.length - 1} OFFSET $${params.length}`,
-      params
-    );
-    res.json({ requests: result.rows, total: result.rows[0]?.total_count || 0, page, limit });
-  } catch (err) {
-    console.error('Load requests failed:', err);
-    res.status(500).json({ error: 'Failed to load requests' });
-  }
-});
-
-app.post('/api/hotel-admin/requests/:id/assign', requireHotelAdmin, async (req, res) => {
-  const { userId } = req.body;
-  try {
-    const result = await pool.query(
-      `UPDATE requests SET assigned_user_id = $1, assigned_by = $2, assigned_at = NOW(), updated_at = NOW()
-       WHERE id = $3 AND hotel_id = $4 RETURNING *`,
-      [userId || null, req.hotelAdmin.id, req.params.id, req.hotelAdmin.hotel_id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, userId ? 'request_assigned' : 'request_unassigned', 'request', req.params.id, req, { userId });
-    if (userId) {
-      const userRow = await pool.query('SELECT full_name FROM hotel_admin_users WHERE id = $1', [userId]);
-      io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('requestAssigned', {
-        requestId: Number(req.params.id), userId, userName: userRow.rows[0]?.full_name || 'Staff', hotelId: req.hotelAdmin.hotel_id
-      });
-    }
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to assign request' });
-  }
-});
-
-app.post('/api/hotel-admin/requests/bulk-assign', requireHotelAdmin, async (req, res) => {
-  const { requestIds, userId } = req.body;
-  if (!Array.isArray(requestIds) || !requestIds.length || !userId) return res.status(400).json({ error: 'requestIds and userId are required' });
-  try {
-    const result = await pool.query(
-      `UPDATE requests SET assigned_user_id = $1, assigned_by = $2, assigned_at = NOW(), updated_at = NOW()
-       WHERE id = ANY($3::int[]) AND hotel_id = $4 RETURNING id`,
-      [userId, req.hotelAdmin.id, requestIds, req.hotelAdmin.hotel_id]
-    );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_bulk_assigned', 'request', null, req, { requestIds, userId, count: result.rows.length });
-    const userRow = await pool.query('SELECT full_name FROM hotel_admin_users WHERE id = $1', [userId]);
-    io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('requestAssigned', {
-      requestId: null, count: result.rows.length, userId, userName: userRow.rows[0]?.full_name || 'Staff', hotelId: req.hotelAdmin.hotel_id
-    });
-    res.json({ ok: true, updated: result.rows.length });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to bulk assign requests' });
-  }
-});
-
-app.post('/api/hotel-admin/requests/:id/escalate', requireHotelAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `UPDATE requests SET escalated = TRUE, escalated_at = NOW(), priority = 'urgent', updated_at = NOW()
-       WHERE id = $1 AND hotel_id = $2 RETURNING *`,
-      [req.params.id, req.hotelAdmin.hotel_id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_escalated', 'request', req.params.id, req);
-    io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('requestEscalated', {
-      requestId: Number(req.params.id), roomNumber: result.rows[0].room_number, service: result.rows[0].service, hotelId: req.hotelAdmin.hotel_id
-    });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to escalate request' });
-  }
-});
-
-app.put('/api/hotel-admin/requests/:id/priority', requireHotelAdmin, async (req, res) => {
-  const priority = ['low', 'normal', 'high', 'urgent'].includes(req.body.priority) ? req.body.priority : null;
-  if (!priority) return res.status(400).json({ error: 'Invalid priority' });
-  try {
-    const result = await pool.query(
-      `UPDATE requests SET priority = $1, updated_at = NOW() WHERE id = $2 AND hotel_id = $3 RETURNING *`,
-      [priority, req.params.id, req.hotelAdmin.hotel_id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_priority_changed', 'request', req.params.id, req, { priority });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to update priority' });
-  }
-});
-
-app.post('/api/hotel-admin/requests/:id/transfer', requireHotelAdmin, async (req, res) => {
-  const { service } = req.body;
-  if (!service) return res.status(400).json({ error: 'service is required' });
-  try {
-    const result = await pool.query(
-      `UPDATE requests SET service = $1, assigned_user_id = NULL, assigned_by = NULL, assigned_at = NULL, updated_at = NOW()
-       WHERE id = $2 AND hotel_id = $3 RETURNING *`,
-      [service, req.params.id, req.hotelAdmin.hotel_id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Request not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'request_transferred', 'request', req.params.id, req, { service });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to transfer request' });
-  }
-});
-
-// ============================================================
-// Workload Balancing
-// Every figure here is a real, deterministic computation over
-// live data — no "AI suggestion" black box. The suggested
-// reassignment pairing is a documented rule: the oldest
-// unassigned request in a department is paired with that
-// department's least-loaded active staff member.
-// ============================================================
-// ============================================================
-// Workforce Analytics
-// Time-series trends, distinct from the point-in-time snapshots
-// on the Dashboard and Workload pages. Every series is a real
-// GROUP BY over live data.
-// ============================================================
-app.get('/api/hotel-admin/analytics', requireHotelAdmin, async (req, res) => {
-  try {
-    const hotelId = req.hotelAdmin.hotel_id;
-    const [volumeRes, weeklyRes, deptRes, attendanceRes, utilizationRes] = await Promise.all([
-      pool.query(
-        `SELECT date_trunc('day', created_at)::date AS day, COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE status = 'completed')::int AS completed
-         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
-         GROUP BY day ORDER BY day`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT date_trunc('week', created_at)::date AS week, COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_response
-         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '70 days'
-         GROUP BY week ORDER BY week`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT d.name,
-                COUNT(r.id)::int AS total, COUNT(r.id) FILTER (WHERE r.status = 'completed')::int AS completed,
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (r.updated_at - r.created_at)) / 60) FILTER (WHERE r.status = 'completed')), 0)::int AS avg_response
-         FROM hotel_admin_departments d
-         LEFT JOIN requests r ON LOWER(regexp_replace(r.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
-           AND r.hotel_id = d.hotel_id AND r.created_at >= NOW() - INTERVAL '30 days'
-         WHERE d.hotel_id = $1 AND d.status = 'active'
-         GROUP BY d.id ORDER BY d.name`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT attendance_date::date AS day,
-                COUNT(*) FILTER (WHERE status IN ('present','late','half-day'))::int AS present_like,
-                COUNT(*)::int AS total
-         FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date >= NOW() - INTERVAL '30 days'
-         GROUP BY day ORDER BY day`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT u.id, COUNT(r.id)::int AS load
-         FROM hotel_admin_users u
-         LEFT JOIN requests r ON r.assigned_user_id = u.id AND r.status IN ('pending','in-progress')
-         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL AND u.employment_status = 'active'
-         GROUP BY u.id`,
-        [hotelId]
-      )
-    ]);
-
-    const departmentComparison = deptRes.rows.map(d => ({
-      name: d.name, requests: d.total, completed: d.completed,
-      completionRate: d.total > 0 ? Math.round((d.completed / d.total) * 100) : null,
-      avgResponseMinutes: d.avg_response
-    }));
-
-    const utilBuckets = { '0': 0, '1-2': 0, '3-5': 0, '6+': 0 };
-    utilizationRes.rows.forEach(row => {
-      const load = row.load;
-      if (load === 0) utilBuckets['0']++;
-      else if (load <= 2) utilBuckets['1-2']++;
-      else if (load <= 5) utilBuckets['3-5']++;
-      else utilBuckets['6+']++;
-    });
-
-    res.json({
-      requestVolumeTrend: volumeRes.rows.map(r => ({ date: r.day, total: r.total, completed: r.completed })),
-      completionRateTrend: weeklyRes.rows.map(r => ({ week: r.week, rate: r.total > 0 ? Math.round((r.completed / r.total) * 100) : 0 })),
-      responseTimeTrend: weeklyRes.rows.map(r => ({ week: r.week, avgMinutes: r.avg_response })),
-      departmentComparison,
-      attendanceTrend: attendanceRes.rows.map(r => ({ date: r.day, rate: r.total > 0 ? Math.round((r.present_like / r.total) * 100) : null })),
-      staffUtilization: Object.entries(utilBuckets).map(([bucket, count]) => ({ bucket, count }))
-    });
-  } catch (err) {
-    console.error('Analytics query failed:', err);
-    res.status(500).json({ error: 'Failed to load analytics' });
-  }
-});
-
-// ============================================================
-// Business Intelligence — Executive Dashboard + Insights
-// Every score, trend, and insight below is computed from real
-// data with a documented formula. No forecasting here — that
-// lives in a separate Predictive Analytics module so "real
-// history" and "projection" are never blurred together.
-// ============================================================
-app.get('/api/hotel-admin/bi/dashboard', requireHotelAdmin, async (req, res) => {
-  try {
-    const hotelId = req.hotelAdmin.hotel_id;
-    const [
-      currentRes, priorRes, deptRes, staffRes, attendanceRes, hourlyRes, repeatIssuesRes, lockedRes
-    ] = await Promise.all([
-      pool.query(
-        `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
-                COUNT(*) FILTER (WHERE escalated)::int AS escalated,
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_response
-         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60) FILTER (WHERE status = 'completed')), 0)::int AS avg_response
-         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days'`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT d.id, d.name, COUNT(DISTINCT u.id)::int AS staff_count,
-                COUNT(r.id)::int AS total, COUNT(r.id) FILTER (WHERE r.status = 'completed')::int AS completed,
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (r.updated_at - r.created_at)) / 60) FILTER (WHERE r.status = 'completed')), 0)::int AS avg_response
-         FROM hotel_admin_departments d
-         LEFT JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
-         LEFT JOIN requests r ON LOWER(regexp_replace(r.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
-           AND r.hotel_id = d.hotel_id AND r.created_at >= NOW() - INTERVAL '30 days'
-         WHERE d.hotel_id = $1 AND d.status = 'active'
-         GROUP BY d.id ORDER BY d.name`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE is_online = TRUE)::int AS online
-         FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL AND account_status = 'active'`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT COUNT(*) FILTER (WHERE status IN ('present','late','half-day'))::int AS present_like, COUNT(*)::int AS total
-         FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date >= NOW() - INTERVAL '30 days'`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT EXTRACT(HOUR FROM created_at)::int AS hour, COUNT(*)::int AS total
-         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
-         GROUP BY hour ORDER BY hour`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT room_number, service, COUNT(*)::int AS occurrences
-         FROM requests WHERE hotel_id = $1 AND service ILIKE '%maintenance%' AND created_at >= NOW() - INTERVAL '30 days'
-         GROUP BY room_number, service HAVING COUNT(*) >= 2 ORDER BY occurrences DESC LIMIT 10`,
-        [hotelId]
-      ),
-      pool.query(`SELECT COUNT(*)::int AS count FROM hotel_admin_users WHERE hotel_id = $1 AND account_status = 'locked' AND deleted_at IS NULL`, [hotelId])
-    ]);
-
-    const current = currentRes.rows[0];
-    const prior = priorRes.rows[0];
-    const staff = staffRes.rows[0];
-    const attendance = attendanceRes.rows[0];
-
-    const currentCompletionRate = current.total > 0 ? Math.round((current.completed / current.total) * 100) : 0;
-    const priorCompletionRate = prior.total > 0 ? Math.round((prior.completed / prior.total) * 100) : 0;
-    const escalationRate = current.total > 0 ? Math.round((current.escalated / current.total) * 100) : 0;
-    const attendanceRate = attendance.total > 0 ? Math.round((attendance.present_like / attendance.total) * 100) : null;
-    const staffOnlineRatio = staff.total > 0 ? staff.online / staff.total : 0;
-
-    const departments = deptRes.rows.map(d => ({
-      id: d.id, name: d.name, staffCount: d.staff_count, requests: d.total, completed: d.completed,
-      completionRate: d.total > 0 ? Math.round((d.completed / d.total) * 100) : null,
-      avgResponseMinutes: d.avg_response,
-      efficiencyScore: d.total > 0 ? computePerformanceScore({ completionRate: Math.round((d.completed / d.total) * 100), avgResponseMinutes: d.avg_response }) : null
-    }));
-
-    const scoredDepts = departments.filter(d => d.efficiencyScore !== null);
-    const departmentEfficiency = scoredDepts.length ? Math.round(scoredDepts.reduce((s, d) => s + d.efficiencyScore, 0) / scoredDepts.length) : null;
-
-    const servicePerformanceScore = computePerformanceScore({ completionRate: currentCompletionRate, avgResponseMinutes: current.avg_response });
-
-    // Operational Health = weighted blend of completion rate, response time,
-    // attendance rate, and staff online ratio. Weights sum to 100%.
-    const operationalHealthScore = Math.round(
-      currentCompletionRate * 0.35 +
-      Math.max(0, 100 - current.avg_response) * 0.25 +
-      (attendanceRate ?? currentCompletionRate) * 0.20 +
-      (staffOnlineRatio * 100) * 0.20
-    );
-
-    const staffProductivity = scoredDepts.length
-      ? Math.round(scoredDepts.reduce((s, d) => s + d.efficiencyScore * Math.max(1, d.staffCount), 0) / scoredDepts.reduce((s, d) => s + Math.max(1, d.staffCount), 0))
-      : null;
-
-    // Risk indicators — only real, threshold-based flags.
-    const riskIndicators = [];
-    if (lockedRes.rows[0].count > 0) riskIndicators.push({ severity: 'warning', message: `${lockedRes.rows[0].count} staff account(s) are locked.` });
-    const understaffed = departments.filter(d => d.staffCount === 0);
-    if (understaffed.length) riskIndicators.push({ severity: 'warning', message: `${understaffed.map(d => d.name).join(', ')} ${understaffed.length === 1 ? 'has' : 'have'} no staff assigned.` });
-    const strugglingDepts = departments.filter(d => d.completionRate !== null && d.requests >= 5 && d.completionRate < 60);
-    if (strugglingDepts.length) riskIndicators.push({ severity: 'critical', message: `${strugglingDepts.map(d => d.name).join(', ')} ${strugglingDepts.length === 1 ? 'is' : 'are'} completing under 60% of requests.` });
-    if (escalationRate > 10) riskIndicators.push({ severity: 'warning', message: `${escalationRate}% of requests this period were escalated.` });
-    if (attendanceRate !== null && attendanceRate < 70) riskIndicators.push({ severity: 'warning', message: `Attendance rate is ${attendanceRate}% over the last 30 days.` });
-    if (repeatIssuesRes.rows.length) riskIndicators.push({ severity: 'warning', message: `${repeatIssuesRes.rows.length} room(s) have repeated maintenance issues this period.` });
-
-    // Insights — auto-generated, plain-language observations from real comparisons.
-    const insights = [];
-    if (departments.length) {
-      const rated = departments.filter(d => d.completionRate !== null && d.requests >= 3);
-      if (rated.length >= 2) {
-        const best = [...rated].sort((a, b) => b.completionRate - a.completionRate)[0];
-        const worst = [...rated].sort((a, b) => a.completionRate - b.completionRate)[0];
-        if (best.id !== worst.id) insights.push(`${best.name} leads on completion rate (${best.completionRate}%), while ${worst.name} trails at ${worst.completionRate}%.`);
-      }
-      const slowest = [...rated].sort((a, b) => b.avgResponseMinutes - a.avgResponseMinutes)[0];
-      if (slowest) insights.push(`${slowest.name} has the slowest average response time at ${slowest.avgResponseMinutes} minutes.`);
-    }
-    if (hourlyRes.rows.length) {
-      const peak = [...hourlyRes.rows].sort((a, b) => b.total - a.total)[0];
-      const low = [...hourlyRes.rows].sort((a, b) => a.total - b.total)[0];
-      insights.push(`Peak request volume occurs around ${peak.hour}:00, with the lowest activity around ${low.hour}:00.`);
-    }
-    if (prior.total >= 5) {
-      const delta = currentCompletionRate - priorCompletionRate;
-      insights.push(`Completion rate has ${delta >= 0 ? 'improved' : 'declined'} by ${Math.abs(delta)} point${Math.abs(delta) === 1 ? '' : 's'} compared to the prior 30 days (${priorCompletionRate}% → ${currentCompletionRate}%).`);
-    }
-    if (repeatIssuesRes.rows.length) {
-      insights.push(`Room ${repeatIssuesRes.rows[0].room_number} has logged ${repeatIssuesRes.rows[0].occurrences} maintenance requests this period — worth a closer look.`);
-    }
-    const busiestDept = [...departments].filter(d => d.requests > 0).sort((a, b) => (b.requests / Math.max(1, b.staffCount)) - (a.requests / Math.max(1, a.staffCount)))[0];
-    if (busiestDept && busiestDept.staffCount > 0 && (busiestDept.requests / busiestDept.staffCount) > 5) {
-      insights.push(`${busiestDept.name} is handling ${(busiestDept.requests / busiestDept.staffCount).toFixed(1)} requests per staff member this period — the highest load-per-person of any department.`);
-    }
-
-    res.json({
-      scores: {
-        operationalHealth: operationalHealthScore,
-        servicePerformance: servicePerformanceScore,
-        departmentEfficiency,
-        staffProductivity
-      },
-      scoreMethodology: 'Operational Health = 35% completion rate + 25% response-time score + 20% attendance rate + 20% staff-online ratio. Service Performance and Department Efficiency = 50% completion rate + 50% response-time score. Staff Productivity = department efficiency scores weighted by headcount.',
-      trend: {
-        currentCompletionRate, priorCompletionRate,
-        currentAvgResponse: current.avg_response, priorAvgResponse: prior.avg_response,
-        currentTotal: current.total, priorTotal: prior.total
-      },
-      departments,
-      riskIndicators,
-      insights,
-      escalationRate,
-      attendanceRate
-    });
-  } catch (err) {
-    console.error('BI dashboard failed:', err);
-    res.status(500).json({ error: 'Failed to load business intelligence dashboard' });
-  }
-});
-
-app.get('/api/hotel-admin/workload', requireHotelAdmin, async (req, res) => {
-  try {
-    const hotelId = req.hotelAdmin.hotel_id;
-    const [staffLoadRes, deptLoadRes, heatmapRes, unassignedRes] = await Promise.all([
-      pool.query(
-        `SELECT u.id, u.full_name, d.name AS department_name, d.service_key,
-                COUNT(r.id)::int AS current_load
-         FROM hotel_admin_users u
-         LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
-         LEFT JOIN requests r ON r.assigned_user_id = u.id AND r.status IN ('pending','in-progress')
-         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL AND u.employment_status = 'active'
-         GROUP BY u.id, d.name, d.service_key
-         ORDER BY current_load DESC`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT d.id, d.name, COUNT(DISTINCT u.id)::int AS staff_count,
-                COALESCE(rc.pending, 0)::int AS pending
-         FROM hotel_admin_departments d
-         LEFT JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
-         LEFT JOIN LATERAL (
-           SELECT COUNT(*) AS pending FROM requests req
-           WHERE req.hotel_id = d.hotel_id AND req.status IN ('pending','in-progress')
-           AND LOWER(regexp_replace(req.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
-         ) rc ON TRUE
-         WHERE d.hotel_id = $1 AND d.status = 'active'
-         GROUP BY d.id, rc.pending
-         ORDER BY pending DESC`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT service, EXTRACT(HOUR FROM created_at)::int AS hour, COUNT(*)::int AS volume
-         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'
-         GROUP BY service, hour ORDER BY service, hour`,
-        [hotelId]
-      ),
-      pool.query(
-        `SELECT r.id, r.room_number, r.service, r.created_at
-         FROM requests r WHERE r.hotel_id = $1 AND r.assigned_user_id IS NULL AND r.status IN ('pending','in-progress')
-         ORDER BY r.created_at ASC`,
-        [hotelId]
-      )
-    ]);
-
-    const staffLoad = staffLoadRes.rows;
-    const busiest = [...staffLoad].sort((a, b) => b.current_load - a.current_load).slice(0, 5);
-    const leastBusy = [...staffLoad].filter(s => s.department_name).sort((a, b) => a.current_load - b.current_load).slice(0, 5);
-
-    // Suggested reassignment: oldest unassigned request per department,
-    // paired with that department's least-loaded staff member.
-    const suggestions = [];
-    const seenDept = new Set();
-    for (const reqRow of unassignedRes.rows) {
-      const key = reqRow.service.toLowerCase().replace(/[^a-z0-9]+/g, '');
-      if (seenDept.has(key)) continue;
-      const candidates = staffLoad.filter(s => s.service_key === key).sort((a, b) => a.current_load - b.current_load);
-      if (!candidates.length) continue;
-      seenDept.add(key);
-      suggestions.push({
-        requestId: reqRow.id, roomNumber: reqRow.room_number, service: reqRow.service, waitingSince: reqRow.created_at,
-        suggestedUserId: candidates[0].id, suggestedUserName: candidates[0].full_name, suggestedUserCurrentLoad: candidates[0].current_load
-      });
-    }
-
-    res.json({
-      staffLoad,
-      busiest,
-      leastBusy,
-      departmentWorkload: deptLoadRes.rows,
-      heatmap: heatmapRes.rows,
-      unassignedCount: unassignedRes.rows.length,
-      suggestions,
-      methodologyNote: 'Suggestions pair the oldest unassigned request in each department with that department\'s least-loaded active staff member — a deterministic rule, not a predictive model.'
-    });
-  } catch (err) {
-    console.error('Workload query failed:', err);
-    res.status(500).json({ error: 'Failed to load workload data' });
-  }
-});
-
-// ============================================================
-// Achievements / Recognition
-// Standings are computed live from real data for the requested
-// month. Nothing is auto-recorded — an admin must explicitly
-// award a category for it to appear in the Hall of Fame.
-// ============================================================
-function monthBounds(monthStr) {
-  const [y, m] = (monthStr || new Date().toISOString().slice(0, 7)).split('-').map(Number);
-  const start = new Date(Date.UTC(y, m - 1, 1));
-  const end = new Date(Date.UTC(y, m, 1));
-  return { start: start.toISOString(), end: end.toISOString(), period: `${y}-${String(m).padStart(2, '0')}` };
-}
-
-app.get('/api/hotel-admin/achievements/standings', requireHotelAdmin, async (req, res) => {
-  try {
-    const hotelId = req.hotelAdmin.hotel_id;
-    const { start, end, period } = monthBounds(req.query.month);
-
-    const [employeeRes, attendanceRes, deptRes] = await Promise.all([
-      pool.query(
-        `SELECT u.id, u.full_name, d.name AS department_name,
-                COUNT(r.id) FILTER (WHERE r.status = 'completed')::int AS completed,
-                COUNT(r.id)::int AS assigned_total,
-                COALESCE(ROUND(AVG(EXTRACT(EPOCH FROM (r.updated_at - r.created_at)) / 60) FILTER (WHERE r.status = 'completed')), 0)::int AS avg_response
-         FROM hotel_admin_users u
-         LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
-         LEFT JOIN requests r ON r.assigned_user_id = u.id AND r.assigned_at >= $2 AND r.assigned_at < $3
-         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL
-         GROUP BY u.id, d.name`,
-        [hotelId, start, end]
-      ),
-      pool.query(
-        `SELECT user_id,
-                COUNT(*) FILTER (WHERE status IN ('present','late'))::int AS present_like,
-                COUNT(*) FILTER (WHERE status = 'late')::int AS late,
-                COUNT(*)::int AS total
-         FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date >= $2 AND attendance_date < $3
-         GROUP BY user_id`,
-        [hotelId, start.slice(0, 10), end.slice(0, 10)]
-      ),
-      pool.query(
-        `SELECT d.id, d.name,
-                COUNT(r.id)::int AS total, COUNT(r.id) FILTER (WHERE r.status = 'completed')::int AS completed
-         FROM hotel_admin_departments d
-         LEFT JOIN requests r ON LOWER(regexp_replace(r.service, '[^a-zA-Z0-9]+', '', 'g')) = d.service_key
-           AND r.hotel_id = d.hotel_id AND r.created_at >= $2 AND r.created_at < $3
-         WHERE d.hotel_id = $1
-         GROUP BY d.id`,
-        [hotelId, start, end]
-      )
-    ]);
-
-    const attendanceByUser = attendanceRes.rows.reduce((acc, row) => { acc[row.user_id] = row; return acc; }, {});
-    const employees = employeeRes.rows.map(row => {
-      const att = attendanceByUser[row.id];
-      const reliability = att && att.total >= 5 ? Math.max(0, Math.min(100, Math.round(((att.present_like - att.late * 0.5) / att.total) * 100))) : null;
-      const completionRate = row.assigned_total > 0 ? Math.round((row.completed / row.assigned_total) * 100) : null;
-      return { ...row, completionRate, reliability, attendanceRecords: att?.total || 0 };
-    });
-
-    const pick = (arr, filterFn, sortFn) => {
-      const eligible = arr.filter(filterFn);
-      if (!eligible.length) return null;
-      return eligible.sort(sortFn)[0];
-    };
-
-    const topPerformer = pick(employees, e => e.completed >= 1, (a, b) => b.completed - a.completed);
-    const fastestResponse = pick(employees, e => e.completed >= 3, (a, b) => a.avg_response - b.avg_response);
-    const highestCompletionRate = pick(employees, e => e.assigned_total >= 3, (a, b) => b.completionRate - a.completionRate);
-    const mostReliable = pick(employees, e => e.attendanceRecords >= 5, (a, b) => b.reliability - a.reliability);
-
-    const eligible4EOM = employees.filter(e => e.completed >= 1 || e.attendanceRecords >= 5);
-    const employeeOfMonth = eligible4EOM.length ? eligible4EOM.map(e => ({
-      ...e,
-      compositeScore: Math.round((e.completed || 0) * 5 + (e.completionRate || 0) * 0.3 + (e.reliability || 0) * 0.3)
-    })).sort((a, b) => b.compositeScore - a.compositeScore)[0] : null;
-
-    const deptCandidates = deptRes.rows.filter(d => d.total >= 3).map(d => ({ ...d, completionRate: Math.round((d.completed / d.total) * 100) }));
-    const departmentOfMonth = deptCandidates.length ? deptCandidates.sort((a, b) => b.completionRate - a.completionRate)[0] : null;
-
-    const alreadyAwarded = await pool.query(`SELECT category FROM hotel_admin_achievements WHERE hotel_id = $1 AND period = $2`, [hotelId, period]);
-    const awardedCategories = new Set(alreadyAwarded.rows.map(r => r.category));
-
-    res.json({
-      period,
-      standings: {
-        top_performer: topPerformer ? { userId: topPerformer.id, name: topPerformer.full_name, department: topPerformer.department_name, valueLabel: `${topPerformer.completed} completed` } : null,
-        fastest_response: fastestResponse ? { userId: fastestResponse.id, name: fastestResponse.full_name, department: fastestResponse.department_name, valueLabel: `${fastestResponse.avg_response} min avg` } : null,
-        highest_completion_rate: highestCompletionRate ? { userId: highestCompletionRate.id, name: highestCompletionRate.full_name, department: highestCompletionRate.department_name, valueLabel: `${highestCompletionRate.completionRate}% completion` } : null,
-        most_reliable: mostReliable ? { userId: mostReliable.id, name: mostReliable.full_name, department: mostReliable.department_name, valueLabel: `${mostReliable.reliability}% reliability` } : null,
-        employee_of_month: employeeOfMonth ? { userId: employeeOfMonth.id, name: employeeOfMonth.full_name, department: employeeOfMonth.department_name, valueLabel: `Score ${employeeOfMonth.compositeScore}` } : null,
-        department_of_month: departmentOfMonth ? { departmentId: departmentOfMonth.id, name: departmentOfMonth.name, valueLabel: `${departmentOfMonth.completionRate}% completion` } : null
-      },
-      awardedCategories: [...awardedCategories],
-      methodologyNote: 'Top Performer / Fastest Response / Highest Completion Rate are computed only from requests explicitly assigned to a staff member via Request Assignment. Most Reliable uses attendance records (needs 5+ for the month to qualify). Employee of the Month is a composite of completed assignments, completion rate, and attendance reliability. Categories show no winner if there isn\'t enough real data yet — nothing is fabricated to fill a card.'
-    });
-  } catch (err) {
-    console.error('Achievement standings failed:', err);
-    res.status(500).json({ error: 'Failed to compute standings' });
-  }
-});
-
-app.get('/api/hotel-admin/achievements', requireHotelAdmin, async (req, res) => {
-  try {
-    const params = [req.hotelAdmin.hotel_id];
-    let periodFilter = '';
-    if (req.query.period) { params.push(req.query.period); periodFilter = `AND a.period = $${params.length}`; }
-    const result = await pool.query(
-      `SELECT a.*, u.full_name AS user_name, d.name AS department_name, b.full_name AS awarded_by_name
-       FROM hotel_admin_achievements a
-       LEFT JOIN hotel_admin_users u ON u.id = a.user_id
-       LEFT JOIN hotel_admin_departments d ON d.id = a.department_id
-       LEFT JOIN hotel_admin_users b ON b.id = a.awarded_by
-       WHERE a.hotel_id = $1 ${periodFilter}
-       ORDER BY a.period DESC, a.awarded_at DESC`,
-      params
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to load achievements' });
-  }
-});
-
-app.post('/api/hotel-admin/achievements/award', requireHotelAdmin, async (req, res) => {
-  const { period, category, userId, departmentId, valueLabel } = req.body;
-  if (!period || !category) return res.status(400).json({ error: 'period and category are required' });
-  try {
-    const result = await pool.query(
-      `INSERT INTO hotel_admin_achievements (hotel_id, period, category, user_id, department_id, value_label, awarded_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (hotel_id, period, category) DO UPDATE SET user_id = $4, department_id = $5, value_label = $6, awarded_by = $7, awarded_at = NOW()
-       RETURNING *`,
-      [req.hotelAdmin.hotel_id, period, category, userId || null, departmentId || null, valueLabel || null, req.hotelAdmin.id]
-    );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'achievement_awarded', 'achievement', result.rows[0].id, req, { period, category, userId, departmentId });
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to award achievement' });
-  }
-});
-
-app.delete('/api/hotel-admin/achievements/:id', requireHotelAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`DELETE FROM hotel_admin_achievements WHERE id = $1 AND hotel_id = $2 RETURNING id`, [req.params.id, req.hotelAdmin.hotel_id]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Achievement not found' });
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'achievement_revoked', 'achievement', req.params.id, req);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to revoke achievement' });
-  }
-});
-
 app.get('/api/hotel-admin/audit-logs', requireHotelAdmin, async (req, res) => {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit || '25', 10), 1), 100);
@@ -3551,12 +1889,7 @@ app.get('/api/hotel-admin/audit-logs', requireHotelAdmin, async (req, res) => {
 app.get('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT n.*, d.name AS department_name, s.name AS shift_name, u.full_name AS sender_name
-       FROM hotel_admin_notifications n
-       LEFT JOIN hotel_admin_departments d ON d.id = n.department_id
-       LEFT JOIN hotel_admin_shifts s ON s.id = n.target_shift_id
-       LEFT JOIN hotel_admin_users u ON u.id = n.sender_user_id
-       WHERE n.hotel_id = $1 ORDER BY n.created_at DESC LIMIT 100`,
+      `SELECT * FROM hotel_admin_notifications WHERE hotel_id = $1 ORDER BY created_at DESC LIMIT 100`,
       [req.hotelAdmin.hotel_id]
     );
     res.json(result.rows);
@@ -3566,64 +1899,35 @@ app.get('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) =>
 });
 
 app.post('/api/hotel-admin/notifications', requireHotelAdmin, async (req, res) => {
-  const { title, message, type, departmentId, targetShiftId, severity } = req.body;
+  const { title, message, type, departmentId } = req.body;
   if (!title || !message) return res.status(400).json({ error: 'Title and message required' });
-  const validTypes = ['staff_announcement', 'department_announcement', 'emergency_alert', 'shift_notification', 'policy_update'];
-  const finalType = validTypes.includes(type) ? type : 'staff_announcement';
-  const finalSeverity = finalType === 'emergency_alert' ? 'critical' : (['normal', 'high', 'critical'].includes(severity) ? severity : 'normal');
-
   try {
-    let recipientCount = 0;
-    if (finalType === 'department_announcement' && departmentId) {
-      const r = await pool.query(`SELECT COUNT(*)::int AS c FROM hotel_admin_users WHERE hotel_id = $1 AND department_id = $2 AND deleted_at IS NULL AND account_status = 'active'`, [req.hotelAdmin.hotel_id, departmentId]);
-      recipientCount = r.rows[0].c;
-    } else if (finalType === 'shift_notification' && targetShiftId) {
-      const r = await pool.query(`SELECT COUNT(*)::int AS c FROM hotel_admin_users WHERE hotel_id = $1 AND shift_id = $2 AND deleted_at IS NULL AND account_status = 'active'`, [req.hotelAdmin.hotel_id, targetShiftId]);
-      recipientCount = r.rows[0].c;
-    } else {
-      const r = await pool.query(`SELECT COUNT(*)::int AS c FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL AND account_status = 'active'`, [req.hotelAdmin.hotel_id]);
-      recipientCount = r.rows[0].c;
-    }
-
     const result = await pool.query(
       `INSERT INTO hotel_admin_notifications
-       (hotel_id, sender_user_id, department_id, target_shift_id, type, severity, title, message, delivery_status, recipient_count, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'sent',$9,NOW()) RETURNING *`,
-      [req.hotelAdmin.hotel_id, req.hotelAdmin.id, finalType === 'department_announcement' ? (departmentId || null) : null, finalType === 'shift_notification' ? (targetShiftId || null) : null, finalType, finalSeverity, title, message, recipientCount]
+       (hotel_id, sender_user_id, department_id, type, title, message, delivery_status, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'queued',NOW()) RETURNING *`,
+      [req.hotelAdmin.hotel_id, req.hotelAdmin.id, departmentId || null, type || 'announcement', title, message]
     );
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'notification_sent', 'notification', result.rows[0].id, req, { type: finalType, recipientCount });
-    io.to(`hotel_${req.hotelAdmin.hotel_id}`).emit('newNotification', {
-      hotelId: req.hotelAdmin.hotel_id, type: finalType, severity: finalSeverity, title, recipientCount
-    });
+    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'notification_sent', 'notification', result.rows[0].id, req);
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error('Send notification failed:', err);
     res.status(500).json({ error: 'Failed to send notification' });
   }
 });
 
 app.get('/api/hotel-admin/reports', requireHotelAdmin, async (req, res) => {
   try {
-    const hotelId = req.hotelAdmin.hotel_id;
-    const [users, depts, requests, attendance, leave, shiftSchedule] = await Promise.all([
-      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL`, [hotelId]),
-      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_departments WHERE hotel_id = $1`, [hotelId]),
-      pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'completed')::int AS completed FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`, [hotelId]),
-      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_attendance WHERE hotel_id = $1 AND attendance_date >= NOW() - INTERVAL '30 days'`, [hotelId]),
-      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_leave_requests WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`, [hotelId]),
-      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_shift_schedule WHERE hotel_id = $1 AND shift_date >= NOW() - INTERVAL '30 days'`, [hotelId])
+    const [users, depts, perf] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_users WHERE hotel_id = $1 AND deleted_at IS NULL`, [req.hotelAdmin.hotel_id]),
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_departments WHERE hotel_id = $1`, [req.hotelAdmin.hotel_id]),
+      pool.query(`SELECT COUNT(*)::int AS total FROM hotel_admin_audit_logs WHERE hotel_id = $1 AND created_at >= NOW() - INTERVAL '30 days'`, [req.hotelAdmin.hotel_id])
     ]);
-    const r = requests.rows[0] || {};
     res.json({
-      reportTypes: Object.entries(REPORT_TYPES).map(([key, cfg]) => ({ type: key, title: cfg.title, subtitle: cfg.subtitle })),
       staffPerformance: { records: users.rows[0]?.total || 0 },
       departmentPerformance: { records: depts.rows[0]?.total || 0 },
-      userActivity: { records: users.rows[0]?.total || 0 },
-      requestSummary: { records: r.total || 0 },
-      completionRates: { records: r.completed || 0 },
-      attendanceReport: { records: attendance.rows[0]?.total || 0 },
-      leaveReport: { records: leave.rows[0]?.total || 0 },
-      shiftPerformanceReport: { records: shiftSchedule.rows[0]?.total || 0 }
+      userActivity: { records: perf.rows[0]?.total || 0 },
+      requestSummary: { records: 0 },
+      completionRates: { records: 0 }
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load reports' });
@@ -3631,124 +1935,28 @@ app.get('/api/hotel-admin/reports', requireHotelAdmin, async (req, res) => {
 });
 
 app.get('/api/hotel-admin/reports/export', requireHotelAdmin, async (req, res) => {
-  const type = String(req.query.type || 'executive_summary');
-  const format = String(req.query.format || 'pdf').toLowerCase();
-  const periodDays = parseInt(req.query.period, 10) || 30;
-  const hotelId = req.hotelAdmin.hotel_id;
-
-  if (format === 'pdf') {
-    try {
-      const pdfBuffer = await generateReportPdf({
-        pool, hotelId,
-        hotelName: req.hotelAdmin.hotel_name,
-        adminName: req.hotelAdmin.full_name,
-        reportType: type,
-        periodDays
-      });
-      await writeHotelAudit(hotelId, req.hotelAdmin.id, 'report_exported', 'report', type, req, { format, periodDays });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${type}-${new Date().toISOString().slice(0, 10)}.pdf"`);
-      res.send(pdfBuffer);
-    } catch (err) {
-      console.error('PDF report generation failed:', err);
-      res.status(500).json({ error: 'Failed to generate PDF report' });
-    }
-    return;
-  }
-
-  // CSV / Excel / JSON — dataset selected by report type, not a fixed audit dump.
+  const type = String(req.query.type || 'user_activity');
+  const format = String(req.query.format || 'csv').toLowerCase();
   try {
-    let headers, rows, keyMap;
-    if (type === 'staff_performance' || type === 'user_activity') {
-      const result = await pool.query(
-        `SELECT u.full_name, d.name AS department, r.name AS role, u.employment_status, u.account_status,
-                u.last_login_at, u.created_at
-         FROM hotel_admin_users u
-         LEFT JOIN hotel_admin_departments d ON d.id = u.department_id
-         LEFT JOIN hotel_admin_roles r ON r.id = u.role_id
-         WHERE u.hotel_id = $1 AND u.deleted_at IS NULL ORDER BY u.full_name`,
-        [hotelId]
-      );
-      headers = ['Full Name', 'Department', 'Role', 'Employment Status', 'Account Status', 'Last Login', 'Created'];
-      keyMap = ['full_name', 'department', 'role', 'employment_status', 'account_status', 'last_login_at', 'created_at'];
-      rows = result.rows;
-    } else if (type === 'department_performance' || type === 'completion_rates') {
-      const result = await pool.query(
-        `SELECT d.name, d.status, COUNT(u.id)::int AS staff_count
-         FROM hotel_admin_departments d
-         LEFT JOIN hotel_admin_users u ON u.department_id = d.id AND u.deleted_at IS NULL
-         WHERE d.hotel_id = $1 GROUP BY d.id ORDER BY d.name`,
-        [hotelId]
-      );
-      headers = ['Department', 'Status', 'Staff Count'];
-      keyMap = ['name', 'status', 'staff_count'];
-      rows = result.rows;
-    } else if (type === 'request_summary') {
-      const result = await pool.query(
-        `SELECT room_number, service, status, created_at, updated_at
-         FROM requests WHERE hotel_id = $1 AND created_at >= NOW() - ($2 || ' days')::interval
-         ORDER BY created_at DESC LIMIT 1000`,
-        [hotelId, periodDays]
-      );
-      headers = ['Room', 'Service', 'Status', 'Created', 'Updated'];
-      keyMap = ['room_number', 'service', 'status', 'created_at', 'updated_at'];
-      rows = result.rows;
-    } else if (type === 'attendance_report') {
-      const result = await pool.query(
-        `SELECT u.full_name, a.attendance_date, a.status, a.clock_in, a.clock_out
-         FROM hotel_admin_attendance a JOIN hotel_admin_users u ON u.id = a.user_id
-         WHERE a.hotel_id = $1 AND a.attendance_date >= NOW() - ($2 || ' days')::interval
-         ORDER BY a.attendance_date DESC LIMIT 1000`,
-        [hotelId, periodDays]
-      );
-      headers = ['Employee', 'Date', 'Status', 'Clock In', 'Clock Out'];
-      keyMap = ['full_name', 'attendance_date', 'status', 'clock_in', 'clock_out'];
-      rows = result.rows;
-    } else if (type === 'leave_report') {
-      const result = await pool.query(
-        `SELECT u.full_name, l.leave_type, l.custom_type_label, l.start_date, l.end_date, l.status
-         FROM hotel_admin_leave_requests l JOIN hotel_admin_users u ON u.id = l.user_id
-         WHERE l.hotel_id = $1 AND l.created_at >= NOW() - ($2 || ' days')::interval
-         ORDER BY l.start_date DESC LIMIT 1000`,
-        [hotelId, periodDays]
-      );
-      headers = ['Employee', 'Type', 'Custom Label', 'Start', 'End', 'Status'];
-      keyMap = ['full_name', 'leave_type', 'custom_type_label', 'start_date', 'end_date', 'status'];
-      rows = result.rows;
-    } else if (type === 'shift_performance_report') {
-      const result = await pool.query(
-        `SELECT s.name AS shift_name, u.full_name, sc.shift_date, sc.status
-         FROM hotel_admin_shift_schedule sc
-         JOIN hotel_admin_shifts s ON s.id = sc.shift_id
-         JOIN hotel_admin_users u ON u.id = sc.user_id
-         WHERE sc.hotel_id = $1 AND sc.shift_date >= NOW() - ($2 || ' days')::interval
-         ORDER BY sc.shift_date DESC LIMIT 1000`,
-        [hotelId, periodDays]
-      );
-      headers = ['Shift', 'Employee', 'Date', 'Status'];
-      keyMap = ['shift_name', 'full_name', 'shift_date', 'status'];
-      rows = result.rows;
-    } else {
-      const result = await pool.query(
-        `SELECT a.created_at, COALESCE(u.full_name,'System') AS user_name, a.action, a.ip_address, a.device
-         FROM hotel_admin_audit_logs a
-         LEFT JOIN hotel_admin_users u ON u.id = a.actor_user_id
-         WHERE a.hotel_id = $1 ORDER BY a.created_at DESC LIMIT 1000`,
-        [hotelId]
-      );
-      headers = ['Timestamp', 'User', 'Action', 'IP Address', 'Device'];
-      keyMap = ['created_at', 'user_name', 'action', 'ip_address', 'device'];
-      rows = result.rows;
-    }
-
+    const result = await pool.query(
+      `SELECT a.created_at, COALESCE(u.full_name,'System') AS user_name, a.action, a.ip_address, a.device
+       FROM hotel_admin_audit_logs a
+       LEFT JOIN hotel_admin_users u ON u.id = a.actor_user_id
+       WHERE a.hotel_id = $1
+       ORDER BY a.created_at DESC LIMIT 1000`,
+      [req.hotelAdmin.hotel_id]
+    );
+    const rows = result.rows;
     if (format === 'json') return res.json({ type, rows });
-    const csv = [headers.join(','), ...rows.map(row => keyMap.map(key => `"${String(row[key] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+    const headers = ['Timestamp', 'User', 'Action', 'IP Address', 'Device'];
+    const csv = [headers.join(','), ...rows.map(row => headers.map(header => {
+      const key = header === 'Timestamp' ? 'created_at' : header === 'User' ? 'user_name' : header === 'Action' ? 'action' : header === 'IP Address' ? 'ip_address' : 'device';
+      return `"${String(row[key] || '').replace(/"/g, '""')}"`;
+    }).join(','))].join('\n');
     res.setHeader('Content-Type', format === 'excel' ? 'application/vnd.ms-excel' : 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${type}.${format === 'excel' ? 'xls' : 'csv'}"`);
-    await writeHotelAudit(hotelId, req.hotelAdmin.id, 'report_exported', 'report', type, req, { format, periodDays });
     res.send(csv);
   } catch (err) {
-    console.error('Report export failed:', err);
     res.status(500).json({ error: 'Failed to export report' });
   }
 });
@@ -3799,143 +2007,6 @@ app.put('/api/hotel-admin/settings', requireHotelAdmin, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update settings' });
-  }
-});
-
-// ============================================================
-// Hotel Branding Center
-// ============================================================
-function mapBrandingRow(row) {
-  return {
-    hotelName: row.name,
-    logoUrl: row.logo_url,
-    coverImageUrl: row.cover_image_url,
-    faviconUrl: row.favicon_url,
-    welcomeMessage: row.welcome_message,
-    motto: row.motto,
-    address: row.address,
-    contactEmail: row.contact_email,
-    contactPhone: row.contact_phone,
-    receptionNumber: row.reception_number,
-    emergencyContact: row.emergency_contact,
-    website: row.website,
-    socialLinks: row.social_links || {},
-    checkinTime: row.checkin_time,
-    checkoutTime: row.checkout_time,
-    brandColors: row.brand_colors || {},
-    themeMode: row.theme_mode || 'auto',
-    updatedAt: row.updated_at
-  };
-}
-
-app.get('/api/hotel-admin/branding', requireHotelAdmin, async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM hotels WHERE id = $1', [req.hotelAdmin.hotel_id]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Hotel not found' });
-    res.json(mapBrandingRow(result.rows[0]));
-  } catch (err) {
-    console.error('Load branding failed:', err.message);
-    res.status(500).json({ error: 'Failed to load branding' });
-  }
-});
-
-app.put('/api/hotel-admin/branding', requireHotelAdmin, async (req, res) => {
-  const {
-    hotelName, logoUrl, coverImageUrl, faviconUrl, welcomeMessage, motto, address,
-    contactEmail, contactPhone, receptionNumber, emergencyContact, website,
-    socialLinks, checkinTime, checkoutTime, brandColors, themeMode
-  } = req.body;
-  try {
-    const before = await pool.query('SELECT * FROM hotels WHERE id = $1', [req.hotelAdmin.hotel_id]);
-    if (!before.rows.length) return res.status(404).json({ error: 'Hotel not found' });
-    const prev = mapBrandingRow(before.rows[0]);
-
-    const result = await pool.query(
-      `UPDATE hotels SET
-        name = COALESCE($1, name),
-        logo_url = $2,
-        cover_image_url = $3,
-        favicon_url = $4,
-        welcome_message = $5,
-        motto = $6,
-        address = $7,
-        contact_email = $8,
-        contact_phone = $9,
-        reception_number = $10,
-        emergency_contact = $11,
-        website = $12,
-        social_links = COALESCE($13, social_links),
-        checkin_time = $14,
-        checkout_time = $15,
-        brand_colors = COALESCE($16, brand_colors),
-        theme_mode = COALESCE($17, theme_mode),
-        updated_at = NOW()
-       WHERE id = $18 RETURNING *`,
-      [
-        hotelName || null, logoUrl || null, coverImageUrl || null, faviconUrl || null,
-        welcomeMessage || null, motto || null, address || null, contactEmail || null,
-        contactPhone || null, receptionNumber || null, emergencyContact || null, website || null,
-        socialLinks || null, checkinTime || null, checkoutTime || null, brandColors || null,
-        themeMode || null, req.hotelAdmin.hotel_id
-      ]
-    );
-
-    const next = mapBrandingRow(result.rows[0]);
-    const changes = {};
-    Object.keys(next).forEach(key => {
-      if (key === 'updatedAt') return;
-      const beforeVal = JSON.stringify(prev[key]);
-      const afterVal = JSON.stringify(next[key]);
-      if (beforeVal !== afterVal) changes[key] = { previous: prev[key], next: next[key] };
-    });
-
-    await writeHotelAudit(req.hotelAdmin.hotel_id, req.hotelAdmin.id, 'branding_updated', 'hotel', req.hotelAdmin.hotel_id, req, { changes });
-    res.json(next);
-  } catch (err) {
-    console.error('Update branding failed:', err.message);
-    res.status(500).json({ error: 'Failed to update branding' });
-  }
-});
-
-// Public branding read — no auth. Powers logo/colors/motto/contact info on
-// guest-facing and staff login pages before anyone is authenticated.
-app.get('/api/branding/public', async (req, res) => {
-  if (!requireDatabase(res)) return;
-  const hotelId = parseInt(req.query.hotelId, 10);
-  if (!hotelId) return res.status(400).json({ error: 'hotelId is required' });
-  try {
-    const result = await pool.query(
-      `SELECT name, logo_url, cover_image_url, favicon_url, welcome_message, motto,
-              address, contact_email, contact_phone, reception_number, emergency_contact,
-              website, social_links, checkin_time, checkout_time, brand_colors, theme_mode
-       FROM hotels WHERE id = $1`,
-      [hotelId]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Hotel not found' });
-    const row = result.rows[0];
-    res.set('Cache-Control', 'public, max-age=60');
-    res.json({
-      hotelName: row.name,
-      logoUrl: row.logo_url,
-      coverImageUrl: row.cover_image_url,
-      faviconUrl: row.favicon_url,
-      welcomeMessage: row.welcome_message,
-      motto: row.motto,
-      address: row.address,
-      contactEmail: row.contact_email,
-      contactPhone: row.contact_phone,
-      receptionNumber: row.reception_number,
-      emergencyContact: row.emergency_contact,
-      website: row.website,
-      socialLinks: row.social_links || {},
-      checkinTime: row.checkin_time,
-      checkoutTime: row.checkout_time,
-      brandColors: row.brand_colors || {},
-      themeMode: row.theme_mode || 'auto'
-    });
-  } catch (err) {
-    console.error('Public branding lookup failed:', err.message);
-    res.status(500).json({ error: 'Failed to load branding' });
   }
 });
 
