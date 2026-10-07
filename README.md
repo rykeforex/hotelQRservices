@@ -44,6 +44,7 @@ This application combines **Supabase client-side operations** with **Socket.io r
 - **Supabase Client**: Direct database queries from browser
 - **Socket.io**: Real-time notifications for new requests and status updates
 - **Authentication**: Secure password-based login with backend-managed credentials
+- **Password recovery**: Hotel admins can submit a password reset request for administrator review from the sign-in page
 - **File Storage**: Voice recordings in Supabase Storage
 
 ### Real-Time Features
@@ -91,12 +92,18 @@ This application combines **Supabase client-side operations** with **Socket.io r
    - Set `SUPABASE_STORAGE_BUCKET=audio` (the bucket used for voice recordings).
    - Ensure the bucket exists and is set to public access so recordings can be retrieved.
 
-5. **Set Up Database Schema**
+5. **Configure Confirmation Email**
+   - Configure an email provider in the backend environment. Supported options are Resend (`RESEND_API_KEY`), Brevo (`BREVO_API_KEY`), SendGrid (`SENDGRID_API_KEY`), or SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and `SMTP_PASS`).
+   - Set `SMTP_FROM` to a sender address verified with your email provider. For API providers, verify the sender/domain in that provider before testing.
+   - Set `APP_BASE_URL` to the public URL of the backend so verification links open the deployed app.
+   - Keep provider credentials only in the backend environment (for example, Render's environment settings), never in frontend files. Signup returns quickly and sends confirmation email in the background; check backend logs for provider delivery failures.
+
+6. **Set Up Database Schema**
    - In your Supabase dashboard, go to **SQL Editor**
    - Run the contents of `schema.sql` to create tables
    - This creates the `requests` table with proper structure
 
-5. **Configure Storage (Optional)**
+7. **Configure Storage (Optional)**
    - For voice recordings, create a storage bucket called `voice-recordings`
    - Set bucket to public access for voice playback
 

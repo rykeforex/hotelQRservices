@@ -310,18 +310,18 @@
       verificationBox.style.display = 'none';
     }
 
-    function showSuccess(message, emailDelivered) {
+    function showSuccess(message, emailConfigured) {
       successMsg.textContent = message;
       successMsg.classList.add('show');
       errorMsg.classList.remove('show');
-      if (emailDelivered) {
-        verificationBox.textContent = 'A verification email has been sent. Please check your inbox and follow the secure link there.';
+      if (emailConfigured) {
+        verificationBox.textContent = 'Your confirmation email is being sent. Check your inbox and spam folder for the secure verification link.';
         verificationBox.style.display = 'block';
       } else {
-        // Don't contradict the message above by claiming the email sent
-        // when it didn't — just hide the box instead of showing two
-        // conflicting statements.
-        verificationBox.style.display = 'none';
+        verificationBox.textContent = message.toLowerCase().includes('could not be delivered')
+          ? 'Your account was created, but the confirmation email was not delivered. Contact the site administrator to activate your account.'
+          : 'Confirmation emails are not configured on the server. Contact the site administrator to activate your account.';
+        verificationBox.style.display = 'block';
       }
     }
 
@@ -359,8 +359,15 @@
 
         if (data.requiresVerification) {
           const msg = data.message || 'Account created. Please verify your email before signing in.';
-          showSuccess(msg, data.emailDelivered);
-          window.LuxeUI?.toast('success', 'Hotel account created', data.emailDelivered ? 'Check your inbox for a verification link.' : 'Contact support to verify your account manually.');
+          const emailConfigured = typeof data.emailConfigured === 'boolean'
+            ? data.emailConfigured
+            : Boolean(data.emailDelivered);
+          showSuccess(msg, emailConfigured);
+          window.LuxeUI?.toast(
+            emailConfigured ? 'success' : 'error',
+            'Hotel account created',
+            emailConfigured ? 'Your confirmation email is being sent.' : 'The confirmation email could not be delivered. Contact the site administrator.'
+          );
           form.reset();
           return;
         }

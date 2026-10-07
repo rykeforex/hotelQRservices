@@ -624,6 +624,28 @@ async function sendViaSmtp(to, subject, html, text) {
   throw lastError || new Error('SMTP delivery failed');
 }
 
+function isVerificationEmailConfigured() {
+  return Boolean(
+    (SMTP_HOST && SMTP_USER && SMTP_PASS) ||
+    process.env.RESEND_API_KEY ||
+    process.env.BREVO_API_KEY ||
+    process.env.SENDGRID_API_KEY
+  );
+}
+
+function queueVerificationEmail(to, verifyUrl, hotelName) {
+  setImmediate(async () => {
+    try {
+      const result = await sendVerificationEmail(to, verifyUrl, hotelName);
+      if (result.skipped) {
+        console.error(`[EMAIL] Verification email was not sent to ${to}: ${result.reason}`);
+      }
+    } catch (err) {
+      console.error(`[EMAIL] Verification email send failed for ${to}:`, err);
+    }
+  });
+}
+
 async function sendVerificationEmail(to, verifyUrl, hotelName) {
   const subject = `Verify your ${hotelName} admin account`;
   const html = buildVerificationEmailHtml(hotelName, verifyUrl);
@@ -1067,6 +1089,16 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     try {
+      const existingUserCheck = await fallbackClient
+        .from('hotel_admin_users')
+        .select('id')
+        .ilike('email', trimmedEmail)
+        .limit(1);
+      if (existingUserCheck.error) throw existingUserCheck.error;
+      if ((existingUserCheck.data || []).length > 0) {
+        return res.status(409).json({ error: 'An account with this email already exists.' });
+      }
+
       const { data: hotelRows, error: hotelErr } = await fallbackClient
         .from('hotels')
         .insert({ name: trimmedHotelName, contact_email: trimmedEmail, timezone: 'UTC', language: 'en', date_format: 'MMM D, YYYY', created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -1092,16 +1124,6 @@ app.post('/api/auth/register', async (req, res) => {
         roleId = newRoleRows?.[0]?.id;
       }
 
-      const existingUserCheck = await fallbackClient
-        .from('hotel_admin_users')
-        .select('id')
-        .ilike('email', trimmedEmail)
-        .limit(1);
-      if (existingUserCheck.error) throw existingUserCheck.error;
-      if ((existingUserCheck.data || []).length > 0) {
-        return res.status(409).json({ error: 'An account with this email already exists.' });
-      }
-
       const hashedPassword = await bcrypt.hash(password, 12);
       const verificationToken = crypto.randomBytes(32).toString('hex');
       const verificationUrl = buildVerificationUrl(req, verificationToken);
@@ -1114,21 +1136,16 @@ app.post('/api/auth/register', async (req, res) => {
       const createdUser = Array.isArray(userRows) ? userRows[0] : userRows;
 
       await writeHotelAudit(hotel.id, createdUser.id, 'registered_hotel', 'hotel', hotel.id, req);
-      let emailResult = { ok: true, skipped: true };
-      try {
-        emailResult = await sendVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
-      } catch (emailErr) {
-        console.error('Verification email send failed after fallback registration:', emailErr);
-      }
-      console.log('Verification link for new signup (Supabase fallback):', verificationUrl);
+      const emailConfigured = isVerificationEmailConfigured();
+      if (emailConfigured) queueVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
 
       return res.status(201).json({
         ok: true,
         requiresVerification: true,
-        emailDelivered: !emailResult.skipped,
-        message: emailResult.skipped
-          ? 'Account created. Please verify your email before signing in. Your verification email could not be delivered automatically.'
-          : 'Account created. Please verify your email before signing in.',
+        emailConfigured,
+        message: emailConfigured
+          ? 'Account created. Your confirmation email is being sent.'
+          : 'Account created, but confirmation email delivery is not configured. Please contact support.',
         user: { id: createdUser.id, hotelId: hotel.id, fullName: createdUser.full_name, email: createdUser.email, hotelName: hotel.name },
         role: 'hotel_admin'
       });
@@ -1186,21 +1203,16 @@ app.post('/api/auth/register', async (req, res) => {
     await client.query('COMMIT');
     await writeHotelAudit(hotel.id, createdUser.id, 'registered_hotel', 'hotel', hotel.id, req);
 
-    let emailResult = { ok: true, skipped: true };
-    try {
-      emailResult = await sendVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
-    } catch (emailErr) {
-      console.error('Verification email send failed after successful registration:', emailErr);
-    }
-    console.log('Verification link for new signup:', verificationUrl);
+    const emailConfigured = isVerificationEmailConfigured();
+    if (emailConfigured) queueVerificationEmail(trimmedEmail, verificationUrl, trimmedHotelName);
 
     return res.status(201).json({
       ok: true,
       requiresVerification: true,
-      emailDelivered: !emailResult.skipped,
-      message: emailResult.skipped
-        ? 'Account created. Please verify your email before signing in. Your verification email could not be delivered automatically.'
-        : 'Account created. Please verify your email before signing in.',
+      emailConfigured,
+      message: emailConfigured
+        ? 'Account created. Your confirmation email is being sent.'
+        : 'Account created, but confirmation email delivery is not configured. Please contact support.',
       user: {
         id: createdUser.id,
         hotelId: hotel.id,
