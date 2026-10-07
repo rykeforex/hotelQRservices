@@ -77,18 +77,15 @@ This application combines **Supabase client-side operations** with **Socket.io r
 2. **Get Project Credentials**
    - In your Supabase dashboard, go to **Settings** → **API**
    - Copy your **Project URL** and **anon/public key**
+   - Copy the `service_role` key only for the backend; never put it in browser code or share it publicly
 
 3. **Configure the Application**
-   - Open each HTML file (`index.html`, `department_dashboard.html`, `director_dashboard.html`)
-   - Replace the placeholder values:
-     ```javascript
-     const supabaseUrl = 'https://your-project-url.supabase.co';
-     const supabaseKey = 'your-anon-key';
-     ```
-   - With your actual Supabase project URL and anon key
+   - Open the backend `.env` file and set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`.
+   - Replace `https://YOUR_PROJECT_REF.supabase.co` with the Project URL from Supabase.
+   - `.env` is ignored by Git; keep your keys there and out of frontend files.
 
 4. **Configure Backend Storage**
-   - Add `SUPABASE_SERVICE_ROLE_KEY` to your `.env` file using the service role key from Supabase API settings.
+   - Set `SUPABASE_SERVICE_ROLE_KEY` in `.env` using the service role key from Supabase API settings.
    - Set `SUPABASE_STORAGE_BUCKET=audio` (the bucket used for voice recordings).
    - Ensure the bucket exists and is set to public access so recordings can be retrieved.
 
