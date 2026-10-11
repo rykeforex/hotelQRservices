@@ -195,8 +195,9 @@ const defaultCorsOrigins = [
   'http://127.0.0.1:3000',
   'http://localhost:8000',
   'http://127.0.0.1:8000',
+  'https://hotelqrservices-production.up.railway.app',
   'https://hotelqrservices.onrender.com',
-  'https://hotelqrservices-production.up.railway.app'
+  'https://hotel-q-rservices.vercel.app'
 ];
 const allowedCorsOrigins = configuredCorsOrigins.length > 0 ? configuredCorsOrigins : [...defaultCorsOrigins, '*'];
 
@@ -215,7 +216,10 @@ const corsOptions = {
 
     const isLocalDevOrigin = normalizedOrigin.includes('localhost') || normalizedOrigin.includes('127.0.0.1');
     const isRenderOrigin = normalizedOrigin.endsWith('.onrender.com') || normalizedOrigin.endsWith('.render.com');
-    if (isLocalDevOrigin || isRenderOrigin) {
+    const isRailwayOrigin = normalizedOrigin.endsWith('.up.railway.app') || normalizedOrigin.includes('railway.app');
+    const isVercelOrigin = normalizedOrigin.endsWith('.vercel.app') || normalizedOrigin.includes('vercel.app');
+    const isGitHubPagesOrigin = normalizedOrigin.endsWith('.github.io') || normalizedOrigin.includes('github.io');
+    if (isLocalDevOrigin || isRenderOrigin || isRailwayOrigin || isVercelOrigin || isGitHubPagesOrigin) {
       return callback(null, true);
     }
 

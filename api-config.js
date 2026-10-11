@@ -2,10 +2,25 @@
 // During development: http://localhost:3000
 // On GitHub Pages: https://your-deployed-server.onrender.com or similar
 
-const API_BASE_URL = 
-  window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:3000'
-    : 'https://hotelqrservices.onrender.com'; // production backend URL
+const API_BASE_URL = (() => {
+  const local = 'http://localhost:3000';
+  const production = [
+    'https://hotel-q-rservices.vercel.app',
+    'https://hotelqrservices-production.up.railway.app',
+    'https://hotelqrservices.onrender.com'
+  ];
+
+  const host = window.location.hostname;
+  if (window.location.protocol === 'file:' || !host || host === 'localhost' || host === '127.0.0.1') {
+    return local;
+  }
+
+  if (host.includes('vercel.app')) {
+    return window.location.origin;
+  }
+
+  return production[0];
+})();
 
 // Helper function for API calls
 async function apiCall(endpoint, options = {}) {

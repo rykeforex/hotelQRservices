@@ -53,6 +53,25 @@
     .verification-box { display: none; margin-bottom: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(201,168,76,0.12); color: var(--charcoal); font-size: 13px; }
     button { width: 100%; padding: 14px 16px; border: none; border-radius: 999px; background: linear-gradient(90deg, var(--gold), var(--gold-light)); color: #fff; font-weight: 600; cursor: pointer; margin-top: 8px; }
     button:hover { transform: translateY(-1px); }
+    .submit-btn.is-loading {
+      opacity: 0.9;
+      cursor: progress;
+      pointer-events: none;
+    }
+    .button-spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-right: 8px;
+      border: 2px solid rgba(255,255,255,0.45);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
     .footer-link { text-align: center; margin-top: 16px; font-size: 13px; color: var(--muted); }
     .footer-link a { color: var(--gold); text-decoration: none; font-weight: 600; }
   </style>
@@ -90,7 +109,7 @@
         <label for="confirmPassword">Confirm Password</label>
         <input id="confirmPassword" name="confirmPassword" type="password" placeholder="Re-enter password" required />
       </div>
-      <button type="submit">Create Hotel Account</button>
+      <button type="submit" id="signupSubmitBtn" class="submit-btn">Create Hotel Account</button>
     </form>
 
     <div class="footer-link">
@@ -99,14 +118,42 @@
   </div>
 
   <script>
-    const API_BASE_URL = window.location.protocol === 'file:' || !window.location.hostname || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-      ? 'http://localhost:3000'
-      : 'https://hotelqrservices.onrender.com';
+    const API_BASE_URL = (() => {
+      const local = 'http://localhost:3000';
+      const production = [
+        'https://hotel-q-rservices.vercel.app',
+        'https://hotelqrservices-production.up.railway.app',
+        'https://hotelqrservices.onrender.com'
+      ];
+      const host = window.location.hostname;
+      if (window.location.protocol === 'file:' || !host || host === 'localhost' || host === '127.0.0.1') {
+        return local;
+      }
+      if (host.includes('vercel.app')) {
+        return window.location.origin;
+      }
+      return production[0];
+    })();
     const form = document.getElementById('signupForm');
+    const submitBtn = document.getElementById('signupSubmitBtn');
     const errorMsg = document.getElementById('errorMsg');
     const successMsg = document.getElementById('successMsg');
     const verificationBox = document.getElementById('verificationBox');
     let lastEmail = '';
+
+    function setSubmitButtonLoading(isLoading, label = 'Creating account…') {
+      if (!submitBtn) return;
+      submitBtn.disabled = isLoading;
+      submitBtn.setAttribute('aria-busy', String(isLoading));
+      if (isLoading) {
+        submitBtn.classList.add('is-loading');
+        submitBtn.innerHTML = '<span class="button-spinner" aria-hidden="true"></span><span>' + label + '</span>';
+        return;
+      }
+      submitBtn.classList.remove('is-loading');
+      submitBtn.innerHTML = 'Create Hotel Account';
+      submitBtn.removeAttribute('aria-busy');
+    }
 
     function showError(message) {
       errorMsg.textContent = message;
@@ -135,7 +182,8 @@
       btn.style.display = 'inline-block';
       btn.onclick = async () => {
         btn.disabled = true;
-        btn.textContent = 'Sending...';
+        btn.classList.add('is-loading');
+        btn.innerHTML = '<span class="button-spinner" aria-hidden="true"></span><span>Sending...</span>';
         try {
           const r = await fetch(API_BASE_URL + '/api/auth/resend-verification', {
             method: 'POST',
@@ -147,7 +195,11 @@
         } catch (e) {
           btn.textContent = 'Failed. Try again';
         }
-        setTimeout(() => { btn.disabled = false; btn.textContent = 'Resend verification email'; }, 30000);
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.classList.remove('is-loading');
+          btn.innerHTML = 'Resend verification email';
+        }, 30000);
       };
     }
 
@@ -165,6 +217,8 @@
         password: document.getElementById('password').value,
         confirmPassword: document.getElementById('confirmPassword').value
       };
+
+      setSubmitButtonLoading(true);
 
       try {
         const response = await fetch(API_BASE_URL + '/api/auth/register', {
@@ -190,6 +244,13 @@
         window.location.href = data.redirectUrl || 'hotel_admin.html';
       } catch (err) {
         showError('Unable to reach the server. Please try again.');
+      } finally {
+        if (!successMsg.classList.contains('show') && !errorMsg.classList.contains('show')) {
+          setSubmitButtonLoading(false);
+        }
+        if (successMsg.classList.contains('show') || errorMsg.classList.contains('show')) {
+          setTimeout(() => setSubmitButtonLoading(false), 200);
+        }
       }
     });
   </script>

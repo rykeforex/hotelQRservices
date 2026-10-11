@@ -26,9 +26,9 @@
 
   function resolveApiBase() {
     var host = window.location.hostname;
-    return (host === 'localhost' || host === '127.0.0.1')
-      ? 'http://localhost:3000'
-      : 'https://hotelqrservices-production.up.railway.app';
+    if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:3000';
+    if (host.includes('vercel.app')) return window.location.origin;
+    return 'https://hotel-q-rservices.vercel.app';
   }
 
   function setFavicon(url) {

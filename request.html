@@ -460,11 +460,22 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script>
-    window.API_BASE_URL =
-      window.location.protocol === 'file:' || !window.location.hostname ||
-      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-        ? 'http://localhost:3000'
-        : 'https://hotelqrservices.onrender.com';
+    window.API_BASE_URL = (() => {
+      const local = 'http://localhost:3000';
+      const production = [
+        'https://hotel-q-rservices.vercel.app',
+        'https://hotelqrservices-production.up.railway.app',
+        'https://hotelqrservices.onrender.com'
+      ];
+      const host = window.location.hostname;
+      if (window.location.protocol === 'file:' || !host || host === 'localhost' || host === '127.0.0.1') {
+        return local;
+      }
+      if (host.includes('vercel.app')) {
+        return window.location.origin;
+      }
+      return production[0];
+    })();
     console.log('API_BASE_URL:', window.API_BASE_URL);
 
     window.apiCall = async function(endpoint, options = {}) {

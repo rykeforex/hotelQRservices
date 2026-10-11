@@ -555,11 +555,22 @@
 <audio id="notificationSound" src="data:audio/wav;base64,UklGRlwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVoAAACAgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f38=" preload="auto"></audio>
 
 <script>
-  const API_BASE_URL =
-    window.location.protocol === 'file:' || !window.location.hostname ||
-    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-      ? 'http://localhost:3000'
-      : 'https://hotelqrservices.onrender.com';
+  const API_BASE_URL = (() => {
+    const local = 'http://localhost:3000';
+    const production = [
+      'https://hotel-q-rservices.vercel.app',
+      'https://hotelqrservices-production.up.railway.app',
+      'https://hotelqrservices.onrender.com'
+    ];
+    const host = window.location.hostname;
+    if (window.location.protocol === 'file:' || !host || host === 'localhost' || host === '127.0.0.1') {
+      return local;
+    }
+    if (host.includes('vercel.app')) {
+      return window.location.origin;
+    }
+    return production[0];
+  })();
   console.log('API_BASE_URL:', API_BASE_URL);
 
   const HOTEL_ID = parseInt(new URLSearchParams(window.location.search).get('hotelId') || '', 10) || null;
